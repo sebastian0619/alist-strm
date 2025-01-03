@@ -1,16 +1,19 @@
 import os
 import httpx
+import time
 from urllib.parse import quote
 from loguru import logger
 from config import Settings
 from typing import List, Optional
+import asyncio
 
 class StrmService:
     def __init__(self):
         self.settings = Settings()
         self.client = httpx.AsyncClient(
             base_url=self.settings.alist_url,
-            headers={"Authorization": self.settings.alist_token} if self.settings.alist_token else {}
+            headers={"Authorization": self.settings.alist_token} if self.settings.alist_token else {},
+            timeout=httpx.Timeout(90.0, connect=90.0, read=90.0, write=90.0)
         )
         self.cache: List[str] = []
     
@@ -28,7 +31,10 @@ class StrmService:
         """处理指定目录的流媒体文件"""
         try:
             logger.info(f"处理目录: {path}")
-            await self._process_directory(path, os.path.join(self.settings.output_dir, path.lstrip("/")))
+            # 移除扫描路径前缀，只保留后面的路径结构
+            relative_path = path.replace(self.settings.alist_scan_path, "").lstrip("/")
+            output_path = os.path.join(self.settings.output_dir, relative_path)
+            await self._process_directory(path, output_path)
         except Exception as e:
             logger.error(f"处理目录失败: {path}, 错误: {str(e)}")
             raise
@@ -47,18 +53,36 @@ class StrmService:
     async def _process_directory(self, path: str, local_path: str):
         """处理目录中的所有文件"""
         try:
+            logger.debug(f"开始处理目录: {path} -> {local_path}")
+            # 确保输出目录存在
+            os.makedirs(local_path, exist_ok=True)
+            
             files = await self._list_files(path)
             for file in files:
+                if not file.get("name"):
+                    logger.warning(f"跳过无效文件: {file}")
+                    continue
+                
+                name = file.get("name")
                 if file.get("is_dir", False):
                     # 处理子目录
-                    new_path = os.path.join(path, file["name"])
-                    new_local_path = os.path.join(local_path, file["name"])
+                    clean_name = self._sanitize_filename(name)
+                    new_path = os.path.join(path, name)
+                    new_local_path = os.path.join(local_path, clean_name)
+                    # 如果启用了慢速模式，则在处理每个目录后等待
+                    if self.settings.slow_mode:
+                        await asyncio.sleep(1)
                     await self._process_directory(new_path, new_local_path)
                 else:
+                    # 检查是否已处理过
+                    full_path = os.path.join(path, name)
+                    if full_path in self.cache:
+                        continue
+                    
                     # 处理文件
-                    if self._is_video_file(file["name"]):
+                    if self._is_video_file(name):
                         await self._create_strm_file(file, local_path)
-                    elif self.settings.is_down_sub and self._is_subtitle_file(file["name"]):
+                    elif self.settings.is_down_sub and self._is_subtitle_file(name):
                         await self._download_subtitle(file, local_path)
         except Exception as e:
             logger.error(f"处理目录失败: {path}, 错误: {str(e)}")
@@ -67,14 +91,26 @@ class StrmService:
     async def _create_strm_file(self, file: dict, local_path: str):
         """创建strm文件"""
         try:
-            file_name = file["name"]
+            file_name = file.get("name")
+            if not file_name:
+                logger.error(f"文件信息缺少name字段: {file}")
+                return
+            
+            # 构建文件路径
+            file_path = file.get("path")
+            if not file_path:
+                # 如果没有path字段，尝试从当前目录和文件名构建
+                parent_dir = os.path.dirname(local_path.replace(self.settings.output_dir, ""))
+                file_path = os.path.join(parent_dir, file_name)
+                logger.debug(f"文件信息缺少path字段，构建路径: {file_path}")
+            
             strm_path = os.path.join(local_path, os.path.splitext(file_name)[0] + ".strm")
             
             # 确保目录存在
             os.makedirs(os.path.dirname(strm_path), exist_ok=True)
             
             # 生成播放链接
-            play_url = f"{self.settings.alist_url}/d{file['path']}"
+            play_url = f"{self.settings.alist_url}/d{file_path}"
             if self.settings.encode:
                 play_url = quote(play_url)
             
@@ -82,9 +118,10 @@ class StrmService:
             with open(strm_path, "w", encoding="utf-8") as f:
                 f.write(play_url)
             
-            logger.info(f"创建strm文件成功: {strm_path}")
+            logger.info(f"创建strm文件成功: {strm_path} -> {play_url}")
         except Exception as e:
-            logger.error(f"创建strm文件失败: {file_name}, 错误: {str(e)}")
+            logger.error(f"创建strm文件失败: {file_name if 'file_name' in locals() else 'unknown'}, 错误: {str(e)}")
+            logger.debug(f"文件信息: {file}")
             raise
     
     async def _download_subtitle(self, file: dict, local_path: str):
@@ -109,32 +146,55 @@ class StrmService:
             raise
     
     async def _list_files(self, path: str) -> list:
-        """获取目录下的文件列表"""
-        try:
-            response = await self.client.post("/api/fs/list", json={
-                "path": path,
-                "password": "",
-                "refresh": self.settings.refresh,
-                "page": 1,
-                "per_page": 100
-            })
-            response.raise_for_status()
-            data = response.json()
-            return data.get("data", {}).get("content", [])
-        except Exception as e:
-            logger.error(f"获取文件列表失败: {str(e)}")
-            raise
+        """获取目录下的文件列表，添加重试机制"""
+        for retry in range(3):  # 最多重试3次
+            try:
+                response = await self.client.post("/api/fs/list", json={
+                    "path": path,
+                    "password": "",
+                    "refresh": self.settings.refresh,
+                    "page": 1,
+                    "per_page": 0  # 设置为0以获取所有结果
+                })
+                response.raise_for_status()
+                data = response.json()
+                if data.get("code") == 200:
+                    content = data.get("data", {}).get("content", [])
+                    # 确保每个文件对象都有完整的路径信息
+                    for file in content:
+                        if "path" not in file:
+                            file["path"] = os.path.join(path, file.get("name", ""))
+                    logger.debug(f"获取完成{path}, 文件数: {len(content)}")
+                    return content
+                else:
+                    logger.warning(f"获取{path}第{retry + 1}次失败: {data}")
+                    if retry < 2:  # 如果不是最后一次重试
+                        await asyncio.sleep(1)  # 等待1秒后重试
+                    continue
+            except Exception as e:
+                logger.error(f"获取文件列表失败: {str(e)}")
+                if retry < 2:  # 如果不是最后一次重试
+                    await asyncio.sleep(1)  # 等待1秒后重试
+                continue
+        raise Exception(f"获取文件列表失败，已重试3次: {path}")
     
     async def _get_file_info(self, path: str) -> Optional[dict]:
-        """获取文件信息"""
+        """获取文件信息，添加重试机制"""
         try:
             response = await self.client.post("/api/fs/get", json={
                 "path": path,
-                "password": ""
+                "password": "",
+                "page": 1,
+                "per_page": 0
             })
             response.raise_for_status()
             data = response.json()
-            return data.get("data")
+            if data.get("code") == 200:
+                logger.debug(f"获取文件完成{path}")
+                return data.get("data")
+            else:
+                logger.warning(f"获取文件失败: {data}")
+                return None
         except Exception as e:
             logger.error(f"获取文件信息失败: {str(e)}")
             return None

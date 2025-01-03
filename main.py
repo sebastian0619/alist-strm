@@ -1,13 +1,24 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from config import Settings
 from services.strm_service import StrmService
 from services.copy_service import CopyService
 from bot.telegram_bot import setup_telegram_bot
-from routes import notify
+from routes import notify, config, strm
 
 app = FastAPI()
+
+# 添加 CORS 中间件
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 settings = Settings()
 scheduler = AsyncIOScheduler()
 strm_service = StrmService()
@@ -15,6 +26,8 @@ copy_service = CopyService()
 
 # 注册路由
 app.include_router(notify.router)
+app.include_router(config.router)
+app.include_router(strm.router)
 
 @app.on_event("startup")
 async def startup_event():
@@ -52,4 +65,4 @@ async def shutdown_event():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8080, reload=True) 
+    uvicorn.run("main:app", host="0.0.0.0", port=8081, reload=True) 
