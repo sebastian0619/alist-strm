@@ -32,6 +32,11 @@ app.include_router(notify.router)
 app.include_router(config.router)
 app.include_router(strm.router)
 
+# 健康检查路由
+@app.get("/api/health")
+async def health_check():
+    return {"status": "healthy"}
+
 # 挂载静态文件
 if os.path.exists("static"):
     app.mount("/", StaticFiles(directory="static", html=True), name="static")
