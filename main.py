@@ -1,5 +1,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+import os
 from loguru import logger
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from config import Settings
@@ -28,6 +31,17 @@ copy_service = CopyService()
 app.include_router(notify.router)
 app.include_router(config.router)
 app.include_router(strm.router)
+
+# 挂载静态文件
+if os.path.exists("static"):
+    app.mount("/", StaticFiles(directory="static", html=True), name="static")
+
+@app.get("/")
+async def read_root():
+    """提供前端页面"""
+    if os.path.exists("static/index.html"):
+        return FileResponse("static/index.html")
+    return {"message": "API is running"}
 
 @app.on_event("startup")
 async def startup_event():
@@ -65,4 +79,5 @@ async def shutdown_event():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8081, reload=True) 
+    port = int(os.getenv("PORT", "8081"))
+    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=True) 
