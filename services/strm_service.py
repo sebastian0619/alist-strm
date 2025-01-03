@@ -1,6 +1,7 @@
 import os
 import httpx
 import time
+import re
 from urllib.parse import quote
 from loguru import logger
 from config import Settings
@@ -16,6 +17,16 @@ class StrmService:
             timeout=httpx.Timeout(90.0, connect=90.0, read=90.0, write=90.0)
         )
         self.cache: List[str] = []
+    
+    def _sanitize_filename(self, filename: str, max_length: int = 250) -> str:
+        """清理文件名，移除非法字符并限制长度"""
+        # 移除Windows文件系统中的非法字符
+        clean_name = re.sub(r'[\\/:*?"<>|]', '', filename)
+        # 限制文件名长度
+        if len(clean_name) > max_length:
+            name, ext = os.path.splitext(clean_name)
+            clean_name = name[:max_length-len(ext)] + ext
+        return clean_name
     
     async def strm(self):
         """处理流媒体服务的主要逻辑"""
