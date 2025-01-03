@@ -5,6 +5,7 @@ services:
     container_name: alist-strm
     ports:
       - "8081:8081"
+      - "5173:5173"
     volumes:
       - ./.env:/app/.env:ro
       - ./data:/app/data

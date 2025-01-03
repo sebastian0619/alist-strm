@@ -5,15 +5,17 @@ WORKDIR /app/frontend
 COPY frontend/package*.json ./
 RUN npm install
 COPY frontend/ .
-RUN npm run build
 
 # 阶段2: 构建后端
 FROM python:3.11-slim
 WORKDIR /app
 
-# 安装系统依赖
+# 安装 Node.js
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
+    curl \
+    && curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
+    && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
 # 复制并安装 Python 依赖
@@ -23,15 +25,21 @@ RUN pip install --no-cache-dir -r requirements.txt
 # 复制后端代码
 COPY . .
 
-# 从前端构建阶段复制构建产物
-COPY --from=frontend-builder /app/frontend/dist /app/static
+# 复制前端代码和依赖
+COPY --from=frontend-builder /app/frontend /app/frontend
+WORKDIR /app/frontend
+RUN npm install
+WORKDIR /app
 
 # 设置环境变量
 ENV PYTHONPATH=/app
 ENV PORT=8081
 
 # 暴露端口
-EXPOSE 8081
+EXPOSE 8081 5173
 
-# 启动命令
-CMD ["python", "main.py"]
+# 启动脚本
+COPY start.sh /start.sh
+RUN chmod +x /start.sh
+
+CMD ["/start.sh"]
