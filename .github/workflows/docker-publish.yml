@@ -1,36 +1,35 @@
-name: Java CI with Maven docker
+name: Docker Build and Publish
 
 on:
   push:
-    # 分支
     branches: [ main ]
   pull_request:
     branches: [ main ]
 
 jobs:
-  compile:
+  build:
     runs-on: ubuntu-latest
-    name: Running Java ${{ matrix.java }} compile
     steps:
-      - uses: actions/checkout@v3
-      - name: Set up JDK 1.8
-        uses: actions/setup-java@v3
-        with:
-          distribution: 'temurin'
-          java-version: '8'
-          cache: 'maven'
-      - name: 编译代码
-        run: mvn compile
-      - name: Deploy the JAR file to the remote server
+      - name: Checkout code
         uses: actions/checkout@v3
-      - name: Set up JDK 1.8
-        uses: actions/setup-java@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
         with:
-          distribution: 'temurin'
-          java-version: '8'
-          cache: 'maven'
-      - name: Generate the package
-        run: mvn -B package --file pom.xml -Dmaven.test.skip=true
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run linting
+        run: |
+          pip install flake8
+          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+          flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v2
 
@@ -42,7 +41,8 @@ jobs:
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
-      - name: Build Latest Image
+
+      - name: Build and push Docker image
         uses: docker/build-push-action@v3
         with:
           context: .
@@ -51,3 +51,4 @@ jobs:
           push: true
           tags: |
             ${{ secrets.DOCKER_USERNAME }}/alist-strm:latest
+            ${{ secrets.DOCKER_USERNAME }}/alist-strm:${{ github.sha }}

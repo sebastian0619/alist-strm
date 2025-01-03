@@ -1,27 +1,26 @@
-FROM eclipse-temurin:8u412-b08-jre-jammy
-LABEL title="alist-strm"
-LABEL description="将alist的视频文件生成媒体播放设备可播放的strm文件"
-LABEL authors="JackDing"
-COPY ./target/application.jar /aliststrm.jar
-VOLUME /data
-VOLUME /log
-ENV TZ=Asia/Shanghai
-ENV alistServerUrl=""
-ENV alistServerToken=""
-ENV alistScanPath=""
-ENV isDownSub="0"
-ENV slowMode=""
-ENV encode="1"
-ENV tgToken=""
-ENV tgUserId=""
-ENV JAVA_OPTS="-Xms32m -Xmx512m"
-ENV srcDir=""
-ENV dstDir=""
-ENV replaceDir=""
-ENV runAfterStartup="1"
-ENV minFileSize="100"
-ENV logLevel=""
-ENV maxIdleConnections="5"
-ENV refresh="1"
-ENV scheduledCron="0 0 6,18 * * ?"
-ENTRYPOINT ["sh","-c","java -jar $JAVA_OPTS -XX:+UseG1GC -XX:+OptimizeStringConcat -XX:+PrintGCDetails -Xloggc:/log/gc.log -XX:+PrintGCDateStamps -XX:+PrintGCTimeStamps -XX:+PrintGCApplicationStoppedTime -XX:+PrintGCApplicationConcurrentTime -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/log /aliststrm.jar"]
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# 安装系统依赖
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    && rm -rf /var/lib/apt/lists/*
+
+# 复制项目文件
+COPY requirements.txt .
+COPY *.py .
+COPY bot/ bot/
+COPY services/ services/
+
+# 安装Python依赖
+RUN pip install --no-cache-dir -r requirements.txt
+
+# 设置环境变量
+ENV PYTHONUNBUFFERED=1
+
+# 暴露端口
+EXPOSE 8080
+
+# 启动命令
+CMD ["python", "main.py"]

@@ -1,112 +1,103 @@
-# alist-strm
- alist生成可播放strm视频文件
+# Alist-Strm
 
-## 主要功能
+Alist流媒体服务 Python版本
 
-```
-1.生成strm文件，启动即执行，定时任务执行，tg机器人执行，接口调用执行
-2.复制同步alist的两个文件夹，tg机器人执行，接口调用执行
-3.可支持第三方app回调，自动化处理，如qb下载完成通知，自动复制alist挂载的本地硬盘复制到云盘然后生成strm文件
-```
+## 功能特点
 
-## docker部署
+- 基于FastAPI的现代Web框架
+- 异步处理所有I/O操作
+- 集成Telegram机器人功能
+- 支持定时任务
+- 完整的日志记录
 
-```
-部署前参数需要修改
-必要参数
-alistServerUrl  alist地址 如http://192.168.1.2:5244
-alistServerToken 可在alist后台获取
-alistScanPath 需要生成strm文件的目录如http://192.168.1.2:5244/阿里云分享/电影 那就填入/阿里云分享/电影
-可选参数
-slowMode  单线程模式，防止请求网盘太快，默认0，启用填1
-encode 是否编码strm文件里面的链接  默认1启用  不启用填0
-isDownSub 是否下载目录里面的字幕文件 默认0不下载  下载填1
-runAfterStartup  启动是否立即执行同步任务 默认启用1，启用填0
-logLevel 日志级别 DEBUG INFO ERROR OFF
-tgToken  tg机器人token，通过t.me/BotFather机器人创建bot获取token
-tgUserId tg用户id，通过t.me/userinfobot机器人获取userId
-maxIdleConnections HTTP调用线程池参数配置 默认5
-refresh参数  是否去读取网盘最新数据，1是实时读取网盘 0是读取alist缓存 默认1
+## 系统要求
 
-复制alist不同目录的视频 源目录删除不会删除目标目录文件 只会新增
-srcDir 源目录
-dstDir 目标目录
-minFileSize 复制的最小文件
-replaceDir qb的下载根目录 使用/api/v1/notifyByDir接口时需要填
-scheduledCron 定时任务cron参数，默认0 0 6,18 * * ?  每天6点和18点执行同步任务
+- Python 3.8+
+- 运行中的Alist服务器
 
+## 安装
+
+1. 克隆仓库：
+```bash
+git clone https://github.com/yourusername/alist-strm.git
+cd alist-strm
 ```
 
-# 开发计划
-
-- [x] tg机器人命令生成strm文件
-- [ ] ...
-
-# 更新记录
-
-```
-20240610 重构代码,增加tg机器人命令strm、strmdir
-20240617 增加下载目录中字幕文件的功能
-20240617 增加alist目录复制的功能 使用tg机器人/sync命令执行任务
-20240622 执行sync任务之后自动执行strm任务 增加定时任务每天6、18点执行sync任务
-20240623 增加调用接口api/v1/notify直接执行复制sync任务  配合qb使用  监听端口是6894
-20240624 增加/syncdir命令执行指定目录的同步复制，如：/sync /阿里云盘/电影#/115网盘/电影，就会将/阿里云盘/电影下的视频同步复制到/115网盘/电影
-20240630 增加参数minFileSize 默认100  判断视频大小是否大于100MB，如果大于100MB才复制同步文件
-20240724 增加参数配置日志级别 增加复制任务多线程执行
-20240807 增加HTTP调用线程池参数配置maxIdleConnections 默认5
-20240821 增加refresh参数  是否去读取网盘最新数据，1是实时读取网盘 0是读取alist缓存 默认1
-20241107 增加/api/v1/notifyByDir接口和replaceDir参数，按需同步目录，防止同步文件太多，耗时过长
-20241202 增加定时任务cron参数scheduledCron，默认0 0 6,18 * * ?  每天6点和18点执行同步任务 
+2. 创建虚拟环境：
+```bash
+python -m venv venv
+source venv/bin/activate  # Linux/Mac
+# 或
+.\venv\Scripts\activate  # Windows
 ```
 
-# docker CLI安装
-
+3. 安装依赖：
+```bash
+pip install -r requirements.txt
 ```
+
+4. 配置环境变量：
+```bash
+cp .env.example .env
+# 编辑 .env 文件，填入你的配置
+```
+
+## 配置说明
+
+在 `.env` 文件中配置以下参数：
+
+### 基本配置
+- `RUN_AFTER_STARTUP`: 是否在启动时执行任务（true/false）
+- `LOG_LEVEL`: 日志级别（DEBUG/INFO/WARNING/ERROR）
+- `SLOW_MODE`: 是否启用慢速模式（true/false）
+
+### Telegram配置
+- `TG_TOKEN`: Telegram机器人token
+- `TG_USER_ID`: Telegram用户ID
+- `TELEGRAM_BOT_PROXY_HOST`: 代理服务器地址（可选）
+- `TELEGRAM_BOT_PROXY_PORT`: 代理服务器端口（可选）
+
+### Alist配置
+- `ALIST_URL`: Alist服务器地址
+- `ALIST_TOKEN`: Alist访问令牌
+
+## 运行
+
+```bash
+python main.py
+```
+
+服务将在 http://localhost:8080 启动
+
+## Docker支持
+
+1. 构建镜像：
+```bash
+docker build -t alist-strm .
+```
+
+2. 运行容器：
+```bash
 docker run -d \
---name=alist-strm \
--e TZ=Asia/Shanghai \
--e alistServerUrl=http://192.168.1.2:5244 \
--e alistServerToken=xxx \
--e alistScanPath='/阿里云分享/电影' \
--e slowMode=0 \
--v /volume1/docker/alist-strm/data:/data \
-jacksaoding/alist-strm:latest
+  --name alist-strm \
+  -p 8080:8080 \
+  -v $(pwd)/.env:/app/.env \
+  alist-strm
 ```
 
-# docker compose安装
+## 定时任务
 
-```
-version: "3"
-services:
-  app:
-    container_name: alist-strm
-    image: 'jacksaoding/alist-strm:latest'
-    network_mode: "host"
-    environment:
-      TZ: Asia/Shanghai
-      alistServerUrl: http://192.168.1.2:5244
-      alistServerToken: xxx
-      alistScanPath: /阿里云分享/电影
-      slowMode: 0
-    volumes:
-      - /volume1/docker/alist-strm/data:/data
-```
+默认每天凌晨2点执行一次流媒体处理任务。可以通过修改 `scheduled_task.py` 来调整定时任务的执行时间。
 
-# qb脚本参考
+## Telegram机器人命令
 
-`sh /config/notify.sh "%G" "%F"`
+- `/start` - 开始使用机器人
+- `/help` - 显示帮助信息
 
-```
-#!/bin/bash
+## 贡献
 
-# 获取传递的标签
-TAG=$1
-dir=$2
-MOVIEPILOT="MOVIEPILOT"
+欢迎提交Issue和Pull Request！
 
-if [[ "$TAG" =~ "$MOVIEPILOT" ]]; then
-  # 调用 notify 接口
-  #curl -X POST http://192.168.31.66:6894/api/v1/notify
-  curl -X POST -H "Content-Type: application/json" -d "{\"dir\": \"$dir\"}" http://192.168.31.66:6894/api/v1/notifyByDir &>/dev/null &
-fi
-```
+## 许可证
+
+MIT License
