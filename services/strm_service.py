@@ -128,6 +128,12 @@ class StrmService:
                         except Exception as e:
                             logger.error(f"下载字幕失败: {name}, 错误: {str(e)}")
                             continue  # 继续处理其他文件
+                    elif self.settings.is_down_meta and self._is_meta_file(name):
+                        try:
+                            await self._download_meta(file, local_path)
+                        except Exception as e:
+                            logger.error(f"下载元数据失败: {name}, 错误: {str(e)}")
+                            continue  # 继续处理其他文件
         except Exception as e:
             logger.error(f"处理目录失败: {path}, 错误: {str(e)}")
             # 不再抛出异常，让程序继续处理其他目录
@@ -257,6 +263,62 @@ class StrmService:
         """判断是否为字幕文件"""
         subtitle_extensions = {'.srt', '.ass', '.ssa', '.sub'}
         return os.path.splitext(filename)[1].lower() in subtitle_extensions
+    
+    def _is_meta_file(self, filename: str) -> bool:
+        """判断是否为元数据文件"""
+        meta_extensions = {
+            '.nfo',          # NFO 信息文件
+            '.jpg', '.jpeg', # 封面图片
+            '.png',          # 封面图片
+            '.tbn',          # 缩略图
+            '.poster.jpg',   # 海报
+            '.fanart.jpg',   # 同人画
+            '.banner.jpg',   # 横幅
+            '.landscape.jpg',# 风景图
+            '.thumb.jpg',    # 缩略图
+            '.logo.png',     # Logo
+            '.clearart.png', # 清晰艺术图
+            '.disc.png',     # 光盘图
+            '.backdrop.jpg', # 背景图
+        }
+        # 检查扩展名
+        ext = os.path.splitext(filename)[1].lower()
+        if ext in meta_extensions:
+            return True
+        # 检查特殊文件名模式
+        patterns = [
+            r'.*\.poster\.jpg$',
+            r'.*\.fanart\.jpg$',
+            r'.*\.banner\.jpg$',
+            r'.*\.landscape\.jpg$',
+            r'.*\.thumb\.jpg$',
+            r'.*\.logo\.png$',
+            r'.*\.clearart\.png$',
+            r'.*\.disc\.png$',
+            r'.*\.backdrop\.jpg$',
+        ]
+        return any(re.match(pattern, filename.lower()) for pattern in patterns)
+
+    async def _download_meta(self, file: dict, local_path: str):
+        """下载元数据文件"""
+        try:
+            file_name = file["name"]
+            save_path = os.path.join(local_path, file_name)
+            
+            # 确保目录存在
+            os.makedirs(os.path.dirname(save_path), exist_ok=True)
+            
+            # 下载元数据文件
+            response = await self.client.get(f"/d{file['path']}")
+            response.raise_for_status()
+            
+            with open(save_path, "wb") as f:
+                f.write(response.content)
+            
+            logger.info(f"下载元数据文件成功: {save_path}")
+        except Exception as e:
+            logger.error(f"下载元数据文件失败: {file_name}, 错误: {str(e)}")
+            raise
     
     async def close(self):
         """关闭HTTP客户端"""

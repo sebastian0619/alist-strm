@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     # 文件处理配置
     encode: bool = True
     is_down_sub: bool = False
+    is_down_meta: bool = False  # 是否下载元数据文件
     min_file_size: int = 100  # MB
     replace_dir: Optional[str] = None
     src_dir: Optional[str] = None
