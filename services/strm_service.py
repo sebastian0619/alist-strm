@@ -61,14 +61,39 @@ class StrmService:
             logger.error(f"处理文件失败: {path}, 错误: {str(e)}")
             raise
     
+    def _should_skip_directory(self, path: str) -> bool:
+        """检查是否应该跳过某些系统目录"""
+        skip_dirs = {
+            '@eaDir',  # 群晖缩略图目录
+            '#recycle', # 回收站
+            '.DS_Store',  # Mac系统文件
+            '$RECYCLE.BIN',  # Windows回收站
+            'System Volume Information',  # Windows系统目录
+            '@Recently-Snapshot'  # 群晖快照目录
+        }
+        return any(skip_dir in path for skip_dir in skip_dirs)
+    
     async def _process_directory(self, path: str, local_path: str):
         """处理目录中的所有文件"""
         try:
+            # 检查是否应该跳过此目录
+            if self._should_skip_directory(path):
+                logger.info(f"跳过系统目录: {path}")
+                return
+
             logger.debug(f"开始处理目录: {path} -> {local_path}")
             # 确保输出目录存在
             os.makedirs(local_path, exist_ok=True)
             
-            files = await self._list_files(path)
+            try:
+                files = await self._list_files(path)
+                if not files:  # 如果目录为空或获取失败
+                    logger.warning(f"目录为空或无法访问: {path}")
+                    return
+            except Exception as e:
+                logger.error(f"获取目录列表失败: {path}, 错误: {str(e)}")
+                return  # 继续处理其他目录，而不是抛出异常
+            
             for file in files:
                 if not file.get("name"):
                     logger.warning(f"跳过无效文件: {file}")
@@ -92,12 +117,21 @@ class StrmService:
                     
                     # 处理文件
                     if self._is_video_file(name):
-                        await self._create_strm_file(file, local_path)
+                        try:
+                            await self._create_strm_file(file, local_path)
+                        except Exception as e:
+                            logger.error(f"处理文件失败: {name}, 错误: {str(e)}")
+                            continue  # 继续处理其他文件
                     elif self.settings.is_down_sub and self._is_subtitle_file(name):
-                        await self._download_subtitle(file, local_path)
+                        try:
+                            await self._download_subtitle(file, local_path)
+                        except Exception as e:
+                            logger.error(f"下载字幕失败: {name}, 错误: {str(e)}")
+                            continue  # 继续处理其他文件
         except Exception as e:
             logger.error(f"处理目录失败: {path}, 错误: {str(e)}")
-            raise
+            # 不再抛出异常，让程序继续处理其他目录
+            return
     
     async def _create_strm_file(self, file: dict, local_path: str):
         """创建strm文件"""
@@ -171,6 +205,9 @@ class StrmService:
                 data = response.json()
                 if data.get("code") == 200:
                     content = data.get("data", {}).get("content", [])
+                    if content is None:
+                        logger.warning(f"目录访问被拒绝或不存在: {path}")
+                        return []
                     # 确保每个文件对象都有完整的路径信息
                     for file in content:
                         if "path" not in file:
@@ -187,7 +224,8 @@ class StrmService:
                 if retry < 2:  # 如果不是最后一次重试
                     await asyncio.sleep(1)  # 等待1秒后重试
                 continue
-        raise Exception(f"获取文件列表失败，已重试3次: {path}")
+        logger.error(f"获取文件列表失败，已重试3次: {path}")
+        return []  # 返回空列表而不是抛出异常
     
     async def _get_file_info(self, path: str) -> Optional[dict]:
         """获取文件信息，添加重试机制"""
