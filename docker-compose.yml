@@ -1,22 +1,11 @@
 version: '3'
 services:
   alist-strm:
-   #build:
-   #   context: .
-   #   dockerfile: Dockerfile
-    image: ghcr.io/sebastian0619/alist-strm:latest
+    build: .
     container_name: alist-strm
-    volumes:
-      - ./.env:/app/.env:ro
-      - ./data:/app/data
-      - ./logs:/app/logs
-    restart: unless-stopped
     ports:
       - "8081:8081"
-    environment:
-      - TZ=Asia/Shanghai
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8081/api/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+    volumes:
+      - ./strm:/app/strm
+      - ./.env:/app/.env
+    restart: unless-stopped
