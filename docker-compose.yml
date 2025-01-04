@@ -11,6 +11,8 @@ services:
       - ./data:/app/data
       - ./logs:/app/logs
     restart: unless-stopped
+    ports:
+      - "8081:8081"
     environment:
       - TZ=Asia/Shanghai
     healthcheck:
