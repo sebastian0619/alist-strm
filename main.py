@@ -6,7 +6,7 @@ from config import Settings
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from routes import config, strm
+from routes import config, strm, health
 
 app = FastAPI()
 
@@ -22,6 +22,7 @@ app.add_middleware(
 # 注册路由
 app.include_router(config.router)
 app.include_router(strm.router)
+app.include_router(health.router)
 
 # 配置日志
 settings = Settings()
@@ -56,11 +57,6 @@ async def startup_event():
             await strm_service.close()
     else:
         logger.info("等待通过Web界面手动触发STRM生成")
-
-# 健康检查接口
-@app.get("/api/health")
-async def health_check():
-    return {"status": "healthy"}
 
 if __name__ == "__main__":
     import uvicorn
