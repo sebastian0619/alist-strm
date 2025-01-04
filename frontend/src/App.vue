@@ -1,20 +1,20 @@
 <template>
   <div class="app-container">
-    <el-container>
-      <el-header>
+    <a-layout>
+      <a-layout-header class="header">
         <h1>Alist STRM 配置</h1>
-      </el-header>
-      <el-main>
-        <el-tabs v-model="activeTab">
-          <el-tab-pane label="环境配置" name="config">
+      </a-layout-header>
+      <a-layout-content class="main-content">
+        <a-tabs v-model:activeKey="activeTab">
+          <a-tab-pane key="config" tab="环境配置">
             <config-panel />
-          </el-tab-pane>
-          <el-tab-pane label="STRM生成" name="strm">
+          </a-tab-pane>
+          <a-tab-pane key="strm" tab="STRM生成">
             <strm-panel />
-          </el-tab-pane>
-        </el-tabs>
-      </el-main>
-    </el-container>
+          </a-tab-pane>
+        </a-tabs>
+      </a-layout-content>
+    </a-layout>
   </div>
 </template>
 
@@ -28,19 +28,32 @@ const activeTab = ref('config')
 
 <style>
 .app-container {
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 20px;
+  min-height: 100vh;
+  background-color: #f0f2f5;
 }
 
-.el-header {
+.header {
+  background: #fff;
+  padding: 0;
   text-align: center;
-  padding: 20px 0;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 }
 
-.el-main {
-  background-color: #fff;
+.header h1 {
+  margin: 0;
+  line-height: 64px;
+  color: #1890ff;
+}
+
+.main-content {
+  padding: 24px;
+  min-height: calc(100vh - 64px);
+}
+
+:deep(.ant-tabs) {
+  background: #fff;
+  padding: 24px;
   border-radius: 4px;
-  padding: 20px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 }
 </style> 

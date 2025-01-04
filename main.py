@@ -41,12 +41,15 @@ async def startup_event():
     # 确保输出目录存在
     os.makedirs(settings.output_dir, exist_ok=True)
     
-    # 只有在环境变量明确设置了RUN_AFTER_STARTUP=true时才自动运行
-    if os.getenv('RUN_AFTER_STARTUP', '').lower() == 'true':
-        logger.info("环境变量设置了自动运行，开始生成STRM文件")
+    # 检查配置
+    logger.debug(f"当前配置: run_after_startup={settings.run_after_startup}")
+    
+    if settings.run_after_startup:
+        logger.info("配置了自动运行，开始生成STRM文件")
         strm_service = StrmService()
         try:
             await strm_service.strm()
+            logger.info("STRM文件生成完成")
         except Exception as e:
             logger.error(f"STRM生成失败: {str(e)}")
         finally:

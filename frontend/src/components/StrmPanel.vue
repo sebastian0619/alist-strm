@@ -1,18 +1,18 @@
 <template>
   <div class="strm-panel">
-    <el-form :model="form" label-width="120px">
-      <el-form-item label="扫描路径">
-        <el-input v-model="form.path" placeholder="输入要扫描的路径" />
-      </el-form-item>
+    <a-form :model="form" layout="vertical">
+      <a-form-item label="扫描路径" required>
+        <a-input v-model:value="form.path" placeholder="输入要扫描的路径" />
+      </a-form-item>
 
-      <el-form-item>
-        <el-button type="primary" @click="generateStrm" :loading="loading">
+      <a-form-item>
+        <a-button type="primary" @click="generateStrm" :loading="loading">
           生成 STRM 文件
-        </el-button>
-      </el-form-item>
-    </el-form>
+        </a-button>
+      </a-form-item>
+    </a-form>
 
-    <el-divider>处理日志</el-divider>
+    <a-divider>处理日志</a-divider>
 
     <div class="log-container" ref="logContainer">
       <pre v-for="(log, index) in logs" :key="index" :class="log.type">{{ log.message }}</pre>
@@ -22,11 +22,10 @@
 
 <script setup>
 import { ref } from 'vue'
-import { ElMessage } from 'element-plus'
-import axios from 'axios'
+import { message } from 'ant-design-vue'
 
 const form = ref({
-  path: '/115/video'
+  path: '/video'
 })
 
 const loading = ref(false)
@@ -45,7 +44,7 @@ const addLog = (message, type = 'info') => {
 
 const generateStrm = async () => {
   if (!form.value.path) {
-    ElMessage.warning('请输入扫描路径')
+    message.warning('请输入扫描路径')
     return
   }
 
@@ -54,20 +53,25 @@ const generateStrm = async () => {
   addLog(`开始处理路径: ${form.value.path}`)
 
   try {
-    const response = await axios.post('/api/strm/generate', {
-      path: form.value.path
+    const response = await fetch('/api/strm/start', {
+      method: 'POST'
     })
     
-    if (response.data.success) {
+    if (!response.ok) {
+      throw new Error('请求失败')
+    }
+    
+    const data = await response.json()
+    if (data.code === 200) {
       addLog('STRM 文件生成成功', 'success')
-      ElMessage.success('STRM 文件生成成功')
+      message.success('STRM 文件生成成功')
     } else {
-      addLog(`处理失败: ${response.data.message}`, 'error')
-      ElMessage.error('STRM 文件生成失败')
+      addLog(`处理失败: ${data.message}`, 'error')
+      message.error('STRM 文件生成失败')
     }
   } catch (error) {
     addLog(`发生错误: ${error.message}`, 'error')
-    ElMessage.error('操作失败: ' + error.message)
+    message.error('操作失败: ' + error.message)
   } finally {
     loading.value = false
   }
@@ -96,14 +100,14 @@ const generateStrm = async () => {
 }
 
 .log-container .error {
-  color: #ff4949;
+  color: #ff4d4f;
 }
 
 .log-container .success {
-  color: #67c23a;
+  color: #52c41a;
 }
 
 .log-container .info {
-  color: #909399;
+  color: #8c8c8c;
 }
 </style> 

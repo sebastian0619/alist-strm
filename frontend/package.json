@@ -9,8 +9,8 @@
   },
   "dependencies": {
     "vue": "^3.3.4",
-    "element-plus": "^2.3.8",
-    "axios": "^1.4.0"
+    "ant-design-vue": "^4.0.0",
+    "@ant-design/icons-vue": "^7.0.0"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^4.2.3",
