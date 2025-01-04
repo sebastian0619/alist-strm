@@ -8,6 +8,10 @@ class Settings(BaseSettings):
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
     slow_mode: bool = Field(default=False, alias="SLOW_MODE")
 
+    # 定时任务配置
+    schedule_enabled: bool = Field(default=False, alias="SCHEDULE_ENABLED")
+    schedule_cron: str = Field(default="0 */6 * * *", alias="SCHEDULE_CRON")  # 默认每6小时执行一次
+
     # Alist配置
     alist_url: str = Field(default="", alias="ALIST_URL")
     alist_token: str = Field(default="", alias="ALIST_TOKEN")
@@ -58,7 +62,8 @@ class Settings(BaseSettings):
     def parse_booleans(cls, values):
         """解析布尔类型的字段"""
         bool_fields = ['run_after_startup', 'slow_mode', 'encode', 
-                      'is_down_sub', 'is_down_meta', 'refresh', 'tg_enabled']
+                      'is_down_sub', 'is_down_meta', 'refresh', 'tg_enabled',
+                      'schedule_enabled']
         for field in bool_fields:
             if field in values and isinstance(values[field], str):
                 values[field] = str(values[field]).lower() in ('true', '1', 'yes', 'on', 't')

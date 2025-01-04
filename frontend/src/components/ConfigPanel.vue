@@ -209,6 +209,9 @@
 import { ref, onMounted, computed, onUnmounted } from 'vue'
 import { InfoCircleOutlined } from '@ant-design/icons-vue'
 import { message } from 'ant-design-vue'
+import { ref, onMounted } from 'vue';
+import { message } from 'ant-design-vue';
+import axios from 'axios';
 
 const config = ref({})
 const error = ref('')
@@ -411,6 +414,23 @@ const checkScanStatus = async () => {
   } catch (err) {
     console.error('检查扫描状态失败:', err)
   }
+}
+
+function getCronDescription(cron) {
+  // 简单的cron表达式说明
+  const parts = cron.split(' ');
+  if (parts.length !== 5) return '无效的cron表达式';
+
+  let desc = '';
+  if (parts[1].includes('*/')) {
+    const hours = parts[1].replace('*/', '');
+    desc = `每${hours}小时执行一次`;
+  } else if (parts[1] === '0' && parts[2] === '*') {
+    desc = '每天0点执行';
+  } else {
+    desc = '自定义执行时间';
+  }
+  return desc;
 }
 
 onMounted(() => {
