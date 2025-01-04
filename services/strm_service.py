@@ -23,15 +23,21 @@ class AlistClient:
                 "path": path,
                 "password": "",
                 "page": 1,
-                "per_page": 0
+                "per_page": 0,
+                "refresh": False
             })
             response.raise_for_status()
             data = response.json()
             if data.get("code") == 200:
-                return data.get("data", {}).get("content", [])
+                content = data.get("data", {}).get("content", [])
+                if content is None:  # 如果content为None，返回空列表
+                    logger.warning(f"目录访问被拒绝或不存在: {path}")
+                    return []
+                return content
+            logger.warning(f"获取目录列表失败: {path}, 状态码: {data.get('code')}")
             return []
         except Exception as e:
-            logger.error(f"获取文件列表失败: {str(e)}")
+            logger.error(f"获取文件列表失败: {path}, 错误: {str(e)}")
             return []
     
     async def close(self):
@@ -43,6 +49,18 @@ class StrmService:
         self.settings = Settings()
         self.alist_client = None
         self._stop_flag = False
+        self._skip_dirs = {
+            '@eaDir',          # 群晖缩略图目录
+            '#recycle',        # 回收站
+            '.DS_Store',       # Mac系统文件
+            '$RECYCLE.BIN',    # Windows回收站
+            'System Volume Information',  # Windows系统目录
+            '@Recently-Snapshot'  # 群晖快照目录
+        }
+    
+    def _should_skip_directory(self, path: str) -> bool:
+        """检查是否应该跳过某些系统目录"""
+        return any(skip_dir in path for skip_dir in self._skip_dirs)
     
     def stop(self):
         """设置停止标志"""
@@ -82,8 +100,16 @@ class StrmService:
             logger.info("检测到停止信号，正在结束扫描...")
             return
 
+        # 检查是否应该跳过此目录
+        if self._should_skip_directory(path):
+            logger.info(f"跳过系统目录: {path}")
+            return
+
         try:
             files = await self.alist_client.list_files(path)
+            if not files:  # 如果是空列表，直接返回
+                logger.debug(f"目录为空或无法访问: {path}")
+                return
             
             for file in files:
                 if self._stop_flag:
@@ -91,14 +117,14 @@ class StrmService:
                     
                 full_path = f"{path}/{file['name']}"
                 
-                if file['is_dir']:
+                if file.get('is_dir', False):
                     await self._process_directory(full_path)
                 else:
                     await self._process_file(full_path, file)
                     
         except Exception as e:
             logger.error(f"处理目录 {path} 时出错: {str(e)}")
-            raise
+            return  # 出错时继续处理其他目录，而不是抛出异常
     
     async def _process_file(self, path, file_info):
         """处理文件"""
