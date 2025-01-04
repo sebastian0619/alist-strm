@@ -3,6 +3,7 @@
 FROM node:18-alpine as frontend-builder
 WORKDIR /app/frontend
 COPY frontend/package*.json ./
+RUN npm install ant-design-vue @ant-design/icons-vue --save
 RUN npm install
 COPY frontend/ .
 RUN npm run build
@@ -23,11 +24,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # 复制后端代码
 COPY . .
 
-# 创建静态文件目录
-RUN mkdir -p static
-
-# 复制前端构建产物到static目录
-COPY --from=frontend-builder /app/frontend/dist/* /app/static/
+# 复制前端构建产物
+COPY --from=frontend-builder /app/frontend/dist /app/static
 
 # 设置环境变量
 ENV PYTHONPATH=/app
@@ -36,5 +34,4 @@ ENV PORT=8081
 # 暴露端口
 EXPOSE 8081
 
-# 启动命令
 CMD ["python", "main.py"]

@@ -1,10 +1,13 @@
 <template>
-  <div class="container">
-    <a-tabs v-model:activeKey="activeKey">
-      <a-tab-pane key="1" tab="配置">
+  <div class="app-container">
+    <a-layout>
+      <a-layout-header class="header">
+        <h1>Alist STRM 配置</h1>
+      </a-layout-header>
+      <a-layout-content class="main-content">
         <config-panel @scan-started="showLogModal" />
-      </a-tab-pane>
-    </a-tabs>
+      </a-layout-content>
+    </a-layout>
 
     <!-- 日志弹窗 -->
     <a-modal
@@ -30,7 +33,6 @@ export default {
     ConfigPanel
   },
   setup() {
-    const activeKey = ref('1')
     const logModalVisible = ref(false)
     const logs = ref('')
 
@@ -57,7 +59,6 @@ export default {
     }
 
     return {
-      activeKey,
       logModalVisible,
       logs,
       showLogModal
@@ -66,11 +67,28 @@ export default {
 }
 </script>
 
-<style scoped>
-.container {
-  padding: 20px;
-  max-width: 1200px;
-  margin: 0 auto;
+<style>
+.app-container {
+  min-height: 100vh;
+  background-color: #f0f2f5;
+}
+
+.header {
+  background: #fff;
+  padding: 0;
+  text-align: center;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.header h1 {
+  margin: 0;
+  line-height: 64px;
+  color: #1890ff;
+}
+
+.main-content {
+  padding: 24px;
+  min-height: calc(100vh - 64px);
 }
 
 .log-container {
