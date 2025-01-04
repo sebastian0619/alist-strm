@@ -1,48 +1,50 @@
 from pydantic_settings import BaseSettings
-from typing import List
-from pydantic import Field, model_validator
+from typing import Optional, List
+from pydantic import Field, model_validator, ConfigDict
 
 class Settings(BaseSettings):
     """应用配置"""
     
     # 基本配置
-    run_after_startup: bool = Field(default=False)
-    log_level: str = Field(default="INFO")
-    slow_mode: bool = Field(default=False)
+    run_after_startup: bool = Field(default=False, alias="RUN_AFTER_STARTUP")
+    log_level: str = Field(default="INFO", alias="LOG_LEVEL")
+    slow_mode: bool = Field(default=False, alias="SLOW_MODE")
     
     # 定时任务配置
-    schedule_enabled: bool = Field(default=False)
-    schedule_cron: str = Field(default="0 */6 * * *")  # 默认每6小时执行一次
+    schedule_enabled: bool = Field(default=False, alias="SCHEDULE_ENABLED")
+    schedule_cron: str = Field(default="0 */6 * * *", alias="SCHEDULE_CRON")  # 默认每6小时执行一次
     
     # Alist配置
-    alist_url: str = Field(default="http://localhost:5244")
-    alist_token: str = Field(default="")
-    alist_scan_path: str = Field(default="/")
+    alist_url: str = Field(default="", alias="ALIST_URL")
+    alist_token: str = Field(default="", alias="ALIST_TOKEN")
+    alist_scan_path: str = Field(default="", alias="ALIST_SCAN_PATH")
     
     # 文件处理配置
-    encode: str = Field(default="UTF-8")
-    is_down_sub: bool = Field(default=True)
-    is_down_meta: bool = Field(default=True)
-    min_file_size: int = Field(default=100)
-    output_dir: str = Field(default="./data")
-    refresh: bool = Field(default=False)
+    encode: bool = Field(default=True, alias="ENCODE")
+    is_down_sub: bool = Field(default=False, alias="IS_DOWN_SUB")
+    is_down_meta: bool = Field(default=False, alias="IS_DOWN_META")
+    min_file_size: int = Field(default=100, alias="MIN_FILE_SIZE")
+    output_dir: str = Field(default="data", alias="OUTPUT_DIR")
+    refresh: bool = Field(default=True, alias="REFRESH")
     
-    # 跳过规则配置（字符串形式，用逗号分隔）
-    skip_patterns: str = Field(default="")
-    skip_folders: str = Field(default="")
-    skip_extensions: str = Field(default="")
+    # 跳过规则配置
+    skip_patterns: str = Field(default="", alias="SKIP_PATTERNS")
+    skip_folders: str = Field(default="", alias="SKIP_FOLDERS")
+    skip_extensions: str = Field(default="", alias="SKIP_EXTENSIONS")
     
     # Telegram配置
-    tg_enabled: bool = Field(default=False)
-    tg_token: str = Field(default="")
-    tg_chat_id: str = Field(default="")
-    tg_proxy_url: str = Field(default="")
-    
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        case_sensitive = False
-    
+    tg_enabled: bool = Field(default=False, alias="TG_ENABLED")
+    tg_token: str = Field(default="", alias="TG_TOKEN")
+    tg_chat_id: str = Field(default="", alias="TG_CHAT_ID")
+    tg_proxy_url: str = Field(default="", alias="TG_PROXY_URL")
+
+    model_config = ConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="allow"
+    )
+
     @property
     def skip_patterns_list(self) -> List[str]:
         """获取跳过模式列表"""
@@ -61,8 +63,9 @@ class Settings(BaseSettings):
     @model_validator(mode='before')
     def parse_booleans(cls, values):
         """解析布尔类型的字段"""
-        bool_fields = ['run_after_startup', 'slow_mode', 'is_down_sub', 
-                      'is_down_meta', 'refresh', 'tg_enabled', 'schedule_enabled']
+        bool_fields = ['run_after_startup', 'slow_mode', 'encode', 
+                      'is_down_sub', 'is_down_meta', 'refresh', 'tg_enabled',
+                      'schedule_enabled']
         for field in bool_fields:
             if field in values and isinstance(values[field], str):
                 values[field] = str(values[field]).lower() in ('true', '1', 'yes', 'on', 't')
