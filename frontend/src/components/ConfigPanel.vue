@@ -191,57 +191,30 @@
         >
           重新加载
         </a-button>
+        <a-button 
+          type="primary"
+          :loading="scanning"
+          @click="toggleScan"
+          style="margin-left: 16px"
+          :danger="scanning"
+        >
+          {{ scanning ? '停止扫描' : '开始扫描' }}
+        </a-button>
       </div>
     </a-card>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, onUnmounted } from 'vue'
 import { InfoCircleOutlined } from '@ant-design/icons-vue'
 import { message } from 'ant-design-vue'
 
-const config = ref({
-  run_after_startup: true,
-  log_level: 'INFO',
-  slow_mode: false,
-  alist_url: 'http://localhost:5244',
-  alist_token: '',
-  alist_scan_path: '/',
-  encode: true,
-  is_down_sub: false,
-  is_down_meta: false,
-  min_file_size: 100,
-  output_dir: 'data'
-})
-
+const config = ref({})
 const error = ref('')
 const loading = ref(false)
 const saving = ref(false)
-
-// 验证配置是否完整
-const validateConfig = () => {
-  if (!config.value.alist_url) {
-    message.error('请输入Alist服务器地址')
-    return false
-  }
-  if (!config.value.alist_url.startsWith('http://') && !config.value.alist_url.startsWith('https://')) {
-    message.error('Alist服务器地址必须以http://或https://开头')
-    return false
-  }
-  if (!config.value.alist_token) {
-    message.warning('未设置Alist Token可能会导致访问受限')
-  }
-  if (!config.value.alist_scan_path) {
-    message.error('请输入扫描路径')
-    return false
-  }
-  if (!config.value.output_dir) {
-    message.error('请输入输出目录')
-    return false
-  }
-  return true
-}
+const scanning = ref(false)
 
 // 检查配置是否有变更
 const hasChanges = ref(false)
@@ -274,7 +247,8 @@ const loadConfig = async () => {
     }
     const data = await response.json()
     if (data.code === 200) {
-      config.value = { ...config.value, ...data.data }
+      // 使用后端返回的配置
+      config.value = data.data
       // 保存原始配置用于比较
       originalConfig.value = { ...config.value }
       hasChanges.value = false
@@ -364,9 +338,98 @@ const testConnection = async () => {
   }
 }
 
+// 验证配置
+const validateConfig = () => {
+  if (!config.value.alist_url) {
+    message.error('请输入Alist服务器地址')
+    return false
+  }
+  if (!config.value.alist_url.startsWith('http://') && !config.value.alist_url.startsWith('https://')) {
+    message.error('Alist服务器地址必须以http://或https://开头')
+    return false
+  }
+  if (!config.value.alist_token) {
+    message.warning('未设置Alist Token可能会导致访问受限')
+  }
+  if (!config.value.alist_scan_path) {
+    message.error('请输入扫描路径')
+    return false
+  }
+  if (!config.value.output_dir) {
+    message.error('请输入输出目录')
+    return false
+  }
+  return true
+}
+
+// 开始/停止扫描
+const toggleScan = async () => {
+  try {
+    if (scanning.value) {
+      // 停止扫描
+      const response = await fetch('/api/strm/stop', {
+        method: 'POST'
+      })
+      if (!response.ok) {
+        throw new Error('停止扫描失败')
+      }
+      const data = await response.json()
+      if (data.code === 200) {
+        message.success('已停止扫描')
+        scanning.value = false
+      } else {
+        throw new Error(data.message || '停止扫描失败')
+      }
+    } else {
+      // 开始扫描
+      const response = await fetch('/api/strm/start', {
+        method: 'POST'
+      })
+      if (!response.ok) {
+        throw new Error('开始扫描失败')
+      }
+      const data = await response.json()
+      if (data.code === 200) {
+        message.success('开始扫描')
+        scanning.value = true
+      } else {
+        throw new Error(data.message || '开始扫描失败')
+      }
+    }
+  } catch (err) {
+    message.error(err.message)
+  }
+}
+
+// 检查扫描状态
+const checkScanStatus = async () => {
+  try {
+    const response = await fetch('/api/strm/status')
+    if (!response.ok) {
+      return
+    }
+    const data = await response.json()
+    if (data.code === 200) {
+      scanning.value = data.data.scanning
+    }
+  } catch (err) {
+    console.error('检查扫描状态失败:', err)
+  }
+}
+
 onMounted(() => {
+  // 组件加载时立即获取配置和扫描状态
   loadConfig()
   watchConfig()
+  checkScanStatus()
+  
+  // 定期检查扫描状态
+  const statusInterval = setInterval(checkScanStatus, 5000)
+  
+  // 组件卸载时清理定时器
+  onUnmounted(() => {
+    clearInterval(statusInterval)
+  })
 })
 </script>
 

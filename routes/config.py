@@ -46,26 +46,70 @@ class ConfigUpdate(BaseModel):
             raise ValueError('输出目录不能为空')
         return v
 
-def load_env_file():
-    """从.env文件加载配置"""
+def get_env_value(key: str, default: str = "") -> str:
+    """获取环境变量值，遵循优先级顺序"""
+    # 1. 从系统环境变量获取（包括docker-compose设置的环境变量）
+    env_value = os.getenv(key.upper())
+    if env_value is not None:
+        return env_value
+    
+    # 2. 从.env文件获取
     try:
         with open(".env", "r", encoding="utf-8") as f:
-            config = {}
             for line in f:
                 line = line.strip()
                 if line and not line.startswith("#"):
                     try:
-                        key, value = line.split("=", 1)
-                        config[key.lower()] = value.strip('"').strip("'")
+                        k, v = line.split("=", 1)
+                        if k.upper() == key.upper():
+                            return v.strip('"').strip("'")
                     except ValueError:
-                        logger.warning(f"忽略无效的配置行: {line}")
-            return config
+                        continue
     except FileNotFoundError:
-        logger.info(".env文件不存在，将使用默认配置")
-        return {}
+        pass
     except Exception as e:
-        logger.error(f"加载.env文件失败: {str(e)}")
-        return {}
+        logger.warning(f"读取.env文件时出错: {str(e)}")
+    
+    # 3. 返回默认值
+    return default
+
+def load_config():
+    """加载配置，遵循优先级顺序"""
+    # 获取Settings类的默认值作为基础
+    settings = Settings()
+    config = settings.dict()
+    
+    # 定义需要处理的配置项
+    config_keys = {
+        'run_after_startup': str(config['run_after_startup']).lower(),
+        'log_level': config['log_level'],
+        'slow_mode': str(config['slow_mode']).lower(),
+        'alist_url': config['alist_url'],
+        'alist_token': config['alist_token'],
+        'alist_scan_path': config['alist_scan_path'],
+        'encode': str(config['encode']).lower(),
+        'is_down_sub': str(config['is_down_sub']).lower(),
+        'is_down_meta': str(config['is_down_meta']).lower(),
+        'min_file_size': str(config['min_file_size']),
+        'output_dir': config['output_dir']
+    }
+    
+    # 按优先级获取每个配置项的值
+    for key, default in config_keys.items():
+        value = get_env_value(key, default)
+        
+        # 转换布尔值和数字
+        if key in ['run_after_startup', 'slow_mode', 'encode', 'is_down_sub', 'is_down_meta']:
+            config[key] = value.lower() == 'true'
+        elif key == 'min_file_size':
+            try:
+                config[key] = int(value)
+            except ValueError:
+                config[key] = int(default)
+        else:
+            config[key] = value
+    
+    return config
 
 def save_env_file(config: dict):
     """保存配置到.env文件"""
@@ -109,25 +153,8 @@ OUTPUT_DIR={config['output_dir']}
 async def get_config():
     """获取当前配置"""
     try:
-        # 尝试从.env文件读取配置
-        config = load_env_file()
-        
-        # 如果.env为空或不存在，使用默认配置
-        if not config:
-            config = Settings().dict()
-        
-        # 转换布尔值和数字
-        bool_fields = ['run_after_startup', 'slow_mode', 'encode', 'is_down_sub', 'is_down_meta']
-        for field in bool_fields:
-            if field in config:
-                config[field] = str(config[field]).lower() == 'true'
-        
-        if 'min_file_size' in config:
-            try:
-                config['min_file_size'] = int(config['min_file_size'])
-            except ValueError:
-                config['min_file_size'] = 100
-
+        # 按优先级加载配置
+        config = load_config()
         return {"code": 200, "data": config}
     except Exception as e:
         logger.error(f"获取配置失败: {str(e)}")
@@ -139,10 +166,6 @@ async def update_config(config: ConfigUpdate):
     try:
         # 保存配置到.env文件
         save_env_file(config.dict())
-        
-        # 重新加载Settings
-        settings = Settings()
-        
         return {"code": 200, "message": "配置更新成功"}
     except ValueError as e:
         # 验证错误
