@@ -1,6 +1,6 @@
 from pydantic_settings import BaseSettings
 from typing import Optional, List
-from pydantic import Field, model_validator
+from pydantic import Field, model_validator, ConfigDict
 
 class Settings(BaseSettings):
     # 基本配置
@@ -22,9 +22,9 @@ class Settings(BaseSettings):
     refresh: bool = Field(default=True, alias="REFRESH")
 
     # 跳过规则配置
-    skip_patterns: List[str] = Field(default=[], alias="SKIP_PATTERNS")
-    skip_folders: List[str] = Field(default=[], alias="SKIP_FOLDERS")
-    skip_extensions: List[str] = Field(default=[], alias="SKIP_EXTENSIONS")
+    skip_patterns: str = Field(default="", alias="SKIP_PATTERNS")
+    skip_folders: str = Field(default="", alias="SKIP_FOLDERS")
+    skip_extensions: str = Field(default="", alias="SKIP_EXTENSIONS")
 
     # Telegram配置
     tg_enabled: bool = Field(default=False, alias="TG_ENABLED")
@@ -32,19 +32,27 @@ class Settings(BaseSettings):
     tg_chat_id: str = Field(default="", alias="TG_CHAT_ID")
     tg_proxy_url: str = Field(default="", alias="TG_PROXY_URL")
 
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        case_sensitive = False
+    model_config = ConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="allow"
+    )
 
-    @model_validator(mode='before')
-    def parse_lists(cls, values):
-        """解析列表类型的字段"""
-        list_fields = ['skip_patterns', 'skip_folders', 'skip_extensions']
-        for field in list_fields:
-            if field in values and isinstance(values[field], str):
-                values[field] = [item.strip() for item in values[field].split(',') if item.strip()]
-        return values
+    @property
+    def skip_patterns_list(self) -> List[str]:
+        """获取跳过模式列表"""
+        return [item.strip() for item in self.skip_patterns.split(",") if item.strip()]
+
+    @property
+    def skip_folders_list(self) -> List[str]:
+        """获取跳过文件夹列表"""
+        return [item.strip() for item in self.skip_folders.split(",") if item.strip()]
+
+    @property
+    def skip_extensions_list(self) -> List[str]:
+        """获取跳过扩展名列表"""
+        return [item.strip() for item in self.skip_extensions.split(",") if item.strip()]
 
     @model_validator(mode='before')
     def parse_booleans(cls, values):

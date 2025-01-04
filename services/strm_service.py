@@ -69,12 +69,12 @@ class StrmService:
             return True
             
         # 检查用户配置的目录
-        if any(skip_folder in path for skip_folder in self.settings.skip_folders):
+        if any(skip_folder in path for skip_folder in self.settings.skip_folders_list):
             logger.info(f"跳过用户配置的目录: {path}")
             return True
             
         # 检查用户配置的模式
-        if any(re.search(pattern, path) for pattern in self.settings.skip_patterns):
+        if any(re.search(pattern, path) for pattern in self.settings.skip_patterns_list):
             logger.info(f"跳过匹配模式的目录: {path}")
             return True
             
@@ -84,12 +84,12 @@ class StrmService:
         """检查是否应该跳过某些文件"""
         # 检查文件扩展名
         ext = os.path.splitext(filename)[1].lower()
-        if ext in self.settings.skip_extensions:
+        if ext in self.settings.skip_extensions_list:
             logger.info(f"跳过指定扩展名的文件: {filename}")
             return True
             
         # 检查用户配置的模式
-        if any(re.search(pattern, filename) for pattern in self.settings.skip_patterns):
+        if any(re.search(pattern, filename) for pattern in self.settings.skip_patterns_list):
             logger.info(f"跳过匹配模式的文件: {filename}")
             return True
             
