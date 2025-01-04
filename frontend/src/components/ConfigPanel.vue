@@ -60,6 +60,67 @@
         </a-tooltip>
       </a-form-item>
 
+      <!-- 基本配置 -->
+      <a-divider>基本配置</a-divider>
+      <a-form-item label="启动时自动运行">
+        <a-switch v-model:checked="config.run_after_startup" />
+        <a-tooltip>
+          <template #title>
+            容器启动时是否自动开始扫描
+          </template>
+          <info-circle-outlined style="margin-left: 8px" />
+        </a-tooltip>
+      </a-form-item>
+      <a-form-item label="慢速模式">
+        <a-switch v-model:checked="config.slow_mode" />
+        <a-tooltip>
+          <template #title>
+            启用后会降低扫描速度，减少对系统资源的占用
+          </template>
+          <info-circle-outlined style="margin-left: 8px" />
+        </a-tooltip>
+      </a-form-item>
+      <a-form-item label="日志级别">
+        <a-select v-model:value="config.log_level">
+          <a-select-option value="DEBUG">DEBUG</a-select-option>
+          <a-select-option value="INFO">INFO</a-select-option>
+          <a-select-option value="WARNING">WARNING</a-select-option>
+          <a-select-option value="ERROR">ERROR</a-select-option>
+        </a-select>
+      </a-form-item>
+
+      <!-- 定时任务配置 -->
+      <a-divider>定时任务配置</a-divider>
+      <a-form-item label="启用定时扫描">
+        <a-switch v-model:checked="config.schedule_enabled" />
+        <a-tooltip>
+          <template #title>
+            是否启用定时自动扫描功能
+          </template>
+          <info-circle-outlined style="margin-left: 8px" />
+        </a-tooltip>
+      </a-form-item>
+      <a-form-item 
+        label="定时表达式" 
+        :help="getCronDescription(config.schedule_cron)"
+      >
+        <a-input 
+          v-model:value="config.schedule_cron" 
+          placeholder="Cron表达式，例如: 0 */6 * * * (每6小时执行一次)"
+          :disabled="!config.schedule_enabled"
+        />
+        <a-tooltip>
+          <template #title>
+            Cron表达式格式：分 时 日 月 星期
+            例如：
+            0 */6 * * * (每6小时执行一次)
+            0 0 * * * (每天0点执行)
+            0 */12 * * * (每12小时执行一次)
+          </template>
+          <info-circle-outlined style="margin-left: 8px" />
+        </a-tooltip>
+      </a-form-item>
+
       <!-- Alist配置 -->
       <a-divider>Alist 配置</a-divider>
       <a-form-item label="Alist 服务器地址" required>
@@ -276,24 +337,39 @@ const saveConfig = async () => {
   saving.value = true
   error.value = ''
   try {
-    const response = await fetch('/api/config', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(config.value)
-    })
-    if (!response.ok) {
-      throw new Error(`配置保存失败: ${response.statusText}`)
+    // 保存每个配置项
+    for (const [key, value] of Object.entries(config.value)) {
+      if (JSON.stringify(value) !== JSON.stringify(originalConfig.value[key])) {
+        const response = await fetch('/api/config', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            key: key,
+            value: value
+          })
+        })
+        
+        if (!response.ok) {
+          throw new Error(`保存配置 ${key} 失败: ${response.statusText}`)
+        }
+        
+        const data = await response.json()
+        if (!data.message) {
+          throw new Error(data.message || `保存配置 ${key} 失败`)
+        }
+      }
     }
-    const data = await response.json()
-    if (data.code === 200) {
-      // 更新原始配置
-      originalConfig.value = { ...config.value }
-      hasChanges.value = false
-      message.success('配置保存成功')
-    } else {
-      throw new Error(data.message || '配置保存失败')
+    
+    // 更新原始配置
+    originalConfig.value = { ...config.value }
+    hasChanges.value = false
+    message.success('配置保存成功')
+    
+    // 如果定时任务配置发生变化，显示提示信息
+    if (config.value.schedule_enabled) {
+      message.info(`定时任务已设置为${getCronDescription(config.value.schedule_cron)}`)
     }
   } catch (err) {
     error.value = `配置保存失败: ${err.message}`
@@ -362,7 +438,25 @@ const validateConfig = () => {
     message.error('请输入输出目录')
     return false
   }
+  
+  // 验证定时任务配置
+  if (config.value.schedule_enabled && !validateCron(config.value.schedule_cron)) {
+    message.error('请输入有效的Cron表达式')
+    return false
+  }
+  
   return true
+}
+
+// 验证Cron表达式
+const validateCron = (cron) => {
+  if (!cron) return false
+  const parts = cron.split(' ')
+  if (parts.length !== 5) return false
+  
+  // 简单的格式验证，实际应用中可能需要更复杂的验证
+  const cronRegex = /^[0-9*/,-]+\s[0-9*/,-]+\s[0-9*/,-]+\s[0-9*/,-]+\s[0-9*/,-]+$/
+  return cronRegex.test(cron)
 }
 
 const startScan = async () => {
