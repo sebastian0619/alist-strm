@@ -206,6 +206,50 @@
         </a-tooltip>
       </a-form-item>
 
+      <!-- 跳过规则配置 -->
+      <a-divider>跳过规则配置</a-divider>
+      <a-form-item label="跳过文件模式">
+        <a-input
+          v-model:value="config.skip_patterns"
+          placeholder="支持正则表达式，多个规则用逗号分隔，例如: sample,trailer,预告片"
+        />
+        <a-tooltip>
+          <template #title>
+            支持正则表达式，多个规则用逗号分隔
+            例如：sample,trailer,预告片
+          </template>
+          <info-circle-outlined style="margin-left: 8px" />
+        </a-tooltip>
+      </a-form-item>
+
+      <a-form-item label="跳过文件夹">
+        <a-input
+          v-model:value="config.skip_folders"
+          placeholder="多个文件夹用逗号分隔，例如: extras,花絮,番外,特典"
+        />
+        <a-tooltip>
+          <template #title>
+            指定要跳过的文件夹名称，多个用逗号分隔
+            例如：extras,花絮,番外,特典
+          </template>
+          <info-circle-outlined style="margin-left: 8px" />
+        </a-tooltip>
+      </a-form-item>
+
+      <a-form-item label="跳过扩展名">
+        <a-input
+          v-model:value="config.skip_extensions"
+          placeholder="多个扩展名用逗号分隔（包含点号），例如: .iso,.mka"
+        />
+        <a-tooltip>
+          <template #title>
+            指定要跳过的文件扩展名，多个用逗号分隔（包含点号）
+            例如：.iso,.mka
+          </template>
+          <info-circle-outlined style="margin-left: 8px" />
+        </a-tooltip>
+      </a-form-item>
+
       <!-- 按钮组 -->
       <div class="button-group">
         <a-button 
