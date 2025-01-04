@@ -31,10 +31,24 @@ if settings.log_level:
     logger.add(lambda msg: print(msg), level=settings.log_level)
 
 # 挂载静态文件
-if os.path.exists("static"):
-    app.mount("/", StaticFiles(directory="static", html=True), name="static")
+static_dir = os.path.join(os.path.dirname(__file__), "static")
+if os.path.exists(static_dir):
+    logger.info(f"挂载静态文件目录: {static_dir}")
+    try:
+        # 检查目录内容
+        files = os.listdir(static_dir)
+        logger.info(f"静态文件目录内容: {files}")
+        
+        # 检查是否存在 index.html
+        if "index.html" in files:
+            app.mount("/", StaticFiles(directory=static_dir, html=True), name="static")
+            logger.info("静态文件挂载成功")
+        else:
+            logger.warning("静态文件目录中没有找到 index.html")
+    except Exception as e:
+        logger.error(f"挂载静态文件失败: {str(e)}")
 else:
-    logger.warning("静态文件目录不存在，前端界面将无法访问")
+    logger.warning(f"静态文件目录不存在: {static_dir}")
 
 @app.on_event("startup")
 async def startup_event():
