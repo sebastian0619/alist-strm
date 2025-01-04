@@ -2,6 +2,7 @@ import os
 import asyncio
 from loguru import logger
 from services.strm_service import StrmService
+from services.scheduler_service import SchedulerService
 from config import Settings
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware

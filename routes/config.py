@@ -3,10 +3,11 @@ from pydantic import BaseModel
 from typing import Dict, Any
 import os
 from config import Settings
-from main import scheduler_service
+from services.scheduler_service import SchedulerService
 
 router = APIRouter()
 settings = Settings()
+scheduler_service = SchedulerService()
 
 class ConfigUpdate(BaseModel):
     key: str
