@@ -1,171 +1,136 @@
 # Alist-STRM
 
-[![Python](https://img.shields.io/badge/Python-3.8%2B-blue)](https://www.python.org/)
-[![Vue](https://img.shields.io/badge/Vue.js-3.x-green)](https://vuejs.org/)
-[![Docker](https://img.shields.io/badge/Docker-ready-blue)](https://www.docker.com/)
-[![License](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Alist](https://img.shields.io/badge/Alist-3.x-orange)](https://alist.nn.ci/)
+一个用于将 Alist 视频文件转换为 STRM 文件的工具，方便将网盘资源导入Emby/Jellyfin/Plex等媒体服务器。
 
-[English](README_en.md) | 简体中文
+本项目是基于[Alist-STRM](https://github.com/907739769/alist-strm)项目的Python实现，感谢原作者的贡献。
 
-一个用于自动为Alist媒体文件生成STRM文件的工具，支持Vue3前端配置界面。
+基于原作者代码思路，通过GPT改写，添加了WebUI界面，和一系列UI相关的配置(配置可通过环境变量/.env文件或直接通过WebUI设置)。支持定时任务（可通过Web UI设置Cron表达式）和UI手动启动扫描，支持优雅停止。支持Telegram通知，支持跳过指定目录、文件类型和模式，支持URL编码选项，支持多种视频格式（mp4, mkv, avi 等）。
 
-## 主要功能
+## 功能特点
 
-- 🎬 自动扫描Alist目录并生成STRM文件
-- 📝 支持字幕文件自动下载
-- 📊 支持媒体元数据文件下载（NFO、海报等）
-- 🌐 Vue3前端配置界面
-- 🐳 Docker支持
-- 🔄 支持目录替换和路径映射
-- 📱 Telegram通知支持
+- 🚀 自动扫描 Alist 目录并生成 STRM 文件
+- ⏰ 支持定时任务（可通过 Web UI 设置 Cron 表达式）
+- 🎯 支持跳过指定目录、文件类型和模式
+- 📝 支持 URL 编码选项
+- 🔄 支持自动启动扫描
+- 🌐 提供 Web 界面进行配置和控制
+- 📱 支持 Telegram 通知
+- ⏹ 支持优雅停止扫描
+- 🎬 支持多种视频格式（mp4, mkv, avi 等）
 
-## 快速开始
+## 使用方法
 
-### Docker部署
+### Docker 部署
 
-1. 克隆仓库：
 ```bash
-git clone https://github.com/yourusername/alist-strm.git
-cd alist-strm
+docker run -d \
+  --name alist-strm \
+  -p 8081:8081 \
+  -v /path/to/data:/app/data \
+  -e ALIST_URL=http://your-alist-url \
+  -e ALIST_TOKEN=your-alist-token \
+  -e ALIST_SCAN_PATH=/path/to/scan \
+  ghcr.io/sebastian0619/alist-strm:latest
 ```
 
-2. 配置环境变量：
-创建`.env`文件或直接使用环境变量：
-```env
-ALIST_URL=http://your-alist-url:5244
-ALIST_TOKEN=your-alist-token
-ALIST_SCAN_PATH=/path/to/scan
-OUTPUT_DIR=data
-```
+### Docker Compose 部署
 
-3. 启动服务：
-```bash
-docker-compose up -d
-```
-
-### 本地部署
-
-1. 安装依赖：
-```bash
-pip install -r requirements.txt
-```
-
-2. 配置环境变量（同上）
-
-3. 启动服务：
-```bash
-python main.py
+```yaml
+version: '3'
+services:
+  alist-strm:
+    image: ghcr.io/sebastian0619/alist-strm:latest
+    container_name: alist-strm
+    ports:
+      - "8081:8081"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - ALIST_URL=http://your-alist-url
+      - ALIST_TOKEN=your-alist-token
+      - ALIST_SCAN_PATH=/path/to/scan
+    restart: unless-stopped
 ```
 
 ## 配置说明
 
 ### 基本配置
 
-| 配置项 | 说明 | 默认值 |
-|--------|------|--------|
-| ALIST_URL | Alist服务器地址 | http://localhost:5244 |
-| ALIST_TOKEN | Alist认证令牌 | 无 |
-| ALIST_SCAN_PATH | 扫描路径 | / |
-| OUTPUT_DIR | STRM文件输出目录 | data |
+- `RUN_AFTER_STARTUP`: 是否在启动时自动开始扫描（默认：false）
+- `LOG_LEVEL`: 日志级别（默认：INFO）
+- `SLOW_MODE`: 是否启用慢速模式（默认：false）
+- `CRON_EXPRESSION`: 定时任务 Cron 表达式（默认：空，不启用定时）
 
-### 功能开关
+### Alist 配置
 
-| 配置项 | 说明 | 默认值 |
-|--------|------|--------|
-| ENCODE | 是否对URL进行编码 | true |
-| IS_DOWN_SUB | 是否下载字幕文件 | false |
-| IS_DOWN_META | 是否下载元数据文件 | false |
-| SLOW_MODE | 是否启用慢速模式 | false |
-| RUN_AFTER_STARTUP | 启动后是否立即运行 | true |
+- `ALIST_URL`: Alist 服务器地址
+- `ALIST_TOKEN`: Alist API Token
+- `ALIST_SCAN_PATH`: 要扫描的 Alist 目录路径
 
-### 高级配置
+### 文件处理配置
 
-| 配置项 | 说明 | 默认值 |
-|--------|------|--------|
-| MIN_FILE_SIZE | 最小文件大小(MB) | 100 |
-| REPLACE_DIR | 目录替换规则 | 无 |
-| SRC_DIR | 源目录路径 | 无 |
-| DST_DIR | 目标目录路径 | 无 |
+- `ENCODE`: 是否对 URL 进行编码（默认：true）
+- `IS_DOWN_SUB`: 是否下载字幕文件（默认：false）
+- `IS_DOWN_META`: 是否下载元数据文件（默认：false）
+- `MIN_FILE_SIZE`: 最小文件大小（MB）（默认：100）
+- `OUTPUT_DIR`: STRM 文件输出目录（默认：data）
+- `REFRESH`: 是否刷新文件列表（默认：true）
 
-### Telegram通知配置
+### 跳过规则配置
 
-| 配置项 | 说明 | 默认值 |
-|--------|------|--------|
-| TG_TOKEN | Telegram Bot Token | 无 |
-| TG_USER_ID | Telegram用户ID | 无 |
-| TELEGRAM_BOT_PROXY_HOST | 代理服务器地址 | 无 |
-| TELEGRAM_BOT_PROXY_PORT | 代理服务器端口 | 无 |
+- `SKIP_PATTERNS`: 要跳过的文件/目录模式，支持正则表达式（例如：sample,trailer,预告片）
+- `SKIP_FOLDERS`: 要跳过的文件夹名称（例如：extras,花絮,番外,特典）
+- `SKIP_EXTENSIONS`: 要跳过的文件扩展名（例如：.iso,.mka）
 
-## 支持的文件类型
+### Telegram 通知配置
 
-### 视频文件
-- .mp4
-- .mkv
-- .avi
-- .mov
-- .wmv
-- .flv
-- .m4v
-- .rmvb
+- `TG_ENABLED`: 是否启用 Telegram 通知（默认：false）
+- `TG_TOKEN`: Telegram Bot Token
+- `TG_CHAT_ID`: Telegram 聊天 ID
+- `TG_PROXY_URL`: Telegram 代理地址（可选）
 
-### 字幕文件
-- .srt
-- .ass
-- .ssa
-- .sub
+## Web 界面
 
-### 元数据文件
-- .nfo（媒体信息）
-- .jpg/.jpeg/.png（封面图片）
-- .tbn（缩略图）
-- poster.jpg（海报）
-- fanart.jpg（同人画）
-- banner.jpg（横幅）
-- landscape.jpg（风景图）
-- thumb.jpg（缩略图）
-- logo.png（Logo）
-- clearart.png（清晰艺术图）
-- disc.png（光盘图）
-- backdrop.jpg（背景图）
+访问 `http://your-ip:8081` 可以进行以下操作：
 
-## 前端界面
-
-访问 `http://your-ip:3000` 可以打开Web配置界面，支持：
-
-- 基本配置管理
-- STRM文件生成
-- 实时日志查看
-- 配置导入导出
+- 查看和修改配置
+- 设置定时任务（Cron 表达式）
+- 启动/停止扫描
+- 查看扫描状态和日志
 
 ## 注意事项
 
-1. 确保Alist Token具有足够的权限
-2. 大型目录建议开启慢速模式
-3. 输出目录需要有写入权限
-4. Docker部署时注意映射正确的端口和目录
+1. 确保 Alist 服务器可以正常访问
+2. 配置正确的 Alist Token
+3. 设置合适的文件大小限制
+4. 根据需要配置跳过规则
+5. 如需使用 Telegram 通知，请正确配置相关参数
 
-## 常见问题
+## 系统要求
 
-1. STRM文件无法播放
-   - 检查Alist URL是否可访问
-   - 确认Token权限是否正确
-   - 验证文件路径是否正确
+- Docker 环境
+- 可访问的 Alist 服务器
+- 足够的存储空间用于 STRM 文件
 
-2. 字幕文件未下载
-   - 确认IS_DOWN_SUB已开启
-   - 检查字幕文件格式是否支持
-   - 验证输出目录权限
+## 更新日志
 
-3. 目录替换不生效
-   - 检查REPLACE_DIR配置格式
-   - 确认SRC_DIR和DST_DIR配置正确
+### v1.0.0
+- 初始版本发布
 
-## 贡献指南
+### v1.1.0
+- 添加 Web 界面
+- 添加 Telegram 通知支持
+- 添加文件跳过规则
+- 添加扫描控制功能
 
-欢迎提交Issue和Pull Request！
+### v1.2.0
+- 优化停止扫描功能
+- 添加扫描状态显示
+- 改进错误处理
+- 优化配置管理
 
-## 许可证
-
-MIT License
+### v1.3.0
+- 添加定时任务功能
+- 支持通过 Web UI 设置 Cron 表达式
+- 优化定时任务管理
 
