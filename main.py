@@ -1,18 +1,16 @@
 import os
 import asyncio
+import uvicorn
 from loguru import logger
-from services.strm_service import StrmService
-from services.scheduler_service import SchedulerService
 from config import Settings
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from routes import config, strm, health
 from contextlib import asynccontextmanager
+from services.service_manager import scheduler_service, strm_service
 
 settings = Settings()
-strm_service = StrmService()
-scheduler_service = SchedulerService()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
