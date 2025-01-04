@@ -60,35 +60,6 @@
         </a-tooltip>
       </a-form-item>
 
-      <!-- 基本配置 -->
-      <a-divider>基本配置</a-divider>
-      <a-form-item label="启动时自动运行">
-        <a-switch v-model:checked="config.run_after_startup" />
-        <a-tooltip>
-          <template #title>
-            容器启动时是否自动开始扫描
-          </template>
-          <info-circle-outlined style="margin-left: 8px" />
-        </a-tooltip>
-      </a-form-item>
-      <a-form-item label="慢速模式">
-        <a-switch v-model:checked="config.slow_mode" />
-        <a-tooltip>
-          <template #title>
-            启用后会降低扫描速度，减少对系统资源的占用
-          </template>
-          <info-circle-outlined style="margin-left: 8px" />
-        </a-tooltip>
-      </a-form-item>
-      <a-form-item label="日志级别">
-        <a-select v-model:value="config.log_level">
-          <a-select-option value="DEBUG">DEBUG</a-select-option>
-          <a-select-option value="INFO">INFO</a-select-option>
-          <a-select-option value="WARNING">WARNING</a-select-option>
-          <a-select-option value="ERROR">ERROR</a-select-option>
-        </a-select>
-      </a-form-item>
-
       <!-- 定时任务配置 -->
       <a-divider>定时任务配置</a-divider>
       <a-form-item label="启用定时扫描">
