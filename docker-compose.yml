@@ -1,14 +1,13 @@
 version: '3'
 services:
   alist-strm:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    #image: ghcr.io/sebastian0619/alist-strm:latest
+   #build:
+   #   context: .
+   #   dockerfile: Dockerfile
+    image: ghcr.io/sebastian0619/alist-strm:latest
     container_name: alist-strm
     ports:
       - "8081:8081"
-      - "5173:5173"
     volumes:
       - ./.env:/app/.env:ro
       - ./data:/app/data
