@@ -267,12 +267,12 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed, onUnmounted } from 'vue'
+import { ref, onMounted, computed, onUnmounted, watch } from 'vue'
 import { InfoCircleOutlined } from '@ant-design/icons-vue'
 import { message } from 'ant-design-vue'
-import { ref, onMounted } from 'vue';
-import { message } from 'ant-design-vue';
-import axios from 'axios';
+import axios from 'axios'
+
+const emit = defineEmits(['scan-started'])
 
 const config = ref({})
 const error = ref('')
