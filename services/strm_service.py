@@ -61,6 +61,7 @@ class StrmService:
         }
         self._processed_files = 0
         self._total_size = 0
+        self._is_running = False
     
     def _should_skip_directory(self, path: str) -> bool:
         """检查是否应该跳过某些目录"""
@@ -97,13 +98,20 @@ class StrmService:
     
     def stop(self):
         """设置停止标志"""
+        if not self._is_running:
+            return
         self._stop_flag = True
         logger.info("收到停止信号，正在优雅停止...")
     
     async def strm(self):
         """生成strm文件"""
+        if self._is_running:
+            logger.warning("扫描任务已在运行中")
+            return
+            
         try:
             self._stop_flag = False
+            self._is_running = True
             self._processed_files = 0
             self._total_size = 0
             
@@ -121,6 +129,11 @@ class StrmService:
             
             await self._process_directory(self.settings.alist_scan_path)
             
+            if self._stop_flag:
+                await self.telegram.send_message("⏹ 扫描已停止")
+                logger.info("扫描已停止")
+                return
+            
             duration = time.time() - start_time
             summary = (
                 f"✅ 扫描完成\n"
@@ -137,6 +150,8 @@ class StrmService:
             await self.telegram.send_message(error_msg)
             raise
         finally:
+            self._is_running = False
+            self._stop_flag = False
             await self.close()
     
     def _format_size(self, size_bytes: int) -> str:
@@ -156,7 +171,6 @@ class StrmService:
     async def _process_directory(self, path):
         """处理目录"""
         if self._stop_flag:
-            logger.info("检测到停止信号，正在结束扫描...")
             return
 
         # 检查是否应该跳过此目录
@@ -177,13 +191,20 @@ class StrmService:
                 full_path = f"{path}/{file['name']}"
                 
                 if file.get('is_dir', False):
+                    if self._stop_flag:  # 每次处理子目录前检查停止标志
+                        return
                     await self._process_directory(full_path)
                 else:
+                    if self._stop_flag:  # 每次处理文件前检查停止标志
+                        return
                     await self._process_file(full_path, file)
+                    
+                # 添加短暂延时，让出控制权
+                await asyncio.sleep(0.01)
                     
         except Exception as e:
             logger.error(f"处理目录 {path} 时出错: {str(e)}")
-            return  # 出错时继续处理其他目录，而不是抛出异常
+            return
     
     async def _process_file(self, path, file_info):
         """处理文件"""
