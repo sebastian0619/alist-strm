@@ -7,6 +7,7 @@ from loguru import logger
 from config import Settings
 from typing import List, Optional
 import asyncio
+from services.telegram_service import TelegramService
 
 class AlistClient:
     def __init__(self, base_url: str, token: str = None):
@@ -48,6 +49,7 @@ class StrmService:
     def __init__(self):
         self.settings = Settings()
         self.alist_client = None
+        self.telegram = TelegramService()
         self._stop_flag = False
         self._skip_dirs = {
             '@eaDir',          # 群晖缩略图目录
@@ -57,10 +59,41 @@ class StrmService:
             'System Volume Information',  # Windows系统目录
             '@Recently-Snapshot'  # 群晖快照目录
         }
+        self._processed_files = 0
+        self._total_size = 0
     
     def _should_skip_directory(self, path: str) -> bool:
-        """检查是否应该跳过某些系统目录"""
-        return any(skip_dir in path for skip_dir in self._skip_dirs)
+        """检查是否应该跳过某些目录"""
+        # 检查系统目录
+        if any(skip_dir in path for skip_dir in self._skip_dirs):
+            return True
+            
+        # 检查用户配置的目录
+        if any(skip_folder in path for skip_folder in self.settings.skip_folders):
+            logger.info(f"跳过用户配置的目录: {path}")
+            return True
+            
+        # 检查用户配置的模式
+        if any(re.search(pattern, path) for pattern in self.settings.skip_patterns):
+            logger.info(f"跳过匹配模式的目录: {path}")
+            return True
+            
+        return False
+    
+    def _should_skip_file(self, filename: str) -> bool:
+        """检查是否应该跳过某些文件"""
+        # 检查文件扩展名
+        ext = os.path.splitext(filename)[1].lower()
+        if ext in self.settings.skip_extensions:
+            logger.info(f"跳过指定扩展名的文件: {filename}")
+            return True
+            
+        # 检查用户配置的模式
+        if any(re.search(pattern, filename) for pattern in self.settings.skip_patterns):
+            logger.info(f"跳过匹配模式的文件: {filename}")
+            return True
+            
+        return False
     
     def stop(self):
         """设置停止标志"""
@@ -71,6 +104,9 @@ class StrmService:
         """生成strm文件"""
         try:
             self._stop_flag = False
+            self._processed_files = 0
+            self._total_size = 0
+            
             self.alist_client = AlistClient(
                 self.settings.alist_url,
                 self.settings.alist_token
@@ -79,20 +115,43 @@ class StrmService:
             # 确保输出目录存在
             os.makedirs(self.settings.output_dir, exist_ok=True)
             
+            start_time = time.time()
             logger.info(f"开始扫描: {self.settings.alist_scan_path}")
+            await self.telegram.send_message(f"🚀 开始扫描: {self.settings.alist_scan_path}")
+            
             await self._process_directory(self.settings.alist_scan_path)
-            logger.info("扫描完成")
+            
+            duration = time.time() - start_time
+            summary = (
+                f"✅ 扫描完成\n"
+                f"📁 处理文件: {self._processed_files} 个\n"
+                f"💾 总大小: {self._format_size(self._total_size)}\n"
+                f"⏱ 耗时: {int(duration)}秒"
+            )
+            logger.info(summary)
+            await self.telegram.send_message(summary)
             
         except Exception as e:
-            logger.error(f"扫描过程出错: {str(e)}")
+            error_msg = f"❌ 扫描出错: {str(e)}"
+            logger.error(error_msg)
+            await self.telegram.send_message(error_msg)
             raise
         finally:
             await self.close()
+    
+    def _format_size(self, size_bytes: int) -> str:
+        """格式化文件大小"""
+        for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+            if size_bytes < 1024:
+                return f"{size_bytes:.2f} {unit}"
+            size_bytes /= 1024
+        return f"{size_bytes:.2f} PB"
     
     async def close(self):
         """关闭服务"""
         if self.alist_client:
             await self.alist_client.close()
+        await self.telegram.close()
     
     async def _process_directory(self, path):
         """处理目录"""
@@ -132,7 +191,17 @@ class StrmService:
             return
             
         try:
-            if self._is_video_file(file_info['name']):
+            filename = file_info['name']
+            
+            # 检查是否应该跳过此文件
+            if self._should_skip_file(filename):
+                return
+                
+            if self._is_video_file(filename):
+                # 更新统计信息
+                self._processed_files += 1
+                self._total_size += file_info.get('size', 0)
+                
                 # 构建STRM文件路径
                 relative_path = path.replace(self.settings.alist_scan_path, "").lstrip("/")
                 strm_path = os.path.join(self.settings.output_dir, relative_path)
@@ -153,7 +222,9 @@ class StrmService:
                 logger.info(f"创建STRM文件: {strm_path}")
                 
         except Exception as e:
-            logger.error(f"处理文件失败: {path}, 错误: {str(e)}")
+            error_msg = f"处理文件失败: {path}, 错误: {str(e)}"
+            logger.error(error_msg)
+            await self.telegram.send_message(f"⚠️ {error_msg}")
     
     def _is_video_file(self, filename: str) -> bool:
         """判断是否为视频文件"""
