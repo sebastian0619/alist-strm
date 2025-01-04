@@ -194,7 +194,7 @@
         <a-button 
           type="primary"
           :loading="scanning"
-          @click="toggleScan"
+          @click="scanning ? stopScan() : startScan()"
           style="margin-left: 16px"
           :danger="scanning"
         >
@@ -362,42 +362,40 @@ const validateConfig = () => {
   return true
 }
 
-// 开始/停止扫描
-const toggleScan = async () => {
+const startScan = async () => {
+  if (!validateConfig()) {
+    return
+  }
+  
   try {
-    if (scanning.value) {
-      // 停止扫描
-      const response = await fetch('/api/strm/stop', {
-        method: 'POST'
-      })
-      if (!response.ok) {
-        throw new Error('停止扫描失败')
-      }
-      const data = await response.json()
-      if (data.code === 200) {
-        message.success('已停止扫描')
-        scanning.value = false
-      } else {
-        throw new Error(data.message || '停止扫描失败')
-      }
+    const response = await fetch('/api/strm/start', { method: 'POST' })
+    if (response.ok) {
+      message.success('扫描已开始')
+      scanning.value = true
+      emit('scan-started')
     } else {
-      // 开始扫描
-      const response = await fetch('/api/strm/start', {
-        method: 'POST'
-      })
-      if (!response.ok) {
-        throw new Error('开始扫描失败')
-      }
       const data = await response.json()
-      if (data.code === 200) {
-        message.success('开始扫描')
-        scanning.value = true
-      } else {
-        throw new Error(data.message || '开始扫描失败')
-      }
+      message.error(data.detail || '启动扫描失败')
     }
-  } catch (err) {
-    message.error(err.message)
+  } catch (error) {
+    console.error('启动扫描失败:', error)
+    message.error('启动扫描失败')
+  }
+}
+
+const stopScan = async () => {
+  try {
+    const response = await fetch('/api/strm/stop', { method: 'POST' })
+    if (response.ok) {
+      message.success('正在停止扫描')
+      scanning.value = false
+    } else {
+      const data = await response.json()
+      message.error(data.detail || '停止扫描失败')
+    }
+  } catch (error) {
+    console.error('停止扫描失败:', error)
+    message.error('停止扫描失败')
   }
 }
 
@@ -409,9 +407,7 @@ const checkScanStatus = async () => {
       return
     }
     const data = await response.json()
-    if (data.code === 200) {
-      scanning.value = data.data.scanning
-    }
+    scanning.value = data.status === 'scanning'
   } catch (err) {
     console.error('检查扫描状态失败:', err)
   }

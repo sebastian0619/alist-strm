@@ -6,8 +6,6 @@ services:
    #   dockerfile: Dockerfile
     image: ghcr.io/sebastian0619/alist-strm:latest
     container_name: alist-strm
-    ports:
-      - "8081:8081"
     volumes:
       - ./.env:/app/.env:ro
       - ./data:/app/data
