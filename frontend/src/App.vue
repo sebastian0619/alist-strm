@@ -39,7 +39,7 @@ export default {
     const showLogModal = () => {
       logModalVisible.value = true
       logs.value = '开始扫描...\n'
-      // 开始轮询日志
+      // 立即开始轮询日志
       pollLogs()
     }
 
@@ -48,7 +48,14 @@ export default {
         const response = await fetch('/api/strm/logs')
         if (response.ok) {
           const text = await response.text()
-          logs.value = text || '暂无日志'
+          if (text && text !== logs.value) {
+            logs.value = text
+            // 自动滚动到底部
+            const logContainer = document.querySelector('.log-container')
+            if (logContainer) {
+              logContainer.scrollTop = logContainer.scrollHeight
+            }
+          }
         }
       } catch (e) {
         console.error('获取日志失败:', e)

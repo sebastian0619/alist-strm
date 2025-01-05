@@ -430,6 +430,7 @@ export default {
         }
         scanning.value = true
         message.success('扫描已开始')
+        // 立即触发日志显示
         emit('scan-started')
       } catch (e) {
         message.error('启动扫描失败: ' + e.message)

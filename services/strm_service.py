@@ -89,9 +89,16 @@ class StrmService:
     
     def _get_dir_hash(self, path: str, files: list) -> str:
         """计算目录内容的哈希值"""
+        # 只处理视频文件
+        video_files = [
+            f for f in files 
+            if not f.get('is_dir', False) and self._is_video_file(f['name'])
+        ]
+        
+        # 按名称排序确保一致性
         content = path + ''.join(sorted([
             f"{f['name']}_{f['size']}_{f['modified']}"
-            for f in files if not f.get('is_dir', False)
+            for f in video_files
         ]))
         return hashlib.md5(content.encode('utf-8')).hexdigest()
     
@@ -240,8 +247,10 @@ class StrmService:
             # 检查缓存
             if not self.settings.refresh and path in self._processed_dirs:
                 if self._processed_dirs[path] == dir_hash:
-                    logger.info(f"目录未变化，跳过处理: {path}")
+                    logger.debug(f"目录未变化，跳过处理: {path}")
                     return
+                else:
+                    logger.info(f"目录内容已变化，重新处理: {path}")
             
             # 处理文件和子目录
             for file in files:
@@ -251,12 +260,8 @@ class StrmService:
                 full_path = f"{path}/{file['name']}"
                 
                 if file.get('is_dir', False):
-                    if self._stop_flag:  # 每次处理子目录前检查停止标志
-                        return
                     await self._process_directory(full_path)
                 else:
-                    if self._stop_flag:  # 每次处理文件前检查停止标志
-                        return
                     await self._process_file(full_path, file)
                     
                 # 添加短暂延时，让出控制权
