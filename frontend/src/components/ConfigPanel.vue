@@ -264,6 +264,61 @@
         </a-tooltip>
       </a-form-item>
 
+      <!-- Telegram配置 -->
+      <a-divider>Telegram 通知配置</a-divider>
+      <a-form-item label="启用Telegram通知">
+        <a-switch
+          v-model:checked="config.tg_enabled"
+          :checked-children="'开启'"
+          :un-checked-children="'关闭'"
+        />
+        <a-tooltip>
+          <template #title>
+            是否启用Telegram通知功能
+          </template>
+          <info-circle-outlined style="margin-left: 8px" />
+        </a-tooltip>
+      </a-form-item>
+
+      <a-form-item label="Bot Token" v-if="config.tg_enabled">
+        <a-input-password
+          v-model:value="config.tg_token"
+          placeholder="请输入Telegram Bot Token"
+        />
+        <a-tooltip>
+          <template #title>
+            从 @BotFather 获取的Bot Token
+          </template>
+          <info-circle-outlined style="margin-left: 8px" />
+        </a-tooltip>
+      </a-form-item>
+
+      <a-form-item label="Chat ID" v-if="config.tg_enabled">
+        <a-input
+          v-model:value="config.tg_chat_id"
+          placeholder="请输入Telegram Chat ID"
+        />
+        <a-tooltip>
+          <template #title>
+            接收通知的Chat ID，可以从 @userinfobot 获取
+          </template>
+          <info-circle-outlined style="margin-left: 8px" />
+        </a-tooltip>
+      </a-form-item>
+
+      <a-form-item label="代理地址" v-if="config.tg_enabled">
+        <a-input
+          v-model:value="config.tg_proxy_url"
+          placeholder="代理地址，例如: http://127.0.0.1:7890"
+        />
+        <a-tooltip>
+          <template #title>
+            如果无法直接访问Telegram API，可以配置代理地址
+          </template>
+          <info-circle-outlined style="margin-left: 8px" />
+        </a-tooltip>
+      </a-form-item>
+
       <!-- 按钮组 -->
       <div class="button-group">
         <a-button 

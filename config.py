@@ -1,9 +1,28 @@
 from pydantic_settings import BaseSettings
 from typing import Optional, List
 from pydantic import Field, model_validator, ConfigDict
+import os
+import json
 
 class Settings(BaseSettings):
     """应用配置"""
+    
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._load_from_config()
+    
+    def _load_from_config(self):
+        """从配置文件加载配置"""
+        config_file = "config/config.json"
+        if os.path.exists(config_file):
+            try:
+                with open(config_file, 'r', encoding='utf-8') as f:
+                    config = json.load(f)
+                    for key, value in config.items():
+                        if hasattr(self, key):
+                            setattr(self, key, value)
+            except Exception:
+                pass
     
     # 基本配置
     run_after_startup: bool = Field(default=False, alias="RUN_AFTER_STARTUP")
@@ -25,7 +44,7 @@ class Settings(BaseSettings):
     is_down_meta: bool = Field(default=False, alias="IS_DOWN_META")
     min_file_size: int = Field(default=100, alias="MIN_FILE_SIZE")
     output_dir: str = Field(default="data", alias="OUTPUT_DIR")
-    cache_dir: str = Field(default="cache", alias="CACHE_DIR")  # 添加缓存目录配置
+    cache_dir: str = Field(default="cache", alias="CACHE_DIR")
     refresh: bool = Field(default=True, alias="REFRESH")
     remove_empty_dirs: bool = Field(default=False, alias="REMOVE_EMPTY_DIRS")
     
@@ -67,7 +86,7 @@ class Settings(BaseSettings):
         """解析布尔类型的字段"""
         bool_fields = ['run_after_startup', 'slow_mode', 'encode', 
                       'is_down_sub', 'is_down_meta', 'refresh', 'tg_enabled',
-                      'schedule_enabled']
+                      'schedule_enabled', 'remove_empty_dirs']
         for field in bool_fields:
             if field in values and isinstance(values[field], str):
                 values[field] = str(values[field]).lower() in ('true', '1', 'yes', 'on', 't')
