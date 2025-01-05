@@ -20,7 +20,17 @@ async def lifespan(app: FastAPI):
     
     # 设置日志级别
     logger.remove()
+    # 添加控制台输出
     logger.add(lambda msg: print(msg), level=settings.log_level)
+    # 添加文件输出
+    logger.add(
+        "logs/alist-strm.log",
+        rotation="10 MB",  # 每10MB切割一次
+        retention="1 week",  # 保留1周的日志
+        compression="zip",  # 压缩旧日志
+        encoding="utf-8",
+        level=settings.log_level
+    )
     
     # 启动定时任务
     if settings.schedule_enabled:

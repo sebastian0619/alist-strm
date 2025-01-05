@@ -25,7 +25,9 @@ class Settings(BaseSettings):
     is_down_meta: bool = Field(default=False, alias="IS_DOWN_META")
     min_file_size: int = Field(default=100, alias="MIN_FILE_SIZE")
     output_dir: str = Field(default="data", alias="OUTPUT_DIR")
+    cache_dir: str = Field(default="cache", alias="CACHE_DIR")  # 添加缓存目录配置
     refresh: bool = Field(default=True, alias="REFRESH")
+    remove_empty_dirs: bool = Field(default=False, alias="REMOVE_EMPTY_DIRS")
     
     # 跳过规则配置
     skip_patterns: str = Field(default="", alias="SKIP_PATTERNS")

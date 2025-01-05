@@ -41,17 +41,32 @@ async def get_status():
     """获取扫描状态"""
     return {"status": "scanning" if strm_service is not None else "idle"}
 
+@router.post("/clear-cache")
+async def clear_cache():
+    """清除缓存"""
+    service = StrmService()
+    try:
+        result = await service.clear_cache()
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        await service.close()
+
 @router.get("/logs")
 async def get_logs():
     """获取最新的日志内容"""
     try:
         log_file = "logs/alist-strm.log"
         if not os.path.exists(log_file):
-            return ""
+            return "暂无日志"
         
         # 读取最后1000行日志
         with open(log_file, "r", encoding="utf-8") as f:
-            lines = f.readlines()
-            return "".join(lines[-1000:])
+            # 使用 deque 读取最后1000行
+            from collections import deque
+            lines = deque(f, 1000)
+            return "".join(lines)
     except Exception as e:
+        logger.error(f"获取日志失败: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e)) 

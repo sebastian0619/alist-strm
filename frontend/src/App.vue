@@ -46,22 +46,31 @@ export default {
     const pollLogs = async () => {
       try {
         const response = await fetch('/api/strm/logs')
-        const data = await response.text()
-        logs.value = data
-        
-        // 如果弹窗还在显示，继续轮询
-        if (logModalVisible.value) {
-          setTimeout(pollLogs, 1000)
+        if (response.ok) {
+          const text = await response.text()
+          logs.value = text || '暂无日志'
         }
-      } catch (error) {
-        console.error('获取日志失败:', error)
+      } catch (e) {
+        console.error('获取日志失败:', e)
       }
+      
+      // 如果弹窗可见，继续轮询
+      if (logModalVisible.value) {
+        setTimeout(pollLogs, 1000)  // 每秒轮询一次
+      }
+    }
+
+    // 监听弹窗关闭
+    const closeLogModal = () => {
+      logModalVisible.value = false
+      logs.value = ''
     }
 
     return {
       logModalVisible,
       logs,
-      showLogModal
+      showLogModal,
+      closeLogModal
     }
   }
 }

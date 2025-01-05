@@ -2,6 +2,8 @@ import os
 import httpx
 import time
 import re
+import json
+import hashlib
 from urllib.parse import quote
 from loguru import logger
 from config import Settings
@@ -62,6 +64,49 @@ class StrmService:
         self._processed_files = 0
         self._total_size = 0
         self._is_running = False
+        self._cache_file = os.path.join(self.settings.cache_dir, 'processed_dirs.json')
+        self._processed_dirs = self._load_cache()
+    
+    def _load_cache(self) -> dict:
+        """加载缓存"""
+        try:
+            os.makedirs(self.settings.cache_dir, exist_ok=True)
+            if os.path.exists(self._cache_file):
+                with open(self._cache_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+        except Exception as e:
+            logger.error(f"加载缓存失败: {str(e)}")
+        return {}
+    
+    def _save_cache(self):
+        """保存缓存"""
+        try:
+            os.makedirs(self.settings.cache_dir, exist_ok=True)
+            with open(self._cache_file, 'w', encoding='utf-8') as f:
+                json.dump(self._processed_dirs, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.error(f"保存缓存失败: {str(e)}")
+    
+    def _get_dir_hash(self, path: str, files: list) -> str:
+        """计算目录内容的哈希值"""
+        content = path + ''.join(sorted([
+            f"{f['name']}_{f['size']}_{f['modified']}"
+            for f in files if not f.get('is_dir', False)
+        ]))
+        return hashlib.md5(content.encode('utf-8')).hexdigest()
+    
+    async def clear_cache(self):
+        """清除缓存"""
+        try:
+            self._processed_dirs = {}
+            if os.path.exists(self._cache_file):
+                os.remove(self._cache_file)
+            logger.info("缓存已清除")
+            return {"status": "success", "message": "缓存已清除"}
+        except Exception as e:
+            error_msg = f"清除缓存失败: {str(e)}"
+            logger.error(error_msg)
+            return {"status": "error", "message": error_msg}
     
     def _should_skip_directory(self, path: str) -> bool:
         """检查是否应该跳过某些目录"""
@@ -134,6 +179,11 @@ class StrmService:
                 logger.info("扫描已停止")
                 return
             
+            # 如果启用了删除空文件夹功能，执行清理
+            if self.settings.remove_empty_dirs:
+                self._remove_empty_directories(self.settings.output_dir)
+                logger.info("已清理空文件夹")
+            
             duration = time.time() - start_time
             summary = (
                 f"✅ 扫描完成\n"
@@ -183,7 +233,17 @@ class StrmService:
             if not files:  # 如果是空列表，直接返回
                 logger.debug(f"目录为空或无法访问: {path}")
                 return
+
+            # 计算目录哈希
+            dir_hash = self._get_dir_hash(path, files)
             
+            # 检查缓存
+            if not self.settings.refresh and path in self._processed_dirs:
+                if self._processed_dirs[path] == dir_hash:
+                    logger.info(f"目录未变化，跳过处理: {path}")
+                    return
+            
+            # 处理文件和子目录
             for file in files:
                 if self._stop_flag:
                     return
@@ -201,6 +261,10 @@ class StrmService:
                     
                 # 添加短暂延时，让出控制权
                 await asyncio.sleep(0.01)
+            
+            # 更新缓存
+            self._processed_dirs[path] = dir_hash
+            self._save_cache()
                     
         except Exception as e:
             logger.error(f"处理目录 {path} 时出错: {str(e)}")
@@ -232,9 +296,9 @@ class StrmService:
                 os.makedirs(os.path.dirname(strm_path), exist_ok=True)
                 
                 # 生成播放链接
-                play_url = f"{self.settings.alist_url}/d{path}"
-                if self.settings.encode:
-                    play_url = quote(play_url)
+                base_url = self.settings.alist_url.rstrip('/')
+                encoded_path = '/d' + quote(path)  # 只对路径部分进行编码
+                play_url = f"{base_url}{encoded_path}" if self.settings.encode else f"{base_url}/d{path}"
                 
                 # 写入strm文件
                 with open(strm_path, "w", encoding="utf-8") as f:
@@ -251,3 +315,21 @@ class StrmService:
         """判断是否为视频文件"""
         video_extensions = {'.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.m4v', '.rmvb'}
         return os.path.splitext(filename)[1].lower() in video_extensions 
+    
+    def _remove_empty_directories(self, path):
+        """递归删除空文件夹"""
+        try:
+            # 遍历目录
+            for root, dirs, files in os.walk(path, topdown=False):
+                # 对于每个子目录
+                for dir_name in dirs:
+                    dir_path = os.path.join(root, dir_name)
+                    try:
+                        # 检查目录是否为空
+                        if not os.listdir(dir_path):
+                            os.rmdir(dir_path)
+                            logger.info(f"删除空文件夹: {dir_path}")
+                    except Exception as e:
+                        logger.error(f"删除文件夹 {dir_path} 失败: {str(e)}")
+        except Exception as e:
+            logger.error(f"清理空文件夹时出错: {str(e)}") 

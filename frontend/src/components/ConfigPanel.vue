@@ -151,6 +151,20 @@
         </a-tooltip>
       </a-form-item>
 
+      <a-form-item label="删除空文件夹">
+        <a-switch
+          v-model:checked="config.remove_empty_dirs"
+          :checked-children="'开启'"
+          :un-checked-children="'关闭'"
+        />
+        <a-tooltip>
+          <template #title>
+            扫描完成后删除不包含STRM文件的空文件夹
+          </template>
+          <info-circle-outlined style="margin-left: 8px" />
+        </a-tooltip>
+      </a-form-item>
+
       <a-form-item label="下载字幕">
         <a-switch
           v-model:checked="config.is_down_sub"
@@ -276,6 +290,13 @@
         >
           {{ scanning ? '停止扫描' : '开始扫描' }}
         </a-button>
+        <a-button
+          @click="clearCache"
+          :loading="clearingCache"
+          style="margin-left: 8px"
+        >
+          清除缓存
+        </a-button>
       </div>
     </a-card>
   </div>
@@ -301,6 +322,7 @@ export default {
     const error = ref('')
     const scanning = ref(false)
     const testingConnection = ref(false)
+    const clearingCache = ref(false)
     
     // 加载配置
     const loadConfig = async () => {
@@ -462,6 +484,29 @@ export default {
       return '自定义执行计划'
     }
     
+    // 清除缓存
+    const clearCache = async () => {
+      clearingCache.value = true
+      try {
+        const response = await fetch('/api/strm/clear-cache', {
+          method: 'POST'
+        })
+        if (!response.ok) {
+          throw new Error('清除缓存失败')
+        }
+        const data = await response.json()
+        if (data.status === 'success') {
+          message.success('缓存已清除')
+        } else {
+          throw new Error(data.message || '清除缓存失败')
+        }
+      } catch (e) {
+        message.error(e.message)
+      } finally {
+        clearingCache.value = false
+      }
+    }
+    
     // 组件挂载时加载配置
     onMounted(() => {
       loadConfig()
@@ -487,7 +532,9 @@ export default {
       testConnection,
       getCronDescription,
       startScan,
-      stopScan
+      stopScan,
+      clearCache,
+      clearingCache
     }
   }
 }
