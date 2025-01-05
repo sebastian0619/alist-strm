@@ -1,19 +1,15 @@
 version: '3'
 services:
-  alist-strm:
-    image: ghcr.io/sebastian0619/alist-strm:latest
+  app:
     container_name: alist-strm
+    build: .
+    ports:
+      - "8081:8081"
     volumes:
       - ./.env:/app/.env:ro
       - ./data:/app/data
       - ./logs:/app/logs
-    restart: unless-stopped
-    ports:
-      - "8081:8081"
+      - ./config:/app/config
+      - ./cache:/app/cache
     environment:
       - TZ=Asia/Shanghai
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8081/api/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3

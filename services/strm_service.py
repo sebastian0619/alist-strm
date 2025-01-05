@@ -93,6 +93,7 @@ class StrmService:
         video_files = [
             f for f in files 
             if not f.get('is_dir', False) and self._is_video_file(f['name'])
+            and f.get('size', 0) >= self.settings.min_file_size * 1024 * 1024  # 检查文件大小
         ]
         
         # 按名称排序确保一致性
@@ -247,12 +248,13 @@ class StrmService:
             # 检查缓存
             if not self.settings.refresh and path in self._processed_dirs:
                 if self._processed_dirs[path] == dir_hash:
-                    logger.debug(f"目录未变化，跳过处理: {path}")
+                    logger.info(f"目录未变化，跳过处理: {path}")
                     return
                 else:
                     logger.info(f"目录内容已变化，重新处理: {path}")
             
             # 处理文件和子目录
+            has_processed_files = False
             for file in files:
                 if self._stop_flag:
                     return
@@ -262,14 +264,17 @@ class StrmService:
                 if file.get('is_dir', False):
                     await self._process_directory(full_path)
                 else:
-                    await self._process_file(full_path, file)
+                    # 只有成功处理了视频文件才标记为已处理
+                    if await self._process_file(full_path, file):
+                        has_processed_files = True
                     
                 # 添加短暂延时，让出控制权
                 await asyncio.sleep(0.01)
             
-            # 更新缓存
-            self._processed_dirs[path] = dir_hash
-            self._save_cache()
+            # 只有当目录中有处理过的文件时才更新缓存
+            if has_processed_files:
+                self._processed_dirs[path] = dir_hash
+                self._save_cache()
                     
         except Exception as e:
             logger.error(f"处理目录 {path} 时出错: {str(e)}")
@@ -278,43 +283,62 @@ class StrmService:
     async def _process_file(self, path, file_info):
         """处理文件"""
         if self._stop_flag:
-            return
+            return False
             
         try:
             filename = file_info['name']
             
             # 检查是否应该跳过此文件
             if self._should_skip_file(filename):
-                return
+                return False
                 
             if self._is_video_file(filename):
-                # 更新统计信息
-                self._processed_files += 1
-                self._total_size += file_info.get('size', 0)
+                # 检查文件大小
+                file_size = file_info.get('size', 0)
+                if file_size < self.settings.min_file_size * 1024 * 1024:
+                    logger.debug(f"跳过小文件: {path} ({self._format_size(file_size)})")
+                    return False
                 
                 # 构建STRM文件路径
                 relative_path = path.replace(self.settings.alist_scan_path, "").lstrip("/")
                 strm_path = os.path.join(self.settings.output_dir, relative_path)
                 strm_path = os.path.splitext(strm_path)[0] + ".strm"
                 
-                # 确保目录存在
-                os.makedirs(os.path.dirname(strm_path), exist_ok=True)
-                
-                # 生成播放链接
+                # 检查STRM文件是否已存在且内容相同
                 base_url = self.settings.alist_url.rstrip('/')
                 encoded_path = '/d' + quote(path)  # 只对路径部分进行编码
                 play_url = f"{base_url}{encoded_path}" if self.settings.encode else f"{base_url}/d{path}"
+                
+                if os.path.exists(strm_path):
+                    try:
+                        with open(strm_path, "r", encoding="utf-8") as f:
+                            existing_url = f.read().strip()
+                            if existing_url == play_url:
+                                logger.debug(f"STRM文件已存在且内容相同: {strm_path}")
+                                return True
+                    except Exception:
+                        pass
+                
+                # 确保目录存在
+                os.makedirs(os.path.dirname(strm_path), exist_ok=True)
                 
                 # 写入strm文件
                 with open(strm_path, "w", encoding="utf-8") as f:
                     f.write(play_url)
                 
+                # 更新统计信息
+                self._processed_files += 1
+                self._total_size += file_size
+                
                 logger.info(f"创建STRM文件: {strm_path}")
+                return True
                 
         except Exception as e:
             error_msg = f"处理文件失败: {path}, 错误: {str(e)}"
             logger.error(error_msg)
             await self.telegram.send_message(f"⚠️ {error_msg}")
+        
+        return False
     
     def _is_video_file(self, filename: str) -> bool:
         """判断是否为视频文件"""
