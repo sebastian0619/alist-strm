@@ -9,7 +9,7 @@ from loguru import logger
 from config import Settings
 from typing import List, Optional
 import asyncio
-from services.telegram_service import TelegramService
+import importlib
 
 class AlistClient:
     def __init__(self, base_url: str, token: str = None):
@@ -51,7 +51,6 @@ class StrmService:
     def __init__(self):
         self.settings = Settings()
         self.alist_client = None
-        self.telegram = TelegramService()
         self._stop_flag = False
         self._skip_dirs = {
             '@eaDir',          # 群晖缩略图目录
@@ -66,6 +65,11 @@ class StrmService:
         self._is_running = False
         self._cache_file = os.path.join(self.settings.cache_dir, 'processed_dirs.json')
         self._processed_dirs = self._load_cache()
+    
+    def _get_service_manager(self):
+        """动态获取service_manager以避免循环依赖"""
+        module = importlib.import_module('services.service_manager')
+        return module.service_manager
     
     def _load_cache(self) -> dict:
         """加载缓存"""
@@ -178,12 +182,14 @@ class StrmService:
             
             start_time = time.time()
             logger.info(f"开始扫描: {self.settings.alist_scan_path}")
-            await self.telegram.send_message(f"🚀 开始扫描: {self.settings.alist_scan_path}")
+            
+            service_manager = self._get_service_manager()
+            await service_manager.telegram_service.send_message(f"🚀 开始扫描: {self.settings.alist_scan_path}")
             
             await self._process_directory(self.settings.alist_scan_path)
             
             if self._stop_flag:
-                await self.telegram.send_message("⏹ 扫描已停止")
+                await service_manager.telegram_service.send_message("⏹ 扫描已停止")
                 logger.info("扫描已停止")
                 return
             
@@ -200,12 +206,13 @@ class StrmService:
                 f"⏱ 耗时: {int(duration)}秒"
             )
             logger.info(summary)
-            await self.telegram.send_message(summary)
+            await service_manager.telegram_service.send_message(summary)
             
         except Exception as e:
             error_msg = f"❌ 扫描出错: {str(e)}"
             logger.error(error_msg)
-            await self.telegram.send_message(error_msg)
+            service_manager = self._get_service_manager()
+            await service_manager.telegram_service.send_message(error_msg)
             raise
         finally:
             self._is_running = False
@@ -224,7 +231,6 @@ class StrmService:
         """关闭服务"""
         if self.alist_client:
             await self.alist_client.close()
-        await self.telegram.close()
     
     async def _process_directory(self, path):
         """处理目录"""
@@ -336,7 +342,8 @@ class StrmService:
         except Exception as e:
             error_msg = f"处理文件失败: {path}, 错误: {str(e)}"
             logger.error(error_msg)
-            await self.telegram.send_message(f"⚠️ {error_msg}")
+            service_manager = self._get_service_manager()
+            await service_manager.telegram_service.send_message(f"⚠️ {error_msg}")
         
         return False
     
