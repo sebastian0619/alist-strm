@@ -93,3 +93,10 @@ class ServiceManager:
 
 # 全局服务管理器实例
 service_manager = ServiceManager() 
+
+# 确保在初始化后导出服务实例
+service_manager.init_services()
+scheduler_service = service_manager.scheduler_service
+strm_service = service_manager.strm_service
+copy_service = service_manager.copy_service
+tg_service = service_manager.telegram_service 
