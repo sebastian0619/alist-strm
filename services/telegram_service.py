@@ -106,25 +106,47 @@ class TelegramService:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             
-            # 启动轮询
-            loop.run_until_complete(self.application.updater.start_polling())
+            # 在新的事件循环中重新创建和初始化 application
+            app = Application.builder().token(self.settings.tg_token).build()
+            
+            # 注册命令处理器
+            app.add_handler(CommandHandler("start", self.start_command))
+            app.add_handler(CommandHandler("help", self.help_command))
+            app.add_handler(CommandHandler("status", self.status_command))
+            app.add_handler(CommandHandler("strm", self.strm_command))
+            app.add_handler(CommandHandler("strm_stop", self.strm_stop_command))
+            app.add_handler(CommandHandler("archive", self.archive_command))
+            app.add_handler(CommandHandler("archive_stop", self.archive_stop_command))
+            
+            # 初始化和启动应用
+            loop.run_until_complete(app.initialize())
+            loop.run_until_complete(app.start())
+            loop.run_until_complete(app.updater.start_polling())
+            
+            # 运行事件循环
             loop.run_forever()
         except Exception as e:
             logger.error(f"Telegram轮询出错: {e}")
         finally:
             try:
+                # 清理资源
+                if 'app' in locals():
+                    loop.run_until_complete(app.stop())
+                    loop.run_until_complete(app.shutdown())
                 loop.close()
             except Exception as e:
                 logger.error(f"清理Telegram轮询资源失败: {e}")
 
     async def start(self):
         """启动Telegram服务"""
-        if not self.settings.tg_enabled or not self.initialized:
+        if not self.settings.tg_enabled:
             return
             
         try:
-            # 启动应用
-            await self.application.start()
+            # 创建应用实例（仅用于初始化检查）
+            self.application = Application.builder().token(self.settings.tg_token).build()
+            await self.application.initialize()
+            self.initialized = True
             
             # 在后台线程中启动轮询
             self._polling_thread = threading.Thread(
@@ -139,13 +161,8 @@ class TelegramService:
     
     async def close(self):
         """关闭Telegram服务"""
-        if self.initialized and self.application:
+        if self.initialized:
             try:
-                # 停止轮询
-                await self.application.updater.stop()
-                await self.application.stop()
-                await self.application.shutdown()
-                
                 # 等待轮询线程结束
                 if self._polling_thread and self._polling_thread.is_alive():
                     self._polling_thread.join(timeout=5)
@@ -173,12 +190,14 @@ class TelegramService:
             logger.warning("未配置Telegram chat_id，无法发送消息")
             return False
             
-        if not self.initialized or not self.application:
+        if not self.initialized:
             logger.warning("Telegram服务未初始化，无法发送消息")
             return False
             
         try:
-            await self.application.bot.send_message(
+            # 创建临时的 bot 实例发送消息
+            bot = self.application.bot.__class__(self.settings.tg_token)
+            await bot.send_message(
                 chat_id=self.settings.tg_chat_id,
                 text=message
             )
