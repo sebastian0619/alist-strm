@@ -54,6 +54,17 @@ class ConfigService:
                 "tg_token": self.settings.tg_token,
                 "tg_chat_id": self.settings.tg_chat_id,
                 "tg_proxy_url": self.settings.tg_proxy_url,
+                
+                # 归档配置
+                "archive_enabled": self.settings.archive_enabled,
+                "archive_source_root": self.settings.archive_source_root,
+                "archive_target_root": self.settings.archive_target_root,
+                "archive_auto_strm": self.settings.archive_auto_strm,
+                "archive_delete_source": self.settings.archive_delete_source,
+                "archive_schedule_enabled": self.settings.archive_schedule_enabled,
+                "archive_schedule_cron": self.settings.archive_schedule_cron,
+                "archive_video_extensions": self.settings.archive_video_extensions,
+                "archive_media_types": self.settings.archive_media_types,
             }
             self.save_config(config)
             logger.info("已创建初始配置文件")

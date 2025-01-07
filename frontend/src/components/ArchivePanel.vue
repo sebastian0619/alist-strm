@@ -23,7 +23,7 @@
           
           <a-form-item label="源目录">
             <a-input
-              v-model:value="config.archive_source_dir"
+              v-model:value="config.archive_source_root"
               placeholder="请输入源目录路径"
             />
             <a-tooltip>
@@ -36,12 +36,74 @@
 
           <a-form-item label="目标目录">
             <a-input
-              v-model:value="config.archive_target_dir"
+              v-model:value="config.archive_target_root"
               placeholder="请输入目标目录路径"
             />
             <a-tooltip>
               <template #title>
                 文件归档后存放的根目录
+              </template>
+              <info-circle-outlined style="margin-left: 8px" />
+            </a-tooltip>
+          </a-form-item>
+
+          <a-form-item label="自动STRM扫描">
+            <a-switch
+              v-model:checked="config.archive_auto_strm"
+              :checked-children="'开启'"
+              :un-checked-children="'关闭'"
+            />
+            <a-tooltip>
+              <template #title>
+                归档完成后自动执行STRM扫描
+              </template>
+              <info-circle-outlined style="margin-left: 8px" />
+            </a-tooltip>
+          </a-form-item>
+
+          <a-form-item label="删除源文件">
+            <a-switch
+              v-model:checked="config.archive_delete_source"
+              :checked-children="'开启'"
+              :un-checked-children="'关闭'"
+            />
+            <a-tooltip>
+              <template #title>
+                归档完成后删除源文件
+              </template>
+              <info-circle-outlined style="margin-left: 8px" />
+            </a-tooltip>
+          </a-form-item>
+
+          <a-form-item label="定时归档">
+            <a-switch
+              v-model:checked="config.archive_schedule_enabled"
+              :checked-children="'开启'"
+              :un-checked-children="'关闭'"
+            />
+            <a-tooltip>
+              <template #title>
+                是否启用定时自动归档功能
+              </template>
+              <info-circle-outlined style="margin-left: 8px" />
+            </a-tooltip>
+          </a-form-item>
+
+          <a-form-item 
+            label="定时表达式" 
+            :help="getCronDescription(config.archive_schedule_cron)"
+          >
+            <a-input 
+              v-model:value="config.archive_schedule_cron" 
+              placeholder="Cron表达式，例如: 0 3 * * * (每天凌晨3点执行)"
+              :disabled="!config.archive_schedule_enabled"
+            />
+            <a-tooltip>
+              <template #title>
+                Cron表达式格式：分 时 日 月 星期
+                例如：
+                0 3 * * * (每天凌晨3点执行)
+                0 */12 * * * (每12小时执行一次)
               </template>
               <info-circle-outlined style="margin-left: 8px" />
             </a-tooltip>
@@ -162,15 +224,17 @@ import axios from 'axios'
 
 const config = ref({
   archive_enabled: false,
-  archive_source_dir: '',
-  archive_target_dir: '',
+  archive_source_root: '',
+  archive_target_root: '',
   archive_auto_strm: false,
   archive_delete_source: false,
   archive_schedule_enabled: false,
   archive_schedule_cron: '0 3 * * *',
-  archive_video_extensions: '',
+  archive_video_extensions: '.mp4,.mkv,.avi,.ts,.m2ts,.mov,.wmv,.iso,.m4v,.mpg,.mpeg,.rm,.rmvb',
   archive_media_types: ''
 })
+
+const originalConfig = ref({})
 
 const mediaTypes = ref({})
 const archiving = ref(false)
@@ -203,10 +267,17 @@ const removeMediaType = (name) => {
 // 保存配置
 const saveConfig = async () => {
   try {
-    // 保存基本配置
-    const configResponse = await axios.post('/api/config/save', config.value)
-    if (!configResponse.data.success) {
-      throw new Error(configResponse.data.message)
+    // 遍历配置项，逐个更新
+    for (const [key, value] of Object.entries(config.value)) {
+      if (JSON.stringify(value) !== JSON.stringify(originalConfig.value[key])) {
+        const response = await axios.post('/api/config', {
+          key: key,
+          value: value
+        })
+        if (!response.data.status === 'success') {
+          throw new Error(`保存配置 ${key} 失败`)
+        }
+      }
     }
     
     // 保存媒体类型配置
@@ -215,6 +286,8 @@ const saveConfig = async () => {
       throw new Error(mediaTypesResponse.data.message)
     }
     
+    // 更新原始配置
+    originalConfig.value = JSON.parse(JSON.stringify(config.value))
     message.success('配置保存成功')
   } catch (error) {
     message.error('配置保存失败: ' + error.message)
@@ -225,11 +298,12 @@ const saveConfig = async () => {
 const loadConfig = async () => {
   try {
     // 加载基本配置
-    const configResponse = await axios.get('/api/config/load')
-    if (!configResponse.data.success) {
-      throw new Error(configResponse.data.message)
+    const configResponse = await axios.get('/api/config')
+    if (!configResponse.data) {
+      throw new Error('加载配置失败')
     }
-    config.value = configResponse.data.data
+    config.value = configResponse.data
+    originalConfig.value = JSON.parse(JSON.stringify(configResponse.data))
     
     // 加载媒体类型配置
     const mediaTypesResponse = await axios.get('/api/archive/media_types')
@@ -277,6 +351,30 @@ const stopArchive = async () => {
   } catch (error) {
     message.error('停止归档失败: ' + error.message)
   }
+}
+
+// 获取Cron表达式描述
+const getCronDescription = (cron) => {
+  if (!cron) return ''
+  const parts = cron.split(' ')
+  if (parts.length !== 5) return '无效的Cron表达式'
+  
+  if (parts[1] === '*/6' && parts[2] === '*' && parts[3] === '*' && parts[4] === '*') {
+    return '每6小时执行一次'
+  }
+  if (parts[1] === '0' && parts[2] === '*' && parts[3] === '*' && parts[4] === '*') {
+    return '每小时执行一次'
+  }
+  if (parts[1] === '0' && parts[2] === '0' && parts[3] === '*' && parts[4] === '*') {
+    return '每天0点执行'
+  }
+  if (parts[1] === '0' && parts[2] === '3' && parts[3] === '*' && parts[4] === '*') {
+    return '每天凌晨3点执行'
+  }
+  if (parts[1] === '0' && parts[2] === '*/12' && parts[3] === '*' && parts[4] === '*') {
+    return '每12小时执行一次'
+  }
+  return '自定义执行计划'
 }
 
 // 在组件挂载时加载配置

@@ -19,9 +19,41 @@ async def get_config():
     """获取当前配置"""
     return config_service.load_config()
 
+@router.get("/api/config/load")
+async def load_config():
+    """加载完整配置"""
+    try:
+        config = config_service.load_config()
+        return {
+            "success": True,
+            "data": config
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "message": str(e)
+        }
+
+@router.post("/api/config/save")
+async def save_config(config: dict):
+    """保存完整配置"""
+    try:
+        config_service.save_config(config)
+        
+        # 如果更新了定时任务配置，需要重新启动调度器
+        if any(key in config for key in ['schedule_enabled', 'schedule_cron']):
+            await scheduler_service.update_schedule(
+                settings.schedule_enabled,
+                settings.schedule_cron
+            )
+        
+        return {"success": True, "message": "配置保存成功"}
+    except Exception as e:
+        return {"success": False, "message": str(e)}
+
 @router.post("/api/config")
 async def update_config(config_update: ConfigUpdate):
-    """更新配置"""
+    """更新单个配置项"""
     try:
         # 更新配置
         config_service.update_config(config_update.key, config_update.value)

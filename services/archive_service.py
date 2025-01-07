@@ -165,8 +165,8 @@ class ArchiveService:
                 return result
 
             # 准备归档
-            source_dir = Path(self.settings.archive_source_dir)
-            target_dir = Path(self.settings.archive_target_dir)
+            source_dir = Path(self.settings.archive_source_root)
+            target_dir = Path(self.settings.archive_target_root)
             relative_path = directory.relative_to(source_dir)
             destination = target_dir / relative_path
             
@@ -241,7 +241,7 @@ class ArchiveService:
                 "🔍 开始归档测试..." if test_mode else "🚀 开始归档处理..."
             )
             
-            source_dir = Path(self.settings.archive_source_dir)
+            source_dir = Path(self.settings.archive_source_root)
             total_processed = 0
             total_size = 0
             test_results = []
@@ -372,8 +372,8 @@ class ArchiveService:
                 }
             
             # 构建目标路径，保持相对路径结构
-            relative_path = source_path.relative_to(self.settings.archive_source_dir)
-            dest_path = Path(self.settings.archive_target_dir) / relative_path
+            relative_path = source_path.relative_to(self.settings.archive_source_root)
+            dest_path = Path(self.settings.archive_target_root) / relative_path
             
             # 确保目标目录存在
             dest_path.parent.mkdir(parents=True, exist_ok=True)
