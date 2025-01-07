@@ -124,52 +124,74 @@
 
           <!-- 媒体类型配置 -->
           <a-divider>媒体类型配置</a-divider>
-
+          
           <div class="media-types-header">
-            <a-button type="primary" @click="showAddTypeModal">
-              添加媒体类型
-            </a-button>
-          </div>
-
-          <div v-for="(type, name) in mediaTypes" :key="name" class="media-type-item">
-            <a-space align="start">
-              <a-card :title="name" size="small" style="width: 100%; margin-bottom: 16px">
-                <template #extra>
-                  <a-button type="link" danger @click="removeMediaType(name)">
-                    删除
-                  </a-button>
+            <a-space>
+              <a-button type="primary" @click="showAddTypeModal">
+                添加媒体类型
+              </a-button>
+              <a-tooltip>
+                <template #title>
+                  类型的顺序决定了匹配优先级，可拖动调整顺序。
+                  排在前面的类型优先匹配，例如：
+                  "电影/外语电影" 应该排在 "电影" 之前
                 </template>
-                
-                <a-form-item label="目录名称">
-                  <a-input
-                    v-model:value="type.dir"
-                    placeholder="请输入目录名称，支持多级目录，如: 电影 或 电影/外语"
-                  />
-                </a-form-item>
-                
-                <a-form-item label="阈值设置">
-                  <a-input-group compact>
-                    <a-form-item label="创建时间" style="margin-bottom: 0">
-                      <a-input-number
-                        v-model:value="type.creation_days"
-                        :min="0"
-                        addon-after="天"
-                        style="width: 120px"
-                      />
-                    </a-form-item>
-                    <a-form-item label="修改时间" style="margin-bottom: 0; margin-left: 8px">
-                      <a-input-number
-                        v-model:value="type.mtime_days"
-                        :min="0"
-                        addon-after="天"
-                        style="width: 120px"
-                      />
-                    </a-form-item>
-                  </a-input-group>
-                </a-form-item>
-              </a-card>
+                <info-circle-outlined />
+              </a-tooltip>
             </a-space>
           </div>
+
+          <draggable 
+            v-model="mediaTypesList" 
+            item-key="name"
+            handle=".drag-handle"
+            @end="handleDragEnd"
+          >
+            <template #item="{ element }">
+              <div class="media-type-item">
+                <a-space align="start">
+                  <a-card :title="element.name" size="small" style="width: 100%; margin-bottom: 16px">
+                    <template #extra>
+                      <a-space>
+                        <menu-outlined class="drag-handle" style="cursor: move" />
+                        <a-button type="link" danger @click="removeMediaType(element.name)">
+                          删除
+                        </a-button>
+                      </a-space>
+                    </template>
+                    
+                    <a-form-item label="目录名称">
+                      <a-input
+                        v-model:value="element.config.dir"
+                        placeholder="请输入目录名称，支持多级目录，如: 电影 或 电影/外语"
+                      />
+                    </a-form-item>
+                    
+                    <a-form-item label="阈值设置">
+                      <a-input-group compact>
+                        <a-form-item label="创建时间" style="margin-bottom: 0">
+                          <a-input-number
+                            v-model:value="element.config.creation_days"
+                            :min="0"
+                            addon-after="天"
+                            style="width: 120px"
+                          />
+                        </a-form-item>
+                        <a-form-item label="修改时间" style="margin-bottom: 0; margin-left: 8px">
+                          <a-input-number
+                            v-model:value="element.config.mtime_days"
+                            :min="0"
+                            addon-after="天"
+                            style="width: 120px"
+                          />
+                        </a-form-item>
+                      </a-input-group>
+                    </a-form-item>
+                  </a-card>
+                </a-space>
+              </div>
+            </template>
+          </draggable>
 
           <a-form-item>
             <a-space>
@@ -236,9 +258,10 @@
 
 <script setup>
 import { ref, onMounted, computed } from 'vue'
-import { InfoCircleOutlined, PlusOutlined } from '@ant-design/icons-vue'
+import { InfoCircleOutlined, MenuOutlined } from '@ant-design/icons-vue'
 import { message } from 'ant-design-vue'
 import axios from 'axios'
+import draggable from 'vuedraggable'
 
 const config = ref({
   archive_enabled: false,
@@ -417,6 +440,26 @@ const getCronDescription = (cron) => {
     return '每12小时执行一次'
   }
   return '自定义执行计划'
+}
+
+// 将对象转换为数组以支持拖拽排序
+const mediaTypesList = computed({
+  get: () => Object.entries(mediaTypes.value).map(([name, config]) => ({
+    name,
+    config
+  })),
+  set: (list) => {
+    const newTypes = {}
+    list.forEach(item => {
+      newTypes[item.name] = item.config
+    })
+    mediaTypes.value = newTypes
+  }
+})
+
+const handleDragEnd = () => {
+  // 拖拽结束后自动保存
+  saveConfig()
 }
 
 // 在组件挂载时加载配置

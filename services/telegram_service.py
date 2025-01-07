@@ -227,41 +227,33 @@ class TelegramService:
                 raise
 
     @retry(
+        retry=retry_if_exception_type((NetworkError, TimedOut, httpx.ConnectError)),
         stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=4, max=10),
-        retry=retry_if_exception_type((NetworkError, TimedOut, RetryAfter))
+        wait=wait_exponential(multiplier=1, min=4, max=10)
     )
-    async def send_message(self, message: str) -> bool:
-        """发送Telegram消息，带有重试机制
+    async def send_message(self, text: str):
+        """发送Telegram消息，失败时自动重试
         
         Args:
-            message: 要发送的消息内容
+            text: 要发送的消息内容
             
-        Returns:
-            bool: 是否发送成功
+        重试策略：
+        - 最多重试3次
+        - 指数退避等待（4-10秒）
+        - 只对网络错误进行重试
         """
-        if not self.settings.tg_enabled:
-            logger.debug("Telegram功能未启用，跳过发送消息")
-            return False
-            
-        if not self.settings.tg_chat_id:
-            logger.warning("未配置Telegram chat_id，无法发送消息")
-            return False
-            
-        if not self.initialized or not self.application:
-            logger.warning("Telegram服务未初始化，无法发送消息")
-            return False
+        if not self.enabled or not self.application:
+            return
             
         try:
             await self.application.bot.send_message(
-                chat_id=self.settings.tg_chat_id,
-                text=message,
+                chat_id=self.settings.telegram_chat_id,
+                text=text,
                 disable_web_page_preview=True
             )
-            return True
         except Exception as e:
-            logger.error(f"发送Telegram消息失败: {e}")
-            raise  # 让重试装饰器捕获异常
+            logger.error(f"发送Telegram消息失败: {str(e)}")
+            raise  # 抛出异常以触发重试机制
 
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """处理/start命令"""
