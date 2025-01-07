@@ -101,10 +101,46 @@ class TelegramService:
     def _run_polling(self):
         """运行轮询的后台线程函数"""
         try:
-            self.application.run_polling(allowed_updates=Update.ALL_TYPES)
+            # 创建新的事件循环
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            # 运行轮询
+            loop.run_until_complete(self.application.updater.start_polling())
+            loop.run_forever()
         except Exception as e:
             logger.error(f"Telegram轮询出错: {e}")
-    
+        finally:
+            loop.close()
+
+    async def send_message(self, message: str, max_retries: int = 3):
+        """发送消息到Telegram
+        
+        Args:
+            message: 要发送的消息
+            max_retries: 最大重试次数
+        """
+        if not self.application or not self.settings.tg_chat_id:
+            return
+            
+        retry_count = 0
+        while retry_count < max_retries:
+            try:
+                await self.application.bot.send_message(
+                    chat_id=self.settings.tg_chat_id,
+                    text=message,
+                    parse_mode="HTML"
+                )
+                return
+            except Exception as e:
+                retry_count += 1
+                if retry_count < max_retries:
+                    wait_time = 2 ** retry_count  # 指数退避
+                    logger.warning(f"Telegram消息发送失败，{wait_time}秒后重试 ({retry_count}/{max_retries}): {str(e)}")
+                    await asyncio.sleep(wait_time)
+                else:
+                    logger.error(f"Telegram消息发送失败，已达到最大重试次数: {str(e)}")
+                    break
+
     async def start(self):
         """启动Telegram服务"""
         if not self.settings.tg_enabled or not self.initialized:
