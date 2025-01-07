@@ -51,12 +51,27 @@ class ArchiveService:
             return time.time()
     
     def get_media_type(self, path: Path) -> str:
-        """根据路径判断媒体类型"""
+        """根据路径判断媒体类型，优先匹配更具体的路径
+        
+        例如：
+        - 路径为 "source/movie/abc.mkv"，匹配 "movie" 类型
+        - 路径为 "source/movie/foreign/abc.mkv"，优先匹配 "movie/foreign" 类型
+        """
         path_str = str(path)
+        matched_type = ""
+        max_depth = 0
+        
         for media_type, info in self.media_types.items():
-            if f"/{info['dir']}/" in path_str:
-                return media_type
-        return ""
+            dir_path = f"/{info['dir']}/"
+            if dir_path in path_str:
+                # 计算目录深度
+                depth = len(info['dir'].split('/'))
+                # 如果找到更具体的匹配（更深的目录层级），则更新结果
+                if depth > max_depth:
+                    matched_type = media_type
+                    max_depth = depth
+        
+        return matched_type
     
     def calculate_file_hash(self, file_path: Path) -> Optional[str]:
         """计算文件的MD5哈希值"""
@@ -213,23 +228,26 @@ class ArchiveService:
             for pattern in patterns:
                 if self._stop_flag:
                     break
-                    
+
                 directories = list(source_dir.glob(pattern))
-                if directories:
-                    logger.info(f"\n处理类型: {pattern}")
-                    await service_manager.telegram_service.send_message(f"📂 处理类型: {pattern}")
-                    
-                    for directory in directories:
-                        if self._stop_flag:
-                            break
-                            
-                        if directory.is_dir() and not str(directory).startswith(str(self.settings.archive_target_dir)):
-                            result = await self.process_directory(directory)
-                            if result["success"]:
-                                total_processed += result["moved_files"]
-                                total_size += result["total_size"]
-                            await service_manager.telegram_service.send_message(result["message"])
-                            
+                for directory in directories:
+                    if self._stop_flag:
+                        break
+
+                    # 递归查找最底层文件夹
+                    for root, dirs, files in os.walk(directory):
+                        if not dirs:  # 如果没有子目录，说明是最底层
+                            logger.info(f"\n处理目录: {root}")
+                            await service_manager.telegram_service.send_message(f"📂 处理目录: {root}")
+
+                            for file in files:
+                                file_path = Path(root) / file
+                                result = await self.process_file(file_path)
+                                if result["success"]:
+                                    total_processed += 1
+                                    total_size += result["size"]
+                                await service_manager.telegram_service.send_message(result["message"])
+
                         # 让出控制权
                         await asyncio.sleep(0)
             
@@ -277,3 +295,115 @@ class ArchiveService:
             logger.info("媒体类型配置已保存")
         except Exception as e:
             logger.error(f"保存媒体类型配置失败: {e}") 
+
+    async def process_file(self, source_path: Path) -> Dict:
+        """处理单个文件的归档
+        
+        Args:
+            source_path: 源文件路径
+            
+        Returns:
+            Dict: 处理结果，包含success、message和size字段
+        """
+        try:
+            # 检查文件是否存在且是文件
+            if not source_path.is_file():
+                return {
+                    "success": False,
+                    "message": f"❌ {source_path} 不是文件",
+                    "size": 0
+                }
+            
+            # 获取文件大小
+            file_size = source_path.stat().st_size
+            
+            # 获取媒体类型
+            media_type = self.get_media_type(source_path)
+            if not media_type:
+                return {
+                    "success": False,
+                    "message": f"❌ {source_path} 未匹配到媒体类型",
+                    "size": 0
+                }
+            
+            # 检查文件是否满足阈值条件
+            creation_time = self.get_creation_time(source_path)
+            mtime = source_path.stat().st_mtime
+            
+            threshold = self.thresholds[media_type]
+            creation_days = (time.time() - creation_time) / (24 * 3600)
+            mtime_days = (time.time() - mtime) / (24 * 3600)
+            
+            if creation_days < threshold.creation_days or mtime_days < threshold.mtime_days:
+                return {
+                    "success": False,
+                    "message": f"⏳ {source_path} 未达到归档阈值",
+                    "size": 0
+                }
+            
+            # 构建目标路径，保持相对路径结构
+            relative_path = source_path.relative_to(self.settings.archive_source_dir)
+            dest_path = Path(self.settings.archive_target_dir) / relative_path
+            
+            # 确保目标目录存在
+            dest_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            # 如果目标文件已存在，验证文件
+            if dest_path.exists():
+                if self.verify_files(source_path, dest_path):
+                    # 如果配置了删除源文件且验证通过
+                    if self.settings.archive_delete_source:
+                        source_path.unlink()
+                        return {
+                            "success": True,
+                            "message": f"🗑️ {source_path} 已存在于目标位置，删除源文件",
+                            "size": file_size
+                        }
+                    return {
+                        "success": False,
+                        "message": f"⏭️ {source_path} 已存在于目标位置",
+                        "size": 0
+                    }
+                else:
+                    return {
+                        "success": False,
+                        "message": f"❌ {source_path} 目标位置存在不同文件",
+                        "size": 0
+                    }
+            
+            # 复制文件
+            shutil.copy2(source_path, dest_path)
+            
+            # 验证复制后的文件
+            if not self.verify_files(source_path, dest_path):
+                # 如果验证失败，删除目标文件
+                if dest_path.exists():
+                    dest_path.unlink()
+                return {
+                    "success": False,
+                    "message": f"❌ {source_path} 复制验证失败",
+                    "size": 0
+                }
+            
+            # 如果配置了删除源文件
+            if self.settings.archive_delete_source:
+                source_path.unlink()
+                return {
+                    "success": True,
+                    "message": f"✅ {source_path} -> {dest_path} (已删除源文件)",
+                    "size": file_size
+                }
+            
+            return {
+                "success": True,
+                "message": f"✅ {source_path} -> {dest_path}",
+                "size": file_size
+            }
+            
+        except Exception as e:
+            logger.error(f"处理文件失败 {source_path}: {e}")
+            return {
+                "success": False,
+                "message": f"❌ {source_path} 处理失败: {str(e)}",
+                "size": 0
+            } 
