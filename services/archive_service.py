@@ -261,16 +261,24 @@ class ArchiveService:
             total_size = 0
             test_results = []
             
-            # 遍历源目录下的所有目录
-            for directory in source_dir.rglob("*"):
+            # 只遍历配置的媒体类型目录
+            for media_type, info in self.media_types.items():
                 if self._stop_flag:
                     break
-                    
-                if not directory.is_dir():
+                
+                # 构建完整的目录路径
+                type_dir = source_dir / info['dir']
+                if not type_dir.exists():
                     continue
-                    
-                # 检查是否是最底层目录（不包含子目录）
-                if not any(d.is_dir() for d in directory.iterdir()):
+                
+                # 遍历该类型目录下的所有子目录
+                for directory in type_dir.iterdir():
+                    if self._stop_flag:
+                        break
+                        
+                    if not directory.is_dir():
+                        continue
+                        
                     logger.info(f"\n处理目录: {directory}")
                     await service_manager.telegram_service.send_message(f"📂 处理目录: {directory}")
                     
@@ -281,9 +289,9 @@ class ArchiveService:
                     if test_mode:
                         test_results.append(result)
                     await service_manager.telegram_service.send_message(result["message"])
-                
-                # 让出控制权
-                await asyncio.sleep(0)
+                    
+                    # 让出控制权
+                    await asyncio.sleep(0)
             
             summary = (
                 f"✅ 归档{'测试' if test_mode else ''}完成\n"
