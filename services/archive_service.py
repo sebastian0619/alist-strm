@@ -207,12 +207,8 @@ class ArchiveService:
             total_processed = 0
             total_size = 0
             
-            patterns = [
-                "电视剧/*/*",
-                "动漫/完结动漫/*",
-                "电影/*/*",
-                "综艺/*"
-            ]
+            # 从媒体类型配置中动态加载patterns
+            patterns = [info['dir'] for info in self.media_types.values()]
             
             for pattern in patterns:
                 if self._stop_flag:
