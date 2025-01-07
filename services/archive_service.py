@@ -9,6 +9,7 @@ from loguru import logger
 from config import Settings
 import asyncio
 import importlib
+import json
 
 class MediaThreshold(NamedTuple):
     """媒体文件的时间阈值配置"""
@@ -21,19 +22,18 @@ class ArchiveService:
         self._stop_flag = False
         self._is_running = False
         
-        # 视频文件扩展名
-        self.video_extensions = {
-            '.mp4', '.mkv', '.avi', '.ts', '.m2ts',
-            '.mov', '.wmv', '.iso', '.m4v', '.mpg',
-            '.mpeg', '.rm', '.rmvb'
-        }
+        # 从配置加载视频文件扩展名
+        self.video_extensions = set(
+            ext.strip() for ext in self.settings.archive_video_extensions.split(',')
+        )
         
-        # 媒体类型阈值
+        # 从文件加载媒体类型配置
+        self.media_types = self._load_media_types()
         self.thresholds = {
-            "电影": MediaThreshold(20, 20),      # Movies
-            "完结动漫": MediaThreshold(100, 45),  # Completed anime
-            "电视剧": MediaThreshold(10, 90),     # TV shows
-            "综艺": MediaThreshold(1, 1)          # Variety shows
+            name: MediaThreshold(
+                info["creation_days"],
+                info["mtime_days"]
+            ) for name, info in self.media_types.items()
         }
     
     def _get_service_manager(self):
@@ -53,14 +53,9 @@ class ArchiveService:
     def get_media_type(self, path: Path) -> str:
         """根据路径判断媒体类型"""
         path_str = str(path)
-        if "/电影/" in path_str:
-            return "电影"
-        elif "/动漫/完结动漫/" in path_str:
-            return "完结动漫"
-        elif "/电视剧/" in path_str:
-            return "电视剧"
-        elif "/综艺/" in path_str:
-            return "综艺"
+        for media_type, info in self.media_types.items():
+            if f"/{info['dir']}/" in path_str:
+                return media_type
         return ""
     
     def calculate_file_hash(self, file_path: Path) -> Optional[str]:
@@ -265,3 +260,24 @@ class ArchiveService:
         finally:
             self._is_running = False
             self._stop_flag = False 
+
+    def _load_media_types(self) -> Dict[str, Dict]:
+        """从config/archive.json加载媒体类型配置"""
+        config_file = "config/archive.json"
+        if os.path.exists(config_file):
+            try:
+                with open(config_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except Exception as e:
+                logger.error(f"加载媒体类型配置失败: {e}")
+        return json.loads(self.settings.archive_media_types)
+
+    def save_media_types(self):
+        """保存媒体类型配置到config/archive.json"""
+        config_file = "config/archive.json"
+        try:
+            with open(config_file, 'w', encoding='utf-8') as f:
+                json.dump(self.media_types, f, ensure_ascii=False, indent=4)
+            logger.info("媒体类型配置已保存")
+        except Exception as e:
+            logger.error(f"保存媒体类型配置失败: {e}") 

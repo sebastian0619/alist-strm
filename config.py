@@ -62,11 +62,32 @@ class Settings(BaseSettings):
     tg_proxy_url: str = Field(default="", alias="TG_PROXY_URL")
     
     # 归档配置
-    archive_source_dir: str = Field(default="", alias="ARCHIVE_SOURCE_DIR")
-    archive_target_dir: str = Field(default="", alias="ARCHIVE_TARGET_DIR")
+    archive_enabled: bool = Field(default=False, alias="ARCHIVE_ENABLED")
+    archive_source_root: str = Field(default="", alias="ARCHIVE_SOURCE_ROOT")  # 源根目录
+    archive_target_root: str = Field(default="", alias="ARCHIVE_TARGET_ROOT")  # 目标根目录
     archive_auto_strm: bool = Field(default=False, alias="ARCHIVE_AUTO_STRM")
     archive_delete_source: bool = Field(default=False, alias="ARCHIVE_DELETE_SOURCE")
-    archive_enabled: bool = Field(default=False, alias="ARCHIVE_ENABLED")
+    
+    # 归档阈值配置
+    archive_video_extensions: str = Field(
+        default=".mp4,.mkv,.avi,.ts,.m2ts,.mov,.wmv,.iso,.m4v,.mpg,.mpeg,.rm,.rmvb",
+        alias="ARCHIVE_VIDEO_EXTENSIONS"
+    )
+    
+    # 媒体类型配置 - JSON格式
+    # 格式: {"类型名称": {"dir": "目录名", "creation_days": 天数, "mtime_days": 天数}}
+    # 例如: {"电影": {"dir": "movie", "creation_days": 20, "mtime_days": 20}}
+    archive_media_types: str = Field(
+        default=json.dumps({
+            "电影": {"dir": "movie", "creation_days": 20, "mtime_days": 20},
+            "完结动漫": {"dir": "anime", "creation_days": 100, "mtime_days": 45},
+            "电视剧": {"dir": "tv", "creation_days": 10, "mtime_days": 90},
+            "综艺": {"dir": "variety", "creation_days": 1, "mtime_days": 1}
+        }, ensure_ascii=False),
+        alias="ARCHIVE_MEDIA_TYPES"
+    )
+    
+    # 定时任务配置
 
     model_config = ConfigDict(
         env_file=".env",

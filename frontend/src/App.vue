@@ -8,10 +8,7 @@
         <a-tab-pane key="config" tab="基本配置">
           <config-panel />
         </a-tab-pane>
-        <a-tab-pane key="strm" tab="STRM管理">
-          <strm-panel />
-        </a-tab-pane>
-        <a-tab-pane key="archive" tab="归档管理">
+        <a-tab-pane key="archive" tab="网盘归档">
           <archive-panel />
         </a-tab-pane>
       </a-tabs>
@@ -22,7 +19,6 @@
 <script setup>
 import { ref } from 'vue'
 import ConfigPanel from './components/ConfigPanel.vue'
-import StrmPanel from './components/StrmPanel.vue'
 import ArchivePanel from './components/ArchivePanel.vue'
 
 const activeKey = ref('config')

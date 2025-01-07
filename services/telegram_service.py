@@ -5,6 +5,7 @@ from config import Settings
 from datetime import datetime
 from typing import Dict, Optional
 import importlib
+import asyncio
 
 class ProcessState:
     """进程状态管理"""
@@ -249,79 +250,115 @@ STRM文件管理：
         except Exception as e:
             logger.error(f"Bot命令菜单更新失败: {str(e)}")
 
-    async def initialize(self):
+    async def initialize(self, max_retries: int = 3):
         """初始化Telegram机器人"""
         if not self.settings.tg_enabled or not self.settings.tg_token:
             logger.warning("Telegram bot未启用或token未配置")
             return
 
-        try:
-            # 设置代理
-            proxy_url = None
-            if self.settings.tg_proxy_url:
-                proxy_url = self.settings.tg_proxy_url
+        retry_count = 0
+        while retry_count < max_retries:
+            try:
+                # 设置代理
+                proxy_url = None
+                if self.settings.tg_proxy_url:
+                    proxy_url = self.settings.tg_proxy_url
 
-            # 创建机器人应用
-            self.application = (
-                Application.builder()
-                .token(self.settings.tg_token)
-                .proxy_url(proxy_url)
-                .build()
-            )
+                # 创建机器人应用
+                self.application = (
+                    Application.builder()
+                    .token(self.settings.tg_token)
+                    .proxy_url(proxy_url)
+                    .connect_timeout(30)
+                    .read_timeout(30)
+                    .write_timeout(30)
+                    .pool_timeout(30)
+                    .build()
+                )
 
-            # 添加命令处理器
-            self.application.add_handler(CommandHandler("start", self.start_command))
-            self.application.add_handler(CommandHandler("help", self.help_command))
-            self.application.add_handler(CommandHandler("status", self.status_command))
-            self.application.add_handler(CommandHandler("strm_scan", self.strm_scan_command))
-            self.application.add_handler(CommandHandler("strm_stop", self.strm_stop_command))
-            self.application.add_handler(CommandHandler("strm_clear_cache", self.strm_clear_cache_command))
-            self.application.add_handler(CommandHandler("sync", self.sync_command))
-            self.application.add_handler(CommandHandler("sync_one", self.sync_one_command))
-            self.application.add_handler(CommandHandler("pause", self.pause_command))
-            self.application.add_handler(CommandHandler("resume", self.resume_command))
-            self.application.add_handler(CommandHandler("tasks", self.tasks_command))
-            self.application.add_handler(CommandHandler("task_add", self.task_add_command))
-            self.application.add_handler(CommandHandler("task_remove", self.task_remove_command))
-            self.application.add_handler(CommandHandler("archive", self.archive_command))
-            self.application.add_handler(CommandHandler("archive_stop", self.archive_stop_command))
+                # 添加命令处理器
+                self.application.add_handler(CommandHandler("start", self.start_command))
+                self.application.add_handler(CommandHandler("help", self.help_command))
+                self.application.add_handler(CommandHandler("status", self.status_command))
+                self.application.add_handler(CommandHandler("strm_scan", self.strm_scan_command))
+                self.application.add_handler(CommandHandler("strm_stop", self.strm_stop_command))
+                self.application.add_handler(CommandHandler("strm_clear_cache", self.strm_clear_cache_command))
+                self.application.add_handler(CommandHandler("sync", self.sync_command))
+                self.application.add_handler(CommandHandler("sync_one", self.sync_one_command))
+                self.application.add_handler(CommandHandler("pause", self.pause_command))
+                self.application.add_handler(CommandHandler("resume", self.resume_command))
+                self.application.add_handler(CommandHandler("tasks", self.tasks_command))
+                self.application.add_handler(CommandHandler("task_add", self.task_add_command))
+                self.application.add_handler(CommandHandler("task_remove", self.task_remove_command))
+                self.application.add_handler(CommandHandler("archive", self.archive_command))
+                self.application.add_handler(CommandHandler("archive_stop", self.archive_stop_command))
 
-            # 初始化机器人
-            await self.application.initialize()
-            # 更新命令菜单
-            await self.update_bot_commands()
-            logger.info("Telegram机器人初始化成功")
-            
-        except Exception as e:
-            logger.error(f"Telegram机器人初始化失败: {str(e)}")
-            raise
+                # 初始化机器人
+                await self.application.initialize()
+                # 更新命令菜单
+                await self.update_bot_commands()
+                logger.info("Telegram机器人初始化成功")
+                return
+                
+            except Exception as e:
+                retry_count += 1
+                if retry_count < max_retries:
+                    wait_time = 2 ** retry_count  # 指数退避
+                    logger.warning(f"Telegram机器人初始化失败，{wait_time}秒后重试 ({retry_count}/{max_retries}): {str(e)}")
+                    await asyncio.sleep(wait_time)
+                else:
+                    logger.error(f"Telegram机器人初始化失败，已达到最大重试次数: {str(e)}")
+                    raise
 
-    async def start(self):
+    async def start(self, max_retries: int = 3):
         """启动机器人"""
         if not self.application:
             return
             
-        try:
-            await self.application.start()
-            logger.info("Telegram机器人启动成功")
-        except Exception as e:
-            logger.error(f"Telegram机器人启动失败: {str(e)}")
-            raise
+        retry_count = 0
+        while retry_count < max_retries:
+            try:
+                await self.application.start()
+                logger.info("Telegram机器人启动成功")
+                return
+            except Exception as e:
+                retry_count += 1
+                if retry_count < max_retries:
+                    wait_time = 2 ** retry_count  # 指数退避
+                    logger.warning(f"Telegram机器人启动失败，{wait_time}秒后重试 ({retry_count}/{max_retries}): {str(e)}")
+                    await asyncio.sleep(wait_time)
+                else:
+                    logger.error(f"Telegram机器人启动失败，已达到最大重试次数: {str(e)}")
+                    raise
 
-    async def send_message(self, message: str):
+    async def send_message(self, message: str, max_retries: int = 3):
         """发送消息到Telegram"""
         if not self.application or not self.settings.tg_chat_id:
             return
             
-        try:
-            await self.application.bot.send_message(
-                chat_id=self.settings.tg_chat_id,
-                text=message,
-                parse_mode="HTML"
-            )
-            logger.debug(f"Telegram消息发送成功: {message}")
-        except Exception as e:
-            logger.error(f"Telegram消息发送失败: {str(e)}")
+        retry_count = 0
+        while retry_count < max_retries:
+            try:
+                await self.application.bot.send_message(
+                    chat_id=self.settings.tg_chat_id,
+                    text=message,
+                    parse_mode="HTML",
+                    read_timeout=30,
+                    write_timeout=30,
+                    connect_timeout=30,
+                    pool_timeout=30
+                )
+                logger.debug(f"Telegram消息发送成功: {message}")
+                return
+            except Exception as e:
+                retry_count += 1
+                if retry_count < max_retries:
+                    wait_time = 2 ** retry_count  # 指数退避
+                    logger.warning(f"Telegram消息发送失败，{wait_time}秒后重试 ({retry_count}/{max_retries}): {str(e)}")
+                    await asyncio.sleep(wait_time)
+                else:
+                    logger.error(f"Telegram消息发送失败，已达到最大重试次数: {str(e)}")
+                    break
 
     async def close(self):
         """关闭机器人"""
