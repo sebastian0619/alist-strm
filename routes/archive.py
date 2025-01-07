@@ -13,6 +13,14 @@ async def start_archive():
     await service_manager.archive_service.archive()
     return {"message": "归档任务已启动"}
 
+@router.post("/test")
+async def test_archive():
+    """测试归档处理（只识别不执行）"""
+    if not service_manager.archive_service.settings.archive_enabled:
+        raise HTTPException(status_code=400, detail="归档功能未启用")
+    result = await service_manager.archive_service.archive(test_mode=True)
+    return {"message": "归档测试完成", "data": result}
+
 @router.post("/stop")
 async def stop_archive():
     """停止归档处理"""

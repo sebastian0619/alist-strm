@@ -117,7 +117,10 @@
               <a-button @click="startArchive" :loading="archiving">
                 开始归档
               </a-button>
-              <a-button @click="stopArchive" :disabled="!archiving">
+              <a-button @click="testArchive" :loading="testing">
+                测试归档
+              </a-button>
+              <a-button @click="stopArchive" :disabled="!archiving && !testing">
                 停止归档
               </a-button>
             </a-space>
@@ -125,6 +128,29 @@
         </template>
       </a-form>
     </a-card>
+
+    <!-- 测试结果对话框 -->
+    <a-modal
+      v-model:visible="testResultVisible"
+      title="归档测试结果"
+      width="800px"
+      @ok="testResultVisible = false"
+    >
+      <template v-if="testResult">
+        <div class="test-result">
+          <div class="summary">{{ testResult.summary }}</div>
+          <a-divider />
+          <div class="results">
+            <div v-for="(result, index) in testResult.results" :key="index" class="result-item">
+              <a-tag :color="getResultColor(result)">
+                {{ result.success ? '通过' : '失败' }}
+              </a-tag>
+              {{ result.message }}
+            </div>
+          </div>
+        </div>
+      </template>
+    </a-modal>
   </div>
 </template>
 
@@ -147,6 +173,18 @@ const config = ref({
 })
 
 const mediaTypes = ref({})
+const archiving = ref(false)
+const testing = ref(false)
+const testResultVisible = ref(false)
+const testResult = ref(null)
+
+// 获取结果标签颜色
+const getResultColor = (result) => {
+  if (result.message.startsWith('[测试]')) return 'blue'
+  if (result.message.startsWith('[跳过]')) return 'orange'
+  if (result.message.startsWith('[错误]')) return 'red'
+  return 'green'
+}
 
 // 添加媒体类型相关
 const addMediaType = () => {
@@ -205,8 +243,6 @@ const loadConfig = async () => {
 }
 
 // 归档控制
-const archiving = ref(false)
-
 const startArchive = async () => {
   try {
     archiving.value = true
@@ -218,11 +254,26 @@ const startArchive = async () => {
   }
 }
 
+const testArchive = async () => {
+  try {
+    testing.value = true
+    const response = await axios.post('/api/archive/test')
+    testResult.value = response.data.data
+    testResultVisible.value = true
+    message.success('归档测试完成')
+  } catch (error) {
+    message.error('归档测试失败: ' + error.message)
+  } finally {
+    testing.value = false
+  }
+}
+
 const stopArchive = async () => {
   try {
     await axios.post('/api/archive/stop')
     message.success('归档任务已停止')
     archiving.value = false
+    testing.value = false
   } catch (error) {
     message.error('停止归档失败: ' + error.message)
   }
@@ -237,5 +288,26 @@ onMounted(() => {
 <style scoped>
 .archive-panel {
   margin: 24px;
+}
+
+.test-result {
+  max-height: 500px;
+  overflow-y: auto;
+}
+
+.summary {
+  font-weight: bold;
+  margin-bottom: 16px;
+  white-space: pre-line;
+}
+
+.result-item {
+  margin-bottom: 8px;
+}
+
+.result-item :deep(.ant-tag) {
+  min-width: 48px;
+  text-align: center;
+  margin-right: 8px;
 }
 </style> 

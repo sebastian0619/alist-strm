@@ -127,8 +127,16 @@ class ArchiveService:
         self._stop_flag = True
         logger.info("收到停止信号，正在停止归档...")
     
-    async def process_directory(self, directory: Path) -> Dict:
-        """处理单个目录的归档"""
+    async def process_directory(self, directory: Path, test_mode: bool = False) -> Dict:
+        """处理单个目录的归档
+        
+        Args:
+            directory: 要处理的目录路径
+            test_mode: 是否为测试模式（只识别不执行）
+            
+        Returns:
+            Dict: 处理结果
+        """
         result = {
             "success": False,
             "message": "",
@@ -161,6 +169,12 @@ class ArchiveService:
             target_dir = Path(self.settings.archive_target_dir)
             relative_path = directory.relative_to(source_dir)
             destination = target_dir / relative_path
+            
+            if test_mode:
+                # 测试模式下只返回将要执行的操作
+                result["message"] = f"[测试] {media_type}: {directory.name} -> {destination.name}"
+                result["success"] = True
+                return result
             
             # 创建目标目录
             destination.parent.mkdir(parents=True, exist_ok=True)
@@ -196,7 +210,7 @@ class ArchiveService:
                         result["total_size"] += src_file.stat().st_size
                         result["moved_files"] += 1
                 result["message"] = f"[归档] {media_type}: {directory.name} -> {destination.name}"
-            
+
             result["success"] = True
             
         except Exception as e:
@@ -205,8 +219,15 @@ class ArchiveService:
             
         return result
     
-    async def archive(self):
-        """执行归档处理"""
+    async def archive(self, test_mode: bool = False):
+        """执行归档处理
+        
+        Args:
+            test_mode: 是否为测试模式（只识别不执行）
+            
+        Returns:
+            Dict: 如果是测试模式，返回测试结果
+        """
         if self._is_running:
             logger.warning("归档任务已在运行中")
             return
@@ -216,11 +237,14 @@ class ArchiveService:
             self._is_running = True
             
             service_manager = self._get_service_manager()
-            await service_manager.telegram_service.send_message("🚀 开始归档处理...")
+            await service_manager.telegram_service.send_message(
+                "🔍 开始归档测试..." if test_mode else "🚀 开始归档处理..."
+            )
             
             source_dir = Path(self.settings.archive_source_dir)
             total_processed = 0
             total_size = 0
+            test_results = []
             
             # 从媒体类型配置中动态加载patterns
             patterns = [info['dir'] for info in self.media_types.values()]
@@ -240,40 +264,46 @@ class ArchiveService:
                             logger.info(f"\n处理目录: {root}")
                             await service_manager.telegram_service.send_message(f"📂 处理目录: {root}")
 
-                            for file in files:
-                                file_path = Path(root) / file
-                                result = await self.process_file(file_path)
-                                if result["success"]:
-                                    total_processed += 1
-                                    total_size += result["size"]
-                                await service_manager.telegram_service.send_message(result["message"])
+                            result = await self.process_directory(Path(root), test_mode)
+                            if result["success"]:
+                                total_processed += result["moved_files"]
+                                total_size += result["total_size"]
+                            if test_mode:
+                                test_results.append(result)
+                            await service_manager.telegram_service.send_message(result["message"])
 
                         # 让出控制权
                         await asyncio.sleep(0)
-            
+
             summary = (
-                f"✅ 归档完成\n"
-                f"📁 处理文件: {total_processed} 个\n"
+                f"✅ 归档{'测试' if test_mode else ''}完成\n"
+                f"📁 {'识别' if test_mode else '处理'}文件: {total_processed} 个\n"
                 f"💾 总大小: {total_size / 1024 / 1024:.2f} MB"
             )
             logger.info(summary)
             await service_manager.telegram_service.send_message(summary)
             
-            # 如果配置了自动运行STRM扫描
-            if self.settings.archive_auto_strm and total_processed > 0:
+            # 如果配置了自动运行STRM扫描且不是测试模式
+            if not test_mode and self.settings.archive_auto_strm and total_processed > 0:
                 logger.info("开始自动STRM扫描...")
                 await service_manager.telegram_service.send_message("🔄 开始自动STRM扫描...")
                 await service_manager.strm_service.strm()
             
+            if test_mode:
+                return {
+                    "summary": summary,
+                    "results": test_results
+                }
+            
         except Exception as e:
-            error_msg = f"❌ 归档处理出错: {str(e)}"
+            error_msg = f"❌ 归档{'测试' if test_mode else '处理'}出错: {str(e)}"
             logger.error(error_msg)
             service_manager = self._get_service_manager()
             await service_manager.telegram_service.send_message(error_msg)
             raise
         finally:
             self._is_running = False
-            self._stop_flag = False 
+            self._stop_flag = False
 
     def _load_media_types(self) -> Dict[str, Dict]:
         """从config/archive.json加载媒体类型配置"""
