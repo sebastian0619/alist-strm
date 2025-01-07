@@ -271,7 +271,6 @@ STRM文件管理：
             
         try:
             await self.application.start()
-            await self.application.run_polling()
             logger.info("Telegram机器人启动成功")
         except Exception as e:
             logger.error(f"Telegram机器人启动失败: {str(e)}")

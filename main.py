@@ -12,6 +12,13 @@ from services.service_manager import service_manager, scheduler_service, strm_se
 
 settings = Settings()
 
+async def run_telegram_polling():
+    """运行Telegram轮询"""
+    try:
+        await service_manager.telegram_service.application.updater.start_polling()
+    except Exception as e:
+        logger.error(f"Telegram轮询启动失败: {str(e)}")
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
@@ -36,6 +43,9 @@ async def lifespan(app: FastAPI):
     await service_manager.initialize()
     await service_manager.start()
     
+    # 启动Telegram轮询
+    asyncio.create_task(run_telegram_polling())
+    
     # 启动定时任务
     if settings.schedule_enabled:
         await scheduler_service.start()
@@ -51,6 +61,8 @@ async def lifespan(app: FastAPI):
     
     # 关闭时
     logger.info("应用关闭...")
+    if service_manager.telegram_service.application:
+        await service_manager.telegram_service.application.updater.stop()
     await service_manager.close()
     await strm_service.close()
     await scheduler_service.stop()
