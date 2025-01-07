@@ -136,3 +136,75 @@ class TelegramService:
             except Exception as e:
                 logger.error(f"关闭Telegram服务失败: {e}")
                 raise
+
+    async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """处理/start命令"""
+        await update.message.reply_text('欢迎使用Alist流媒体服务机器人！\n使用 /help 查看可用命令。')
+
+    async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """处理/help命令"""
+        help_text = """
+可用命令列表：
+
+STRM文件管理：
+/strm - 开始扫描生成STRM文件
+/strm_stop - 停止扫描
+
+归档管理：
+/archive - 开始归档处理
+/archive_stop - 停止归档处理
+
+系统控制：
+/status - 查看系统状态
+/start - 开始使用机器人
+/help - 显示本帮助信息
+        """
+        await update.message.reply_text(help_text)
+
+    async def status_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """处理/status命令"""
+        await update.message.reply_text(self.state.status)
+
+    async def strm_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """处理/strm命令 - 开始扫描生成STRM文件"""
+        if self.state.is_paused:
+            await update.message.reply_text("系统当前处于暂停状态，请先使用 /resume 恢复运行")
+            return
+        await update.message.reply_text("开始扫描生成STRM文件...")
+        service_manager = self._get_service_manager()
+        await service_manager.strm_service.strm()
+
+    async def strm_stop_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """处理/strm_stop命令 - 停止扫描"""
+        service_manager = self._get_service_manager()
+        service_manager.strm_service.stop()
+        await update.message.reply_text("已发送停止扫描信号")
+
+    async def archive_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """处理/archive命令 - 开始归档处理"""
+        if not self.settings.archive_enabled:
+            await update.message.reply_text("归档功能未启用")
+            return
+            
+        if self.state.is_paused:
+            await update.message.reply_text("系统当前处于暂停状态，请先使用 /resume 恢复运行")
+            return
+            
+        await update.message.reply_text("开始归档处理...")
+        service_manager = self._get_service_manager()
+        await service_manager.archive_service.archive()
+
+    async def archive_stop_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """处理/archive_stop命令 - 停止归档"""
+        if not self.settings.archive_enabled:
+            await update.message.reply_text("归档功能未启用")
+            return
+            
+        service_manager = self._get_service_manager()
+        service_manager.archive_service.stop()
+        await update.message.reply_text("已发送停止归档信号")
+
+    def _get_service_manager(self):
+        """动态获取service_manager以避免循环依赖"""
+        module = importlib.import_module('services.service_manager')
+        return module.service_manager
