@@ -80,6 +80,17 @@ class TelegramService:
         try:
             # 创建应用
             self.application = Application.builder().token(self.settings.tg_token).build()
+            
+            # 注册命令处理器
+            self.application.add_handler(CommandHandler("start", self.start_command))
+            self.application.add_handler(CommandHandler("help", self.help_command))
+            self.application.add_handler(CommandHandler("status", self.status_command))
+            self.application.add_handler(CommandHandler("strm", self.strm_command))
+            self.application.add_handler(CommandHandler("strm_stop", self.strm_stop_command))
+            self.application.add_handler(CommandHandler("archive", self.archive_command))
+            self.application.add_handler(CommandHandler("archive_stop", self.archive_stop_command))
+            
+            # 初始化应用
             await self.application.initialize()
             self.initialized = True
             logger.info("Telegram服务初始化完成")
@@ -95,62 +106,16 @@ class TelegramService:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             
-            # 创建新的应用实例用于轮询
-            polling_app = Application.builder().token(self.settings.tg_token).build()
-            
-            # 注册命令处理器
-            polling_app.add_handler(CommandHandler("start", self.start_command))
-            polling_app.add_handler(CommandHandler("help", self.help_command))
-            polling_app.add_handler(CommandHandler("status", self.status_command))
-            polling_app.add_handler(CommandHandler("strm", self.strm_command))
-            polling_app.add_handler(CommandHandler("strm_stop", self.strm_stop_command))
-            polling_app.add_handler(CommandHandler("archive", self.archive_command))
-            polling_app.add_handler(CommandHandler("archive_stop", self.archive_stop_command))
-            
-            # 初始化和启动轮询
-            loop.run_until_complete(polling_app.initialize())
-            loop.run_until_complete(polling_app.start())
-            loop.run_until_complete(polling_app.updater.start_polling())
+            # 启动轮询
+            loop.run_until_complete(self.application.updater.start_polling())
             loop.run_forever()
         except Exception as e:
             logger.error(f"Telegram轮询出错: {e}")
         finally:
             try:
-                # 清理资源
-                loop.run_until_complete(polling_app.stop())
-                loop.run_until_complete(polling_app.shutdown())
                 loop.close()
             except Exception as e:
                 logger.error(f"清理Telegram轮询资源失败: {e}")
-
-    async def send_message(self, message: str, max_retries: int = 3):
-        """发送消息到Telegram
-        
-        Args:
-            message: 要发送的消息
-            max_retries: 最大重试次数
-        """
-        if not self.application or not self.settings.tg_chat_id:
-            return
-            
-        retry_count = 0
-        while retry_count < max_retries:
-            try:
-                await self.application.bot.send_message(
-                    chat_id=self.settings.tg_chat_id,
-                    text=message,
-                    parse_mode="HTML"
-                )
-                return
-            except Exception as e:
-                retry_count += 1
-                if retry_count < max_retries:
-                    wait_time = 2 ** retry_count  # 指数退避
-                    logger.warning(f"Telegram消息发送失败，{wait_time}秒后重试 ({retry_count}/{max_retries}): {str(e)}")
-                    await asyncio.sleep(wait_time)
-                else:
-                    logger.error(f"Telegram消息发送失败，已达到最大重试次数: {str(e)}")
-                    break
 
     async def start(self):
         """启动Telegram服务"""
@@ -158,6 +123,9 @@ class TelegramService:
             return
             
         try:
+            # 启动应用
+            await self.application.start()
+            
             # 在后台线程中启动轮询
             self._polling_thread = threading.Thread(
                 target=self._run_polling,
@@ -174,10 +142,14 @@ class TelegramService:
         if self.initialized and self.application:
             try:
                 # 停止轮询
+                await self.application.updater.stop()
                 await self.application.stop()
+                await self.application.shutdown()
+                
                 # 等待轮询线程结束
                 if self._polling_thread and self._polling_thread.is_alive():
                     self._polling_thread.join(timeout=5)
+                    
                 self.initialized = False
                 logger.info("Telegram服务已关闭")
             except Exception as e:
