@@ -79,30 +79,12 @@ class TelegramService:
             logger.error("未配置Telegram Bot Token")
             return
             
-        try:
-            # 创建应用
-            self.application = Application.builder().token(self.settings.tg_token).build()
-            
-            # 注册命令处理器
-            self.application.add_handler(CommandHandler("start", self.start_command))
-            self.application.add_handler(CommandHandler("help", self.help_command))
-            self.application.add_handler(CommandHandler("status", self.status_command))
-            self.application.add_handler(CommandHandler("strm", self.strm_command))
-            self.application.add_handler(CommandHandler("strm_stop", self.strm_stop_command))
-            self.application.add_handler(CommandHandler("archive", self.archive_command))
-            self.application.add_handler(CommandHandler("archive_stop", self.archive_stop_command))
-            
-            # 初始化应用
-            await self.application.initialize()
-            self.initialized = True
-            logger.info("Telegram服务初始化完成")
-            
-        except Exception as e:
-            logger.error(f"初始化Telegram服务失败: {e}")
-            raise
+        # 只做基本检查，不创建application
+        logger.info("Telegram服务初始化完成")
     
     def _run_polling(self):
         """运行轮询的后台线程函数"""
+        app = None
         try:
             # 创建新的事件循环
             loop = asyncio.new_event_loop()
@@ -141,7 +123,11 @@ class TelegramService:
         finally:
             try:
                 # 清理资源
-                if 'app' in locals():
+                if app:
+                    # 先停止updater
+                    if hasattr(app, 'updater'):
+                        loop.run_until_complete(app.updater.stop())
+                    # 然后停止和关闭应用
                     loop.run_until_complete(app.stop())
                     loop.run_until_complete(app.shutdown())
                 loop.close()
