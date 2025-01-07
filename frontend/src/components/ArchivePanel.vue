@@ -149,87 +149,88 @@ const config = ref({
 const mediaTypes = ref({})
 
 // 添加媒体类型相关
-const addTypeModalVisible = ref(false)
-const newType = ref({
-  name: '',
-  dir: '',
-  creation_days: 0,
-  mtime_days: 0
-})
-
-const showAddTypeModal = () => {
-  newType.value = {
-    name: '',
+const addMediaType = () => {
+  const typeName = `类型${Object.keys(mediaTypes.value).length + 1}`
+  mediaTypes.value[typeName] = {
     dir: '',
-    creation_days: 0,
-    mtime_days: 0
+    creation_days: 30,
+    mtime_days: 7
   }
-  addTypeModalVisible.value = true
-}
-
-const handleAddType = () => {
-  if (!newType.value.name || !newType.value.dir) {
-    message.error('请填写完整信息')
-    return
-  }
-  
-  mediaTypes.value[newType.value.name] = {
-    dir: newType.value.dir,
-    creation_days: newType.value.creation_days,
-    mtime_days: newType.value.mtime_days
-  }
-  
-  // 更新配置
-  updateMediaTypes()
-  addTypeModalVisible.value = false
 }
 
 const removeMediaType = (name) => {
   delete mediaTypes.value[name]
-  // 更新配置
-  updateMediaTypes()
 }
 
-const updateMediaTypes = () => {
-  config.value.archive_media_types = JSON.stringify(mediaTypes.value)
-}
-
-const isArchiving = ref(false)
-
-// 开始归档
-const startArchive = async () => {
+// 保存配置
+const saveConfig = async () => {
   try {
-    isArchiving.value = true
-    await axios.post('/api/archive/start')
-    message.success('归档任务已启动')
+    // 保存基本配置
+    const configResponse = await axios.post('/api/config/save', config.value)
+    if (!configResponse.data.success) {
+      throw new Error(configResponse.data.message)
+    }
+    
+    // 保存媒体类型配置
+    const mediaTypesResponse = await axios.post('/api/archive/media_types', mediaTypes.value)
+    if (!mediaTypesResponse.data.success) {
+      throw new Error(mediaTypesResponse.data.message)
+    }
+    
+    message.success('配置保存成功')
   } catch (error) {
-    message.error(error.response?.data?.detail || '启动归档失败')
-  }
-}
-
-// 停止归档
-const stopArchive = async () => {
-  try {
-    await axios.post('/api/archive/stop')
-    message.success('已发送停止归档信号')
-    isArchiving.value = false
-  } catch (error) {
-    message.error(error.response?.data?.detail || '停止归档失败')
+    message.error('配置保存失败: ' + error.message)
   }
 }
 
 // 加载配置
-onMounted(async () => {
+const loadConfig = async () => {
   try {
-    const response = await axios.get('/api/config')
-    config.value = { ...config.value, ...response.data }
-    // 解析媒体类型配置
-    if (config.value.archive_media_types) {
-      mediaTypes.value = JSON.parse(config.value.archive_media_types)
+    // 加载基本配置
+    const configResponse = await axios.get('/api/config/load')
+    if (!configResponse.data.success) {
+      throw new Error(configResponse.data.message)
     }
+    config.value = configResponse.data.data
+    
+    // 加载媒体类型配置
+    const mediaTypesResponse = await axios.get('/api/archive/media_types')
+    if (!mediaTypesResponse.data.success) {
+      throw new Error(mediaTypesResponse.data.message)
+    }
+    mediaTypes.value = mediaTypesResponse.data.data
   } catch (error) {
-    message.error('加载配置失败')
+    message.error('加载配置失败: ' + error.message)
   }
+}
+
+// 归档控制
+const archiving = ref(false)
+
+const startArchive = async () => {
+  try {
+    archiving.value = true
+    await axios.post('/api/archive/start')
+    message.success('归档任务已启动')
+  } catch (error) {
+    message.error('启动归档失败: ' + error.message)
+    archiving.value = false
+  }
+}
+
+const stopArchive = async () => {
+  try {
+    await axios.post('/api/archive/stop')
+    message.success('归档任务已停止')
+    archiving.value = false
+  } catch (error) {
+    message.error('停止归档失败: ' + error.message)
+  }
+}
+
+// 在组件挂载时加载配置
+onMounted(() => {
+  loadConfig()
 })
 </script>
 
