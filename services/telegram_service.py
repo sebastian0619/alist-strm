@@ -156,6 +156,37 @@ class TelegramService:
                 logger.error(f"关闭Telegram服务失败: {e}")
                 raise
 
+    async def send_message(self, message: str) -> bool:
+        """发送Telegram消息
+        
+        Args:
+            message: 要发送的消息内容
+            
+        Returns:
+            bool: 是否发送成功
+        """
+        if not self.settings.tg_enabled:
+            logger.debug("Telegram功能未启用，跳过发送消息")
+            return False
+            
+        if not self.settings.tg_chat_id:
+            logger.warning("未配置Telegram chat_id，无法发送消息")
+            return False
+            
+        if not self.initialized or not self.application:
+            logger.warning("Telegram服务未初始化，无法发送消息")
+            return False
+            
+        try:
+            await self.application.bot.send_message(
+                chat_id=self.settings.tg_chat_id,
+                text=message
+            )
+            return True
+        except Exception as e:
+            logger.error(f"发送Telegram消息失败: {e}")
+            return False
+
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """处理/start命令"""
         await update.message.reply_text('欢迎使用Alist流媒体服务机器人！\n使用 /help 查看可用命令。')
