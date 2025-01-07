@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from routes import config, strm, health
 from contextlib import asynccontextmanager
-from services.service_manager import scheduler_service, strm_service
+from services.service_manager import service_manager, scheduler_service, strm_service
 
 settings = Settings()
 
@@ -32,6 +32,10 @@ async def lifespan(app: FastAPI):
         level=settings.log_level
     )
     
+    # 初始化和启动服务管理器
+    await service_manager.initialize()
+    await service_manager.start()
+    
     # 启动定时任务
     if settings.schedule_enabled:
         await scheduler_service.start()
@@ -47,6 +51,7 @@ async def lifespan(app: FastAPI):
     
     # 关闭时
     logger.info("应用关闭...")
+    await service_manager.close()
     await strm_service.close()
     await scheduler_service.stop()
 
