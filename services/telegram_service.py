@@ -134,10 +134,12 @@ class TelegramService:
             async def run_polling_with_retry():
                 while not self._stop_event.is_set():
                     try:
-                        await app.updater.start_polling(
-                            allowed_updates=["message"],
-                            drop_pending_updates=True
-                        )
+                        if not app.updater.running:
+                            await app.updater.start_polling(
+                                allowed_updates=["message"],
+                                drop_pending_updates=True
+                            )
+                        await asyncio.sleep(1)  # 避免CPU过度使用
                     except (NetworkError, TimedOut, RetryAfter) as e:
                         self._retry_count += 1
                         if self._retry_count > self._max_retries:
@@ -147,8 +149,10 @@ class TelegramService:
                         logger.warning(f"Telegram轮询出错，{wait_time}秒后重试: {e}")
                         await asyncio.sleep(wait_time)
                     except Exception as e:
-                        logger.error(f"Telegram轮询出现未知错误: {e}")
-                        break
+                        if "already running" not in str(e).lower():
+                            logger.error(f"Telegram轮询出现未知错误: {e}")
+                            break
+                        await asyncio.sleep(1)  # 如果已经在运行，等待一秒继续检查
                     
             loop.run_until_complete(run_polling_with_retry())
             
@@ -159,7 +163,7 @@ class TelegramService:
                 # 清理资源
                 if app:
                     # 先停止updater
-                    if hasattr(app, 'updater'):
+                    if hasattr(app, 'updater') and app.updater.running:
                         loop.run_until_complete(app.updater.stop())
                     # 然后停止和关闭应用
                     loop.run_until_complete(app.stop())
@@ -208,6 +212,15 @@ class TelegramService:
                 if self._polling_thread and self._polling_thread.is_alive():
                     self._polling_thread.join(timeout=5)
                     
+                # 确保应用正确关闭
+                if self.application:
+                    if hasattr(self.application, 'updater') and self.application.updater.running:
+                        await self.application.updater.stop()
+                    await self.application.stop()
+                    await self.application.shutdown()
+                    self.application = None
+                    
+                self.initialized = False
                 logger.info("Telegram服务已关闭")
             except Exception as e:
                 logger.error(f"关闭Telegram服务失败: {e}")
