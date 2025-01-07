@@ -54,22 +54,31 @@ class ArchiveService:
         """根据路径判断媒体类型，优先匹配更具体的路径
         
         例如：
-        - 路径为 "source/movie/abc.mkv"，匹配 "movie" 类型
-        - 路径为 "source/movie/foreign/abc.mkv"，优先匹配 "movie/foreign" 类型
+        - 路径为 "source/电影/abc.mkv"，匹配 "电影" 类型
+        - 路径为 "source/电影/外语/abc.mkv"，优先匹配 "电影/外语" 类型
         """
         path_str = str(path)
         matched_type = ""
         max_depth = 0
         
         for media_type, info in self.media_types.items():
-            dir_path = f"/{info['dir']}/"
-            if dir_path in path_str:
-                # 计算目录深度
-                depth = len(info['dir'].split('/'))
-                # 如果找到更具体的匹配（更深的目录层级），则更新结果
-                if depth > max_depth:
-                    matched_type = media_type
-                    max_depth = depth
+            dir_path = info['dir']
+            # 转换路径分隔符为统一格式
+            normalized_path = path_str.replace('\\', '/')
+            normalized_dir = dir_path.replace('\\', '/')
+            
+            # 确保目录名作为完整部分进行匹配
+            dir_parts = normalized_dir.split('/')
+            path_parts = normalized_path.split('/')
+            
+            # 在路径部分中查找目录名
+            for i in range(len(path_parts) - len(dir_parts) + 1):
+                if path_parts[i:i+len(dir_parts)] == dir_parts:
+                    depth = len(dir_parts)
+                    if depth > max_depth:
+                        matched_type = media_type
+                        max_depth = depth
+                    break
         
         return matched_type
     
@@ -242,39 +251,40 @@ class ArchiveService:
             )
             
             source_dir = Path(self.settings.archive_source_root)
+            if not source_dir.exists():
+                error_msg = f"源目录不存在: {source_dir}"
+                logger.error(error_msg)
+                await service_manager.telegram_service.send_message(f"❌ {error_msg}")
+                return
+                
             total_processed = 0
             total_size = 0
             test_results = []
             
-            # 从媒体类型配置中动态加载patterns
-            patterns = [info['dir'] for info in self.media_types.values()]
-            
-            for pattern in patterns:
+            # 遍历源目录下的所有目录
+            for directory in source_dir.rglob("*"):
                 if self._stop_flag:
                     break
-
-                directories = list(source_dir.glob(pattern))
-                for directory in directories:
-                    if self._stop_flag:
-                        break
-
-                    # 递归查找最底层文件夹
-                    for root, dirs, files in os.walk(directory):
-                        if not dirs:  # 如果没有子目录，说明是最底层
-                            logger.info(f"\n处理目录: {root}")
-                            await service_manager.telegram_service.send_message(f"📂 处理目录: {root}")
-
-                            result = await self.process_directory(Path(root), test_mode)
-                            if result["success"]:
-                                total_processed += result["moved_files"]
-                                total_size += result["total_size"]
-                            if test_mode:
-                                test_results.append(result)
-                            await service_manager.telegram_service.send_message(result["message"])
-
-                        # 让出控制权
-                        await asyncio.sleep(0)
-
+                    
+                if not directory.is_dir():
+                    continue
+                    
+                # 检查是否是最底层目录（不包含子目录）
+                if not any(d.is_dir() for d in directory.iterdir()):
+                    logger.info(f"\n处理目录: {directory}")
+                    await service_manager.telegram_service.send_message(f"📂 处理目录: {directory}")
+                    
+                    result = await self.process_directory(directory, test_mode)
+                    if result["success"]:
+                        total_processed += result["moved_files"]
+                        total_size += result["total_size"]
+                    if test_mode:
+                        test_results.append(result)
+                    await service_manager.telegram_service.send_message(result["message"])
+                
+                # 让出控制权
+                await asyncio.sleep(0)
+            
             summary = (
                 f"✅ 归档{'测试' if test_mode else ''}完成\n"
                 f"📁 {'识别' if test_mode else '处理'}文件: {total_processed} 个\n"
