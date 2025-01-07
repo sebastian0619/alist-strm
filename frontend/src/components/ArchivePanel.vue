@@ -252,7 +252,16 @@ const getResultColor = (result) => {
 
 // 添加媒体类型相关
 const addMediaType = () => {
-  const typeName = `类型${Object.keys(mediaTypes.value).length + 1}`
+  // 弹出对话框让用户输入类型名称
+  const typeName = window.prompt('请输入媒体类型名称（如：电影、电视剧等）')
+  if (!typeName) return
+  
+  // 检查类型名称是否已存在
+  if (mediaTypes.value[typeName]) {
+    message.error('该类型名称已存在')
+    return
+  }
+  
   mediaTypes.value[typeName] = {
     dir: '',
     creation_days: 30,
@@ -261,7 +270,9 @@ const addMediaType = () => {
 }
 
 const removeMediaType = (name) => {
-  delete mediaTypes.value[name]
+  if (window.confirm(`确定要删除类型"${name}"吗？`)) {
+    delete mediaTypes.value[name]
+  }
 }
 
 // 保存配置
