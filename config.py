@@ -32,6 +32,8 @@ class Settings(BaseSettings):
     # 定时任务配置
     schedule_enabled: bool = Field(default=False, alias="SCHEDULE_ENABLED")
     schedule_cron: str = Field(default="0 */6 * * *", alias="SCHEDULE_CRON")  # 默认每6小时执行一次
+    archive_schedule_enabled: bool = Field(default=False, alias="ARCHIVE_SCHEDULE_ENABLED")
+    archive_schedule_cron: str = Field(default="0 3 * * *", alias="ARCHIVE_SCHEDULE_CRON")  # 默认每天凌晨3点执行
     
     # Alist配置
     alist_url: str = Field(default="", alias="ALIST_URL")

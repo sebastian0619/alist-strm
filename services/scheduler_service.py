@@ -3,12 +3,14 @@ from apscheduler.triggers.cron import CronTrigger
 from loguru import logger
 from config import Settings
 import importlib
+from typing import List, Dict
 
 class SchedulerService:
     def __init__(self):
         self.settings = Settings()
         self.scheduler = AsyncIOScheduler()
-        self.job = None
+        self.strm_job = None
+        self.archive_job = None
     
     def _get_service_manager(self):
         """动态获取service_manager以避免循环依赖"""
@@ -22,39 +24,66 @@ class SchedulerService:
             await service_manager.telegram_service.send_message("⏰ 开始执行定时STRM扫描任务")
             await service_manager.strm_service.strm()
         except Exception as e:
-            error_msg = f"❌ 定时任务执行失败: {str(e)}"
+            error_msg = f"❌ 定时STRM任务执行失败: {str(e)}"
+            logger.error(error_msg)
+            service_manager = self._get_service_manager()
+            await service_manager.telegram_service.send_message(error_msg)
+    
+    async def _run_archive_job(self):
+        """执行归档任务"""
+        try:
+            service_manager = self._get_service_manager()
+            await service_manager.telegram_service.send_message("⏰ 开始执行定时归档任务")
+            await service_manager.archive_service.archive()
+        except Exception as e:
+            error_msg = f"❌ 定时归档任务执行失败: {str(e)}"
             logger.error(error_msg)
             service_manager = self._get_service_manager()
             await service_manager.telegram_service.send_message(error_msg)
     
     async def start(self):
         """启动调度器"""
-        if not self.settings.schedule_enabled:
-            logger.info("定时任务未启用")
-            return
-            
         if self.scheduler.running:
             logger.warning("调度器已在运行")
             return
             
         try:
-            # 添加定时任务
-            self.job = self.scheduler.add_job(
-                self._run_strm_job,
-                CronTrigger.from_crontab(self.settings.schedule_cron),
-                id='strm_job',
-                replace_existing=True
-            )
+            # 添加STRM定时任务
+            if self.settings.schedule_enabled:
+                self.strm_job = self.scheduler.add_job(
+                    self._run_strm_job,
+                    CronTrigger.from_crontab(self.settings.schedule_cron),
+                    id='strm_job',
+                    replace_existing=True
+                )
+                logger.info(f"STRM定时任务已启动，执行计划: {self.settings.schedule_cron}")
+                
+                # 发送通知
+                service_manager = self._get_service_manager()
+                await service_manager.telegram_service.send_message(
+                    f"⏰ STRM定时任务已启动\n执行计划: {self.settings.schedule_cron}"
+                )
+            
+            # 添加归档定时任务
+            if self.settings.archive_schedule_enabled and self.settings.archive_enabled:
+                self.archive_job = self.scheduler.add_job(
+                    self._run_archive_job,
+                    CronTrigger.from_crontab(self.settings.archive_schedule_cron),
+                    id='archive_job',
+                    replace_existing=True
+                )
+                logger.info(f"归档定时任务已启动，执行计划: {self.settings.archive_schedule_cron}")
+                
+                # 发送通知
+                service_manager = self._get_service_manager()
+                await service_manager.telegram_service.send_message(
+                    f"⏰ 归档定时任务已启动\n执行计划: {self.settings.archive_schedule_cron}"
+                )
             
             # 启动调度器
-            self.scheduler.start()
-            logger.info(f"定时任务已启动，执行计划: {self.settings.schedule_cron}")
-            
-            # 发送通知
-            service_manager = self._get_service_manager()
-            await service_manager.telegram_service.send_message(
-                f"⏰ 定时任务已启动\n执行计划: {self.settings.schedule_cron}"
-            )
+            if not self.scheduler.running and (self.strm_job or self.archive_job):
+                self.scheduler.start()
+                logger.info("调度器已启动")
             
         except Exception as e:
             error_msg = f"启动定时任务失败: {str(e)}"
@@ -62,7 +91,7 @@ class SchedulerService:
             service_manager = self._get_service_manager()
             await service_manager.telegram_service.send_message(f"❌ {error_msg}")
             raise
-    
+
     async def stop(self):
         """停止调度器"""
         if self.scheduler.running:
@@ -73,32 +102,48 @@ class SchedulerService:
             service_manager = self._get_service_manager()
             await service_manager.telegram_service.send_message("⏹ 定时任务已停止")
     
-    async def update_schedule(self, enabled: bool, cron: str = None):
+    def get_jobs(self) -> List[Dict]:
+        """获取所有定时任务"""
+        jobs = []
+        if self.strm_job:
+            jobs.append({
+                "name": "STRM扫描",
+                "trigger": str(self.strm_job.trigger),
+                "enabled": self.settings.schedule_enabled
+            })
+        if self.archive_job:
+            jobs.append({
+                "name": "归档处理",
+                "trigger": str(self.archive_job.trigger),
+                "enabled": self.settings.archive_schedule_enabled
+            })
+        return jobs
+    
+    async def update_schedule(self, strm_enabled: bool = None, strm_cron: str = None,
+                            archive_enabled: bool = None, archive_cron: str = None):
         """更新定时任务配置"""
         try:
             if self.scheduler.running:
                 await self.stop()
             
-            if enabled:
-                if cron:
-                    self.settings.schedule_cron = cron
-                self.settings.schedule_enabled = True
-                await self.start()
-            else:
-                self.settings.schedule_enabled = False
-                logger.info("定时任务已禁用")
+            # 更新STRM定时任务配置
+            if strm_enabled is not None:
+                self.settings.schedule_enabled = strm_enabled
+            if strm_cron:
+                self.settings.schedule_cron = strm_cron
                 
-                # 发送通知
-                service_manager = self._get_service_manager()
-                await service_manager.telegram_service.send_message("⏸ 定时任务已禁用")
+            # 更新归档定时任务配置
+            if archive_enabled is not None:
+                self.settings.archive_schedule_enabled = archive_enabled
+            if archive_cron:
+                self.settings.archive_schedule_cron = archive_cron
+            
+            # 重启调度器
+            await self.start()
             
         except Exception as e:
             error_msg = f"更新定时任务失败: {str(e)}"
             logger.error(error_msg)
             service_manager = self._get_service_manager()
             await service_manager.telegram_service.send_message(f"❌ {error_msg}")
-            raise
-    
-    def get_jobs(self):
-        """获取所有定时任务"""
-        return self.scheduler.get_jobs() 
+            raise 
