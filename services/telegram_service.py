@@ -86,6 +86,10 @@ STRM文件管理：
 /sync - 触发文件同步
 /sync_one <路径> - 同步单个文件
 
+归档管理：
+/archive - 开始归档处理
+/archive_stop - 停止归档处理
+
 系统控制：
 /status - 查看系统状态
 /pause - 暂停所有任务
@@ -192,6 +196,30 @@ STRM文件管理：
         # TODO: 实现删除定时任务的交互逻辑
         await update.message.reply_text("删除定时任务功能开发中...")
 
+    async def archive_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """处理/archive命令 - 开始归档处理"""
+        if not self.settings.archive_enabled:
+            await update.message.reply_text("归档功能未启用")
+            return
+            
+        if self.state.is_paused:
+            await update.message.reply_text("系统当前处于暂停状态，请先使用 /resume 恢复运行")
+            return
+            
+        await update.message.reply_text("开始归档处理...")
+        service_manager = self._get_service_manager()
+        await service_manager.archive_service.archive()
+
+    async def archive_stop_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """处理/archive_stop命令 - 停止归档"""
+        if not self.settings.archive_enabled:
+            await update.message.reply_text("归档功能未启用")
+            return
+            
+        service_manager = self._get_service_manager()
+        service_manager.archive_service.stop()
+        await update.message.reply_text("已发送停止归档信号")
+
     async def update_bot_commands(self):
         """更新bot命令菜单"""
         if not self.application:
@@ -210,7 +238,9 @@ STRM文件管理：
             BotCommand("resume", "恢复所有任务"),
             BotCommand("tasks", "查看定时任务列表"),
             BotCommand("task_add", "添加定时任务"),
-            BotCommand("task_remove", "删除定时任务")
+            BotCommand("task_remove", "删除定时任务"),
+            BotCommand("archive", "开始归档处理"),
+            BotCommand("archive_stop", "停止归档处理")
         ]
         
         try:
@@ -253,6 +283,8 @@ STRM文件管理：
             self.application.add_handler(CommandHandler("tasks", self.tasks_command))
             self.application.add_handler(CommandHandler("task_add", self.task_add_command))
             self.application.add_handler(CommandHandler("task_remove", self.task_remove_command))
+            self.application.add_handler(CommandHandler("archive", self.archive_command))
+            self.application.add_handler(CommandHandler("archive_stop", self.archive_stop_command))
 
             # 初始化机器人
             await self.application.initialize()

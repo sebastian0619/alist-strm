@@ -58,6 +58,13 @@ class Settings(BaseSettings):
     tg_token: str = Field(default="", alias="TG_TOKEN")
     tg_chat_id: str = Field(default="", alias="TG_CHAT_ID")
     tg_proxy_url: str = Field(default="", alias="TG_PROXY_URL")
+    
+    # 归档配置
+    archive_source_dir: str = Field(default="", alias="ARCHIVE_SOURCE_DIR")
+    archive_target_dir: str = Field(default="", alias="ARCHIVE_TARGET_DIR")
+    archive_auto_strm: bool = Field(default=False, alias="ARCHIVE_AUTO_STRM")
+    archive_delete_source: bool = Field(default=False, alias="ARCHIVE_DELETE_SOURCE")
+    archive_enabled: bool = Field(default=False, alias="ARCHIVE_ENABLED")
 
     model_config = ConfigDict(
         env_file=".env",
@@ -86,7 +93,8 @@ class Settings(BaseSettings):
         """解析布尔类型的字段"""
         bool_fields = ['run_after_startup', 'slow_mode', 'encode', 
                       'is_down_sub', 'is_down_meta', 'refresh', 'tg_enabled',
-                      'schedule_enabled', 'remove_empty_dirs']
+                      'schedule_enabled', 'remove_empty_dirs', 'archive_enabled',
+                      'archive_auto_strm', 'archive_delete_source']
         for field in bool_fields:
             if field in values and isinstance(values[field], str):
                 values[field] = str(values[field]).lower() in ('true', '1', 'yes', 'on', 't')

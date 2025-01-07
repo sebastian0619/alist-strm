@@ -6,7 +6,7 @@ from config import Settings
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from routes import config, strm, health
+from routes import config, strm, health, archive
 from contextlib import asynccontextmanager
 from services.service_manager import service_manager, scheduler_service, strm_service
 
@@ -82,6 +82,7 @@ app.add_middleware(
 app.include_router(config.router)
 app.include_router(strm.router)
 app.include_router(health.router)
+app.include_router(archive.router)
 
 # 挂载静态文件
 app.mount("/", StaticFiles(directory="static", html=True), name="static")

@@ -2,6 +2,7 @@ from services.scheduler_service import SchedulerService
 from services.strm_service import StrmService
 from services.copy_service import CopyService
 from services.telegram_service import TelegramService
+from services.archive_service import ArchiveService
 from loguru import logger
 
 class ServiceManager:
@@ -19,15 +20,17 @@ class ServiceManager:
             self.strm_service = None
             self.copy_service = None
             self.telegram_service = None
+            self.archive_service = None
             self.initialized = True
     
     def init_services(self):
         """初始化所有服务实例"""
-        if not any([self.scheduler_service, self.strm_service, self.copy_service, self.telegram_service]):
+        if not any([self.scheduler_service, self.strm_service, self.copy_service, self.telegram_service, self.archive_service]):
             self.scheduler_service = SchedulerService()
             self.copy_service = CopyService()
             self.strm_service = StrmService()
             self.telegram_service = TelegramService()
+            self.archive_service = ArchiveService()
     
     async def initialize(self):
         """初始化所有服务"""
@@ -49,6 +52,10 @@ class ServiceManager:
             # 初始化STRM服务
             # TODO: 如果StrmService需要异步初始化，在这里添加
             logger.info("STRM服务初始化完成")
+            
+            # 初始化归档服务
+            # TODO: 如果ArchiveService需要异步初始化，在这里添加
+            logger.info("归档服务初始化完成")
             
             # 初始化Telegram服务
             await self.telegram_service.initialize()
@@ -99,4 +106,5 @@ service_manager.init_services()
 scheduler_service = service_manager.scheduler_service
 strm_service = service_manager.strm_service
 copy_service = service_manager.copy_service
-tg_service = service_manager.telegram_service 
+tg_service = service_manager.telegram_service
+archive_service = service_manager.archive_service 
