@@ -261,7 +261,7 @@ import { ref, onMounted, computed } from 'vue'
 import { InfoCircleOutlined, MenuOutlined } from '@ant-design/icons-vue'
 import { message } from 'ant-design-vue'
 import axios from 'axios'
-import draggable from 'vuedraggable'
+import draggable from 'vuedraggable/src/vuedraggable'
 
 const config = ref({
   archive_enabled: false,
@@ -446,7 +446,7 @@ const getCronDescription = (cron) => {
 const mediaTypesList = computed({
   get: () => Object.entries(mediaTypes.value).map(([name, config]) => ({
     name,
-    config
+    config: { ...config }  // 创建配置的深拷贝
   })),
   set: (list) => {
     const newTypes = {}

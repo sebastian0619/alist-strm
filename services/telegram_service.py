@@ -74,14 +74,15 @@ class TelegramService:
         self._retry_count = 0
         self._max_retries = 3
         
+    @property
+    def enabled(self) -> bool:
+        """检查Telegram功能是否启用"""
+        return self.settings.tg_enabled and bool(self.settings.tg_token)
+    
     async def initialize(self):
         """初始化Telegram服务"""
-        if not self.settings.tg_enabled:
+        if not self.enabled:
             logger.info("Telegram功能未启用")
-            return
-            
-        if not self.settings.tg_token:
-            logger.error("未配置Telegram Bot Token")
             return
             
         # 只做基本检查，不创建application
@@ -247,7 +248,7 @@ class TelegramService:
             
         try:
             await self.application.bot.send_message(
-                chat_id=self.settings.telegram_chat_id,
+                chat_id=self.settings.tg_chat_id,
                 text=text,
                 disable_web_page_preview=True
             )
