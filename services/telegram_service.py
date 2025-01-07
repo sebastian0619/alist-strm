@@ -7,6 +7,9 @@ from typing import Dict, Optional
 import importlib
 import asyncio
 import threading
+import httpx
+from telegram.error import NetworkError, TimedOut, RetryAfter
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 class ProcessState:
     """进程状态管理"""
@@ -68,6 +71,8 @@ class TelegramService:
         self.state = ProcessState()
         self._stop_event = threading.Event()
         self._init_event = threading.Event()
+        self._retry_count = 0
+        self._max_retries = 3
         
     async def initialize(self):
         """初始化Telegram服务"""
@@ -82,6 +87,20 @@ class TelegramService:
         # 只做基本检查，不创建application
         logger.info("Telegram服务初始化完成")
     
+    def _create_application(self):
+        """创建Telegram应用实例"""
+        builder = Application.builder().token(self.settings.tg_token)
+        
+        # 配置代理
+        if self.settings.tg_proxy_url:
+            builder = builder.proxy_url(self.settings.tg_proxy_url)
+            logger.info(f"使用代理: {self.settings.tg_proxy_url}")
+            
+        # 配置连接参数
+        builder = builder.connect_timeout(30.0).read_timeout(30.0).write_timeout(30.0)
+        
+        return builder.build()
+    
     def _run_polling(self):
         """运行轮询的后台线程函数"""
         app = None
@@ -91,7 +110,7 @@ class TelegramService:
             asyncio.set_event_loop(loop)
             
             # 在新的事件循环中创建和初始化 application
-            app = Application.builder().token(self.settings.tg_token).build()
+            app = self._create_application()
             
             # 注册命令处理器
             app.add_handler(CommandHandler("start", self.start_command))
@@ -111,13 +130,28 @@ class TelegramService:
             self.initialized = True
             self._init_event.set()
             
-            # 启动轮询
-            loop.run_until_complete(app.updater.start_polling())
+            # 启动轮询，带有错误处理和重试机制
+            async def run_polling_with_retry():
+                while not self._stop_event.is_set():
+                    try:
+                        await app.updater.start_polling(
+                            allowed_updates=["message"],
+                            drop_pending_updates=True
+                        )
+                    except (NetworkError, TimedOut, RetryAfter) as e:
+                        self._retry_count += 1
+                        if self._retry_count > self._max_retries:
+                            logger.error(f"Telegram轮询重试次数超过限制: {e}")
+                            break
+                        wait_time = min(self._retry_count * 5, 30)  # 最多等待30秒
+                        logger.warning(f"Telegram轮询出错，{wait_time}秒后重试: {e}")
+                        await asyncio.sleep(wait_time)
+                    except Exception as e:
+                        logger.error(f"Telegram轮询出现未知错误: {e}")
+                        break
+                    
+            loop.run_until_complete(run_polling_with_retry())
             
-            # 运行事件循环，直到收到停止信号
-            while not self._stop_event.is_set():
-                loop.run_until_complete(asyncio.sleep(1))
-                
         except Exception as e:
             logger.error(f"Telegram轮询出错: {e}")
         finally:
@@ -179,8 +213,13 @@ class TelegramService:
                 logger.error(f"关闭Telegram服务失败: {e}")
                 raise
 
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=4, max=10),
+        retry=retry_if_exception_type((NetworkError, TimedOut, RetryAfter))
+    )
     async def send_message(self, message: str) -> bool:
-        """发送Telegram消息
+        """发送Telegram消息，带有重试机制
         
         Args:
             message: 要发送的消息内容
@@ -203,12 +242,13 @@ class TelegramService:
         try:
             await self.application.bot.send_message(
                 chat_id=self.settings.tg_chat_id,
-                text=message
+                text=message,
+                disable_web_page_preview=True
             )
             return True
         except Exception as e:
             logger.error(f"发送Telegram消息失败: {e}")
-            return False
+            raise  # 让重试装饰器捕获异常
 
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """处理/start命令"""
