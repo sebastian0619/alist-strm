@@ -126,7 +126,7 @@
           <a-divider>媒体类型配置</a-divider>
 
           <div class="media-types-header">
-            <a-button type="primary" @click="addMediaType">
+            <a-button type="primary" @click="showAddTypeModal">
               添加媒体类型
             </a-button>
           </div>
@@ -213,6 +213,24 @@
         </div>
       </template>
     </a-modal>
+
+    <!-- 添加媒体类型对话框 -->
+    <a-modal
+      v-model:visible="addTypeModalVisible"
+      title="添加媒体类型"
+      width="800px"
+      @ok="handleAddType"
+      @cancel="handleCancelAdd"
+    >
+      <a-form layout="vertical">
+        <a-form-item label="类型名称">
+          <a-input
+            v-model:value="newTypeName"
+            placeholder="请输入媒体类型名称（如：电影、电视剧等）"
+          />
+        </a-form-item>
+      </a-form>
+    </a-modal>
   </div>
 </template>
 
@@ -241,6 +259,8 @@ const archiving = ref(false)
 const testing = ref(false)
 const testResultVisible = ref(false)
 const testResult = ref(null)
+const addTypeModalVisible = ref(false)
+const newTypeName = ref('')
 
 // 获取结果标签颜色
 const getResultColor = (result) => {
@@ -251,22 +271,33 @@ const getResultColor = (result) => {
 }
 
 // 添加媒体类型相关
-const addMediaType = () => {
-  // 弹出对话框让用户输入类型名称
-  const typeName = window.prompt('请输入媒体类型名称（如：电影、电视剧等）')
-  if (!typeName) return
+const showAddTypeModal = () => {
+  newTypeName.value = ''
+  addTypeModalVisible.value = true
+}
+
+const handleAddType = () => {
+  if (!newTypeName.value) {
+    message.error('请输入类型名称')
+    return
+  }
   
-  // 检查类型名称是否已存在
-  if (mediaTypes.value[typeName]) {
+  if (mediaTypes.value[newTypeName.value]) {
     message.error('该类型名称已存在')
     return
   }
   
-  mediaTypes.value[typeName] = {
+  mediaTypes.value[newTypeName.value] = {
     dir: '',
     creation_days: 30,
     mtime_days: 7
   }
+  
+  addTypeModalVisible.value = false
+}
+
+const handleCancelAdd = () => {
+  addTypeModalVisible.value = false
 }
 
 const removeMediaType = (name) => {
