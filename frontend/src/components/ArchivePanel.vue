@@ -109,14 +109,14 @@
             </a-tooltip>
           </a-form-item>
 
-          <a-form-item label="视频文件扩展名">
+          <a-form-item label="排除文件扩展名">
             <a-input
               v-model:value="config.archive_video_extensions"
-              placeholder="请输入视频文件扩展名，用逗号分隔"
+              placeholder="请输入要排除的文件扩展名，用逗号分隔"
             />
             <a-tooltip>
               <template #title>
-                支持的视频文件扩展名，用逗号分隔，例如: .mp4,.mkv,.avi
+                要排除的文件扩展名（不检查这些文件的修改时间），用逗号分隔，例如: .mp4,.mkv,.avi
               </template>
               <info-circle-outlined style="margin-left: 8px" />
             </a-tooltip>

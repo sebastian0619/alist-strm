@@ -22,9 +22,9 @@ class ArchiveService:
         self._stop_flag = False
         self._is_running = False
         
-        # 从配置加载视频文件扩展名
-        self.video_extensions = set(
-            ext.strip() for ext in self.settings.archive_video_extensions.split(',')
+        # 从配置加载要排除的文件扩展名
+        self.excluded_extensions = set(
+            ext.strip().lower() for ext in self.settings.archive_video_extensions.split(',')
         )
         
         # 从文件加载媒体类型配置
@@ -129,14 +129,14 @@ class ArchiveService:
             return False
     
     async def has_recent_files(self, directory: Path, mtime_threshold: int) -> Tuple[bool, List[Path]]:
-        """检查目录中是否有最近修改的视频文件"""
+        """检查目录中是否有最近修改的文件（排除指定扩展名）"""
         recent_files = []
         try:
             for file_path in directory.rglob("*"):
                 if self._stop_flag:
                     break
                     
-                if file_path.is_file() and file_path.suffix.lower() in self.video_extensions:
+                if file_path.is_file() and file_path.suffix.lower() not in self.excluded_extensions:
                     mtime = file_path.stat().st_mtime
                     age_days = (time.time() - mtime) / 86400
                     if age_days < mtime_threshold:
