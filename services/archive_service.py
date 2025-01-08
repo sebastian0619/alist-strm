@@ -76,6 +76,8 @@ class ArchiveService:
         else:
             relative_path = normalized_path
             
+        logger.debug(f"检查路径: {relative_path}")
+            
         # 将路径分割成部分
         path_parts = relative_path.split('/')
         
@@ -85,13 +87,19 @@ class ArchiveService:
             dir_path = info['dir'].replace('\\', '/').strip('/')
             dir_parts = dir_path.split('/')
             
+            logger.debug(f"尝试匹配类型 {media_type} (目录: {dir_path})")
+            
             # 检查目录是否匹配
             # 1. 配置的目录部分必须完全匹配路径的开始部分
             # 2. 配置的目录层级必须小于等于实际路径的层级
             if (len(dir_parts) <= len(path_parts) and 
                 all(dp == pp for dp, pp in zip(dir_parts, path_parts))):
+                logger.debug(f"匹配成功: {media_type}")
                 return media_type
+            else:
+                logger.debug(f"匹配失败: 路径部分={path_parts[:len(dir_parts)]}, 配置部分={dir_parts}")
                 
+        logger.debug("没有找到匹配的媒体类型")
         return ""
     
     def calculate_file_hash(self, file_path: Path) -> Optional[str]:
@@ -166,15 +174,25 @@ class ArchiveService:
         }
         
         try:
+            # 获取媒体类型
             media_type = self.get_media_type(directory)
-            if not media_type or media_type not in self.thresholds:
-                result["message"] = f"未知的媒体类型: {directory}"
+            logger.debug(f"目录 {directory} 匹配到媒体类型: {media_type}")
+            
+            if not media_type:
+                result["message"] = f"[跳过] 未匹配到媒体类型: {directory}"
+                logger.info(f"目录 {directory} 未匹配到任何媒体类型配置")
+                return result
+                
+            if media_type not in self.thresholds:
+                result["message"] = f"[错误] 媒体类型 {media_type} 没有配置阈值"
+                logger.error(f"媒体类型 {media_type} 未找到对应的阈值配置")
                 return result
 
             threshold = self.thresholds[media_type]
             creation_time = self.get_creation_time(directory)
             age_days = (time.time() - creation_time) / 86400
 
+            logger.debug(f"目录 {directory} 创建时间: {age_days:.1f}天, 阈值: {threshold.creation_days}天")
             if age_days < threshold.creation_days:
                 result["message"] = f"[跳过] {media_type}: {directory.name} (创建时间 {age_days:.1f}天 < {threshold.creation_days}天)"
                 return result
