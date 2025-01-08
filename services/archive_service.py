@@ -309,8 +309,8 @@ class ArchiveService:
                     break
                     
                 root_path = Path(root)
-                # 只处理直接子目录
-                if root_path.parent == source_dir:
+                # 只处理包含文件的目录（叶子目录）
+                if files and not any(d.startswith('.') for d in root_path.parts):
                     logger.info(f"\n处理目录: {root_path}")
                     
                     result = await self.process_directory(root_path, test_mode)
