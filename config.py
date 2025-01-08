@@ -69,9 +69,9 @@ class Settings(BaseSettings):
     archive_delete_source: bool = Field(default=False, alias="ARCHIVE_DELETE_SOURCE")
     
     # 归档阈值配置
-    archive_video_extensions: str = Field(
-        default=".mp4,.mkv,.avi,.ts,.m2ts,.mov,.wmv,.iso,.m4v,.mpg,.mpeg,.rm,.rmvb",
-        alias="ARCHIVE_VIDEO_EXTENSIONS"
+    archive_excluded_extensions: str = Field(
+        default=".nfo,.ass,.srt,.jpg,.jpeg,.png",
+        alias="ARCHIVE_EXCLUDED_EXTENSIONS"
     )
     
     # 媒体类型配置 - JSON格式

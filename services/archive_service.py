@@ -24,7 +24,7 @@ class ArchiveService:
         
         # 从配置加载要排除的文件扩展名
         self.excluded_extensions = set(
-            ext.strip().lower() for ext in self.settings.archive_video_extensions.split(',')
+            ext.strip().lower() for ext in self.settings.archive_excluded_extensions.split(',')
         )
         
         # 从文件加载媒体类型配置

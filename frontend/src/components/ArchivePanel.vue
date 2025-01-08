@@ -111,7 +111,7 @@
 
           <a-form-item label="排除文件扩展名">
             <a-input
-              v-model:value="config.archive_video_extensions"
+              v-model:value="config.archive_excluded_extensions"
               placeholder="请输入要排除的文件扩展名，用逗号分隔"
             />
             <a-tooltip>
@@ -271,7 +271,7 @@ const config = ref({
   archive_delete_source: false,
   archive_schedule_enabled: false,
   archive_schedule_cron: '0 3 * * *',
-  archive_video_extensions: '.mp4,.mkv,.avi,.ts,.m2ts,.mov,.wmv,.iso,.m4v,.mpg,.mpeg,.rm,.rmvb',
+  archive_excluded_extensions: '.nfo,.ass,.srt,.jpg,.jpeg,.png',
   archive_media_types: ''
 })
 
