@@ -174,24 +174,8 @@ class ArchiveService:
         }
         
         try:
-            # 使用get_media_type方法获取媒体类型
-            media_type = self.get_media_type(directory)
-            if not media_type:
-                result["message"] = f"[跳过] 未匹配到媒体类型: {directory}"
-                return result
-
-            threshold = self.thresholds[media_type]
-            creation_time = self.get_creation_time(directory)
-            age_days = (time.time() - creation_time) / 86400
-
-            if age_days < threshold.creation_days:
-                result["message"] = (
-                    f"[跳过] {media_type}: {directory.name}\n"
-                    f"原因: 创建时间不足 ({age_days:.1f}天 < {threshold.creation_days}天)"
-                )
-                return result
-
-            has_recent, recent_files = await self.has_recent_files(directory, threshold.mtime_days)
+            # 检查目录中的文件修改时间
+            has_recent, recent_files = await self.has_recent_files(directory, 7)  # 固定7天
             if has_recent:
                 example_files = []
                 for f in recent_files[:3]:  # 最多显示3个文件
@@ -200,8 +184,8 @@ class ArchiveService:
                     example_files.append(f"{f.name} ({age_days:.1f}天)")
                 
                 result["message"] = (
-                    f"[跳过] {media_type}: {directory.name}\n"
-                    f"原因: 存在近期修改的文件 (阈值: {threshold.mtime_days}天)\n"
+                    f"[跳过] {directory.name}\n"
+                    f"原因: 存在近期修改的文件 (阈值: 7天)\n"
                     f"文件: {', '.join(example_files)}"
                 )
                 return result
@@ -214,8 +198,8 @@ class ArchiveService:
             if test_mode:
                 # 测试模式下只返回将要执行的操作
                 result["message"] = (
-                    f"[测试] {media_type}: {directory.name} -> {destination.name}\n"
-                    f"创建时间: {age_days:.1f}天, 无近期修改文件"
+                    f"[测试] {directory.name} -> {destination.name}\n"
+                    f"无近期修改文件"
                 )
                 result["success"] = True
                 return result
@@ -243,11 +227,11 @@ class ArchiveService:
                     # 验证成功后删除源文件
                     shutil.rmtree(str(directory))
                     result["message"] = (
-                        f"[归档] {media_type}: {directory.name} -> {destination.name}\n"
-                        f"创建时间: {age_days:.1f}天, 已验证并删除源文件"
+                        f"[归档] {directory.name} -> {destination.name}\n"
+                        f"已验证并删除源文件"
                     )
                 else:
-                    result["message"] = f"[错误] {media_type}: {directory.name} 文件验证失败"
+                    result["message"] = f"[错误] {directory.name} 文件验证失败"
                     return result
             else:
                 # 如果不需要删除源文件，直接复制
@@ -257,8 +241,7 @@ class ArchiveService:
                         result["total_size"] += src_file.stat().st_size
                         result["moved_files"] += 1
                 result["message"] = (
-                    f"[归档] {media_type}: {directory.name} -> {destination.name}\n"
-                    f"创建时间: {age_days:.1f}天"
+                    f"[归档] {directory.name} -> {destination.name}"
                 )
 
             result["success"] = True
