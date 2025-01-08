@@ -301,50 +301,31 @@ class ArchiveService:
             total_processed = 0
             total_size = 0
             test_results = []
-            
-            # 收集所有处理结果，最后一次性发送
             all_results = []
             
-            # 遍历每个配置的媒体类型
-            for media_type, info in self.media_types.items():
+            # 遍历源目录下的所有子目录
+            for root, dirs, files in os.walk(source_dir):
                 if self._stop_flag:
                     break
                     
-                # 构建完整的目录路径
-                type_dir = source_dir / info['dir']
-                if not type_dir.exists():
-                    logger.info(f"跳过不存在的目录: {type_dir}")
-                    continue
+                root_path = Path(root)
+                # 只处理直接子目录
+                if root_path.parent == source_dir:
+                    logger.info(f"\n处理目录: {root_path}")
                     
-                logger.info(f"\n开始处理媒体类型 {media_type} (目录: {type_dir})")
-                
-                # 只处理该目录下的直接子目录
-                try:
-                    for item in type_dir.iterdir():
-                        if self._stop_flag:
-                            break
-                            
-                        if not item.is_dir():
-                            continue
-                            
-                        logger.info(f"\n处理目录: {item}")
+                    result = await self.process_directory(root_path, test_mode)
+                    if result["success"]:
+                        total_processed += result["moved_files"]
+                        total_size += result["total_size"]
+                    if test_mode:
+                        test_results.append(result)
                         
-                        result = await self.process_directory(item, test_mode)
-                        if result["success"]:
-                            total_processed += result["moved_files"]
-                            total_size += result["total_size"]
-                        if test_mode:
-                            test_results.append(result)
-                            
-                        # 只收集有意义的结果（跳过、归档或错误）
-                        if "[跳过]" in result["message"] or "[归档]" in result["message"] or "[错误]" in result["message"]:
-                            all_results.append(result["message"])
-                        
-                        # 让出控制权
-                        await asyncio.sleep(0)
-                        
-                except Exception as e:
-                    logger.error(f"处理媒体类型 {media_type} 时出错: {e}")
+                    # 只收集有意义的结果（跳过、归档或错误）
+                    if "[跳过]" in result["message"] or "[归档]" in result["message"] or "[错误]" in result["message"]:
+                        all_results.append(result["message"])
+                    
+                    # 让出控制权
+                    await asyncio.sleep(0)
             
             # 生成汇总消息
             if all_results:
