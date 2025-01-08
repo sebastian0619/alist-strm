@@ -311,6 +311,9 @@ class ArchiveService:
             total_size = 0
             test_results = []
             
+            # 收集所有处理结果，最后一次性发送
+            all_results = []
+            
             # 遍历每个配置的媒体类型
             for media_type, info in self.media_types.items():
                 if self._stop_flag:
@@ -334,7 +337,6 @@ class ArchiveService:
                             continue
                             
                         logger.info(f"\n处理目录: {item}")
-                        await service_manager.telegram_service.send_message(f"📂 处理目录: {item}")
                         
                         result = await self.process_directory(item, test_mode)
                         if result["success"]:
@@ -342,13 +344,25 @@ class ArchiveService:
                             total_size += result["total_size"]
                         if test_mode:
                             test_results.append(result)
-                        await service_manager.telegram_service.send_message(result["message"])
+                            
+                        # 只收集有意义的结果（跳过、归档或错误）
+                        if "[跳过]" in result["message"] or "[归档]" in result["message"] or "[错误]" in result["message"]:
+                            all_results.append(result["message"])
                         
                         # 让出控制权
                         await asyncio.sleep(0)
                         
                 except Exception as e:
                     logger.error(f"处理媒体类型 {media_type} 时出错: {e}")
+            
+            # 生成汇总消息
+            if all_results:
+                summary_message = "归档处理结果:\n\n" + "\n\n".join(all_results)
+                # 如果消息太长，只保留前20个结果
+                if len(summary_message) > 3000:
+                    all_results = all_results[:20]
+                    summary_message = "归档处理结果（仅显示前20个）:\n\n" + "\n\n".join(all_results)
+                await service_manager.telegram_service.send_message(summary_message)
             
             summary = (
                 f"✅ 归档{'测试' if test_mode else ''}完成\n"
