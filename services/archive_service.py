@@ -174,18 +174,8 @@ class ArchiveService:
         }
         
         try:
-            # 获取目录的相对路径
-            source_dir = Path(self.settings.archive_source_root)
-            relative_path = directory.relative_to(source_dir)
-            parent_dir = str(relative_path.parent)
-            
-            # 检查是否在配置的目录中
-            media_type = None
-            for type_name, info in self.media_types.items():
-                if parent_dir == info['dir']:
-                    media_type = type_name
-                    break
-                    
+            # 使用get_media_type方法获取媒体类型
+            media_type = self.get_media_type(directory)
             if not media_type:
                 result["message"] = f"[跳过] 未匹配到媒体类型: {directory}"
                 return result
@@ -218,6 +208,7 @@ class ArchiveService:
 
             # 准备归档
             target_dir = Path(self.settings.archive_target_root)
+            relative_path = directory.relative_to(self.settings.archive_source_root)
             destination = target_dir / relative_path
             
             if test_mode:
