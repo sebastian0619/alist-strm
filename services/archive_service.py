@@ -57,6 +57,12 @@ class ArchiveService:
         - 路径为 "/video/动漫/动画电影/xxx"
         - 如果同时配置了 "动漫/动画电影" 和 "动漫"
         - 会优先匹配 "动漫/动画电影" 类型
+        
+        匹配规则：
+        1. 将路径转换为相对路径（相对于source_root）
+        2. 按照配置的顺序（优先级）依次匹配
+        3. 对于每个媒体类型，检查其配置的目录是否是当前路径的一部分
+        4. 返回第一个匹配的类型（优先级最高的）
         """
         path_str = str(path)
         
@@ -69,14 +75,21 @@ class ArchiveService:
             relative_path = normalized_path[len(source_root):].lstrip('/')
         else:
             relative_path = normalized_path
+            
+        # 将路径分割成部分
+        path_parts = relative_path.split('/')
         
         # 由于self.media_types的顺序已经由前端排序确定优先级
         # 所以这里直接按顺序匹配，找到的第一个匹配就是优先级最高的
         for media_type, info in self.media_types.items():
             dir_path = info['dir'].replace('\\', '/').strip('/')
+            dir_parts = dir_path.split('/')
             
             # 检查目录是否匹配
-            if relative_path.startswith(dir_path + '/'):
+            # 1. 配置的目录部分必须完全匹配路径的开始部分
+            # 2. 配置的目录层级必须小于等于实际路径的层级
+            if (len(dir_parts) <= len(path_parts) and 
+                all(dp == pp for dp, pp in zip(dir_parts, path_parts))):
                 return media_type
                 
         return ""
