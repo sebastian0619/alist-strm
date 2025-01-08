@@ -174,25 +174,26 @@ class ArchiveService:
         }
         
         try:
-            # 获取媒体类型
-            media_type = self.get_media_type(directory)
-            logger.debug(f"目录 {directory} 匹配到媒体类型: {media_type}")
+            # 获取目录的相对路径
+            source_dir = Path(self.settings.archive_source_root)
+            relative_path = directory.relative_to(source_dir)
+            parent_dir = str(relative_path.parent)
             
+            # 检查是否在配置的目录中
+            media_type = None
+            for type_name, info in self.media_types.items():
+                if parent_dir == info['dir']:
+                    media_type = type_name
+                    break
+                    
             if not media_type:
                 result["message"] = f"[跳过] 未匹配到媒体类型: {directory}"
-                logger.info(f"目录 {directory} 未匹配到任何媒体类型配置")
-                return result
-                
-            if media_type not in self.thresholds:
-                result["message"] = f"[错误] 媒体类型 {media_type} 没有配置阈值"
-                logger.error(f"媒体类型 {media_type} 未找到对应的阈值配置")
                 return result
 
             threshold = self.thresholds[media_type]
             creation_time = self.get_creation_time(directory)
             age_days = (time.time() - creation_time) / 86400
 
-            logger.debug(f"目录 {directory} 创建时间: {age_days:.1f}天, 阈值: {threshold.creation_days}天")
             if age_days < threshold.creation_days:
                 result["message"] = f"[跳过] {media_type}: {directory.name} (创建时间 {age_days:.1f}天 < {threshold.creation_days}天)"
                 return result
@@ -204,9 +205,7 @@ class ArchiveService:
                 return result
 
             # 准备归档
-            source_dir = Path(self.settings.archive_source_root)
             target_dir = Path(self.settings.archive_target_root)
-            relative_path = directory.relative_to(source_dir)
             destination = target_dir / relative_path
             
             if test_mode:
@@ -291,41 +290,44 @@ class ArchiveService:
             total_size = 0
             test_results = []
             
-            # 递归遍历源目录
-            async def process_directories(directory: Path):
+            # 遍历每个配置的媒体类型
+            for media_type, info in self.media_types.items():
                 if self._stop_flag:
-                    return
-                
-                try:
-                    # 检查是否是最底层目录（不包含子目录）
-                    has_subdirs = False
-                    for item in directory.iterdir():
-                        if item.is_dir():
-                            has_subdirs = True
-                            await process_directories(item)
+                    break
                     
-                    # 如果是最底层目录，进行处理
-                    if not has_subdirs:
-                        logger.info(f"\n处理目录: {directory}")
-                        await service_manager.telegram_service.send_message(f"📂 处理目录: {directory}")
+                # 构建完整的目录路径
+                type_dir = source_dir / info['dir']
+                if not type_dir.exists():
+                    logger.info(f"跳过不存在的目录: {type_dir}")
+                    continue
+                    
+                logger.info(f"\n开始处理媒体类型 {media_type} (目录: {type_dir})")
+                
+                # 只处理该目录下的直接子目录
+                try:
+                    for item in type_dir.iterdir():
+                        if self._stop_flag:
+                            break
+                            
+                        if not item.is_dir():
+                            continue
+                            
+                        logger.info(f"\n处理目录: {item}")
+                        await service_manager.telegram_service.send_message(f"📂 处理目录: {item}")
                         
-                        result = await self.process_directory(directory, test_mode)
+                        result = await self.process_directory(item, test_mode)
                         if result["success"]:
-                            nonlocal total_processed, total_size
                             total_processed += result["moved_files"]
                             total_size += result["total_size"]
                         if test_mode:
                             test_results.append(result)
                         await service_manager.telegram_service.send_message(result["message"])
-                    
+                        
+                        # 让出控制权
+                        await asyncio.sleep(0)
+                        
                 except Exception as e:
-                    logger.error(f"处理目录失败 {directory}: {e}")
-                
-                # 让出控制权
-                await asyncio.sleep(0)
-            
-            # 开始递归处理
-            await process_directories(source_dir)
+                    logger.error(f"处理媒体类型 {media_type} 时出错: {e}")
             
             summary = (
                 f"✅ 归档{'测试' if test_mode else ''}完成\n"
