@@ -54,27 +54,32 @@ class ArchiveService:
         """根据路径判断媒体类型，优先匹配更具体的路径
         
         例如：
-        - 路径为 "source/电影/外语/abc.mkv"
-        - 如果同时配置了 "电影/外语" 和 "电影"
-        - 会优先匹配 "电影/外语" 类型
+        - 路径为 "/video/动漫/动画电影/xxx"
+        - 如果同时配置了 "动漫/动画电影" 和 "动漫"
+        - 会优先匹配 "动漫/动画电影" 类型
         """
         path_str = str(path)
-        matched_type = ""
-        max_depth = 0
+        
+        # 转换路径分隔符为统一格式
+        normalized_path = path_str.replace('\\', '/').rstrip('/')
+        source_root = str(self.settings.archive_source_root).replace('\\', '/').rstrip('/')
+        
+        # 获取相对路径
+        if normalized_path.startswith(source_root):
+            relative_path = normalized_path[len(source_root):].lstrip('/')
+        else:
+            relative_path = normalized_path
         
         # 由于self.media_types的顺序已经由前端排序确定优先级
         # 所以这里直接按顺序匹配，找到的第一个匹配就是优先级最高的
         for media_type, info in self.media_types.items():
-            dir_path = info['dir']
-            # 转换路径分隔符为统一格式
-            normalized_path = path_str.replace('\\', '/')
-            normalized_dir = dir_path.replace('\\', '/')
+            dir_path = info['dir'].replace('\\', '/').strip('/')
             
-            # 确保目录名作为完整部分进行匹配
-            if f"/{normalized_dir}/" in f"{normalized_path}/":
+            # 检查目录是否匹配
+            if relative_path.startswith(dir_path + '/'):
                 return media_type
                 
-        return matched_type
+        return ""
     
     def calculate_file_hash(self, file_path: Path) -> Optional[str]:
         """计算文件的MD5哈希值"""
