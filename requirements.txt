@@ -7,4 +7,5 @@ pydantic-settings==2.1.0
 loguru==0.7.2
 httpx==0.25.2
 python-dotenv==1.0.0
-tenacity==8.2.3 
+tenacity==8.2.3
+watchdog==3.0.0 

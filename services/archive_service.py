@@ -174,43 +174,51 @@ class ArchiveService:
         }
         
         try:
-            # 获取目录对应的媒体类型配置
-            media_type = self.get_media_type(directory)
-            if not media_type:
-                result["message"] = f"[跳过] 未匹配到媒体类型: {directory}"
-                return result
-                
-            threshold = self.thresholds[media_type]
-            
             # 检查目录中的文件修改时间
-            has_recent, recent_files = await self.has_recent_files(directory, threshold.mtime_days)
-            if has_recent:
+            recent_files = []
+            for root, _, files in os.walk(directory):
+                root_path = Path(root)
+                for file in files:
+                    file_path = root_path / file
+                    # 跳过特定格式的文件
+                    if file.endswith(('.nfo', '.jpg', '.png')):
+                        continue
+                        
+                    stats = file_path.stat()
+                    mtime = stats.st_mtime
+                    ctime = stats.st_ctime
+                    
+                    # 计算文件的创建时间和修改时间距今的天数
+                    mtime_days = (time.time() - mtime) / 86400
+                    ctime_days = (time.time() - ctime) / 86400
+                    
+                    # 如果文件的创建时间或修改时间在阈值内，添加到最近文件列表
+                    if mtime_days < 30 or ctime_days < 30:  # 使用30天作为默认阈值
+                        recent_files.append((file_path, min(mtime_days, ctime_days)))
+
+            if recent_files:
+                # 按时间排序，展示最近的3个文件
+                recent_files.sort(key=lambda x: x[1])
                 example_files = []
-                for f in recent_files[:3]:  # 最多显示3个文件
-                    mtime = f.stat().st_mtime
-                    age_days = (time.time() - mtime) / 86400
-                    example_files.append(f"{f.name} ({age_days:.1f}天)")
+                for f, days in recent_files[:3]:
+                    example_files.append(f"{f.name} ({days:.1f}天)")
                 
                 result["message"] = (
                     f"[跳过] {directory.name}\n"
-                    f"原因: 存在近期修改的文件 (阈值: {threshold.mtime_days}天)\n"
+                    f"原因: 存在近期创建或修改的文件\n"
                     f"文件: {', '.join(example_files)}"
                 )
                 return result
 
+            if test_mode:
+                result["message"] = f"[测试] {directory.name} 可以归档，无近期文件"
+                result["success"] = True
+                return result
+            
             # 准备归档
             target_dir = Path(self.settings.archive_target_root)
             relative_path = directory.relative_to(self.settings.archive_source_root)
             destination = target_dir / relative_path
-            
-            if test_mode:
-                # 测试模式下只返回将要执行的操作
-                result["message"] = (
-                    f"[测试] {directory.name} -> {destination.name}\n"
-                    f"无近期修改文件"
-                )
-                result["success"] = True
-                return result
             
             # 创建目标目录
             destination.parent.mkdir(parents=True, exist_ok=True)
