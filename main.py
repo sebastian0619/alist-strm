@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from routes import config, strm, health, archive
 from contextlib import asynccontextmanager
-from services.service_manager import service_manager, scheduler_service, strm_service
+from services.service_manager import service_manager, scheduler_service, strm_service, alist_service
 from services.strm_monitor_service import StrmMonitorService
 
 settings = Settings()

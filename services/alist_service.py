@@ -1,6 +1,24 @@
 import os
+import aiohttp
+from loguru import logger
+from config import Settings
 
 class AListService:
+    def __init__(self):
+        self.settings = Settings()
+        self.session = None
+        self.base_url = self.settings.alist_url
+        self.logger = logger
+        
+    async def initialize(self):
+        """初始化服务"""
+        self.session = aiohttp.ClientSession()
+        
+    async def close(self):
+        """关闭服务"""
+        if self.session:
+            await self.session.close()
+            
     async def move_file(self, src_path: str, dest_path: str):
         """移动文件到新位置
         

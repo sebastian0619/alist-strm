@@ -3,6 +3,7 @@ from services.strm_service import StrmService
 from services.copy_service import CopyService
 from services.telegram_service import TelegramService
 from services.archive_service import ArchiveService
+from services.alist_service import AListService
 from loguru import logger
 
 class ServiceManager:
@@ -21,16 +22,19 @@ class ServiceManager:
             self.copy_service = None
             self.telegram_service = None
             self.archive_service = None
+            self.alist_service = None
             self.initialized = True
     
     def init_services(self):
         """初始化所有服务实例"""
-        if not any([self.scheduler_service, self.strm_service, self.copy_service, self.telegram_service, self.archive_service]):
+        if not any([self.scheduler_service, self.strm_service, self.copy_service, 
+                   self.telegram_service, self.archive_service, self.alist_service]):
             self.scheduler_service = SchedulerService()
             self.copy_service = CopyService()
             self.strm_service = StrmService()
             self.telegram_service = TelegramService()
             self.archive_service = ArchiveService()
+            self.alist_service = AListService()
     
     async def initialize(self):
         """初始化所有服务"""
@@ -42,20 +46,20 @@ class ServiceManager:
             logger.info("开始初始化服务...")
             
             # 初始化调度器服务
-            # TODO: 如果SchedulerService需要异步初始化，在这里添加
             logger.info("调度器服务初始化完成")
             
             # 初始化复制服务
-            # TODO: 如果CopyService需要异步初始化，在这里添加
             logger.info("复制服务初始化完成")
             
             # 初始化STRM服务
-            # TODO: 如果StrmService需要异步初始化，在这里添加
             logger.info("STRM服务初始化完成")
             
             # 初始化归档服务
-            # TODO: 如果ArchiveService需要异步初始化，在这里添加
             logger.info("归档服务初始化完成")
+            
+            # 初始化AList服务
+            await self.alist_service.initialize()
+            logger.info("AList服务初始化完成")
             
             # 初始化Telegram服务
             await self.telegram_service.initialize()
@@ -71,8 +75,6 @@ class ServiceManager:
         try:
             # 启动Telegram服务
             await self.telegram_service.start()
-            
-            # TODO: 启动其他需要显式启动的服务
             
             logger.info("所有服务启动完成")
         except Exception as e:
@@ -90,8 +92,9 @@ class ServiceManager:
             
             if self.telegram_service:
                 await self.telegram_service.close()
-                
-            # TODO: 如果scheduler_service需要关闭，在这里添加
+            
+            if self.alist_service:
+                await self.alist_service.close()
             
             logger.info("所有服务已关闭")
         except Exception as e:
@@ -107,4 +110,5 @@ scheduler_service = service_manager.scheduler_service
 strm_service = service_manager.strm_service
 copy_service = service_manager.copy_service
 tg_service = service_manager.telegram_service
-archive_service = service_manager.archive_service 
+archive_service = service_manager.archive_service
+alist_service = service_manager.alist_service 

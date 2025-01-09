@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     archive_schedule_cron: str = Field(default="0 3 * * *", alias="ARCHIVE_SCHEDULE_CRON")  # 默认每天凌晨3点执行
     
     # Alist配置
-    alist_url: str = Field(default="", alias="ALIST_URL")
+    alist_url: str = Field(default="http://localhost:5244", description="AList服务地址")
     alist_token: str = Field(default="", alias="ALIST_TOKEN")
     alist_scan_path: str = Field(default="", alias="ALIST_SCAN_PATH")
     
