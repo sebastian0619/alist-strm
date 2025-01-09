@@ -2,9 +2,15 @@ from fastapi import APIRouter, HTTPException
 from services.strm_service import StrmService
 import os
 from loguru import logger
+from pydantic import BaseModel
+from services.service_manager import strm_service
 
-router = APIRouter(prefix="/api/strm")
+router = APIRouter(prefix="/api/strm", tags=["strm"])
 strm_service = None
+
+class MoveRequest(BaseModel):
+    src_path: str
+    dest_path: str
 
 @router.post("/start")
 async def start_scan():
@@ -70,3 +76,11 @@ async def get_logs():
     except Exception as e:
         logger.error(f"获取日志失败: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e)) 
+
+@router.post("/move")
+async def move_strm(request: MoveRequest):
+    """移动strm文件和对应的云盘文件"""
+    result = await strm_service.move_strm(request.src_path, request.dest_path)
+    if not result["success"]:
+        raise HTTPException(status_code=400, detail=result["message"])
+    return result 

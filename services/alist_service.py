@@ -1,23 +1,23 @@
 import os
-import aiohttp
+import httpx
 from loguru import logger
 from config import Settings
 
 class AListService:
     def __init__(self):
         self.settings = Settings()
-        self.session = None
+        self.client = None
         self.base_url = self.settings.alist_url
         self.logger = logger
         
     async def initialize(self):
         """初始化服务"""
-        self.session = aiohttp.ClientSession()
+        self.client = httpx.AsyncClient()
         
     async def close(self):
         """关闭服务"""
-        if self.session:
-            await self.session.close()
+        if self.client:
+            await self.client.aclose()
             
     async def move_file(self, src_path: str, dest_path: str):
         """移动文件到新位置
@@ -33,9 +33,9 @@ class AListService:
                 "names": [os.path.basename(src_path)]
             }
             
-            async with self.session.post(f"{self.base_url}/api/fs/move", json=data) as response:
-                if response.status != 200:
-                    raise Exception(f"移动文件失败: {await response.text()}")
+            response = await self.client.post(f"{self.base_url}/api/fs/move", json=data)
+            if response.status_code != 200:
+                raise Exception(f"移动文件失败: {response.text}")
                     
             self.logger.info(f"成功移动文件: {src_path} -> {dest_path}")
             
@@ -57,9 +57,9 @@ class AListService:
                 "names": [os.path.basename(src_path)]
             }
             
-            async with self.session.post(f"{self.base_url}/api/fs/move", json=data) as response:
-                if response.status != 200:
-                    raise Exception(f"移动目录失败: {await response.text()}")
+            response = await self.client.post(f"{self.base_url}/api/fs/move", json=data)
+            if response.status_code != 200:
+                raise Exception(f"移动目录失败: {response.text}")
                     
             self.logger.info(f"成功移动目录: {src_path} -> {dest_path}")
             

@@ -42,6 +42,70 @@ class AlistClient:
         except Exception as e:
             logger.error(f"获取文件列表失败: {path}, 错误: {str(e)}")
             return []
+            
+    async def move_file(self, src_path: str, dest_path: str) -> bool:
+        """移动文件到新位置
+        
+        Args:
+            src_path: 源文件路径
+            dest_path: 目标文件路径
+            
+        Returns:
+            bool: 是否成功
+        """
+        try:
+            data = {
+                "src_dir": os.path.dirname(src_path),
+                "dst_dir": os.path.dirname(dest_path),
+                "names": [os.path.basename(src_path)]
+            }
+            
+            response = await self.client.post("/api/fs/move", json=data)
+            response.raise_for_status()
+            data = response.json()
+            
+            if data.get("code") == 200:
+                logger.info(f"成功移动文件: {src_path} -> {dest_path}")
+                return True
+                
+            logger.warning(f"移动文件失败: {src_path}, 状态码: {data.get('code')}")
+            return False
+            
+        except Exception as e:
+            logger.error(f"移动文件时出错: {src_path}, 错误: {str(e)}")
+            return False
+            
+    async def move_directory(self, src_path: str, dest_path: str) -> bool:
+        """移动目录到新位置
+        
+        Args:
+            src_path: 源目录路径
+            dest_path: 目标目录路径
+            
+        Returns:
+            bool: 是否成功
+        """
+        try:
+            data = {
+                "src_dir": os.path.dirname(src_path),
+                "dst_dir": os.path.dirname(dest_path),
+                "names": [os.path.basename(src_path)]
+            }
+            
+            response = await self.client.post("/api/fs/move", json=data)
+            response.raise_for_status()
+            data = response.json()
+            
+            if data.get("code") == 200:
+                logger.info(f"成功移动目录: {src_path} -> {dest_path}")
+                return True
+                
+            logger.warning(f"移动目录失败: {src_path}, 状态码: {data.get('code')}")
+            return False
+            
+        except Exception as e:
+            logger.error(f"移动目录时出错: {src_path}, 错误: {str(e)}")
+            return False
     
     async def close(self):
         """关闭HTTP客户端"""
@@ -369,3 +433,78 @@ class StrmService:
                         logger.error(f"删除文件夹 {dir_path} 失败: {str(e)}")
         except Exception as e:
             logger.error(f"清理空文件夹时出错: {str(e)}") 
+    
+    async def move_strm(self, src_path: str, dest_path: str) -> dict:
+        """移动strm文件和对应的云盘文件
+        
+        Args:
+            src_path: 源文件路径（相对于output_dir的路径）
+            dest_path: 目标文件路径（相对于output_dir的路径）
+            
+        Returns:
+            dict: 处理结果
+        """
+        try:
+            # 确保alist客户端已初始化
+            if not self.alist_client:
+                self.alist_client = AlistClient(
+                    self.settings.alist_url,
+                    self.settings.alist_token
+                )
+            
+            # 构建完整路径
+            src_strm = os.path.join(self.settings.output_dir, src_path)
+            dest_strm = os.path.join(self.settings.output_dir, dest_path)
+            
+            # 检查源文件是否存在
+            if not os.path.exists(src_strm):
+                return {"success": False, "message": f"源文件不存在: {src_path}"}
+            
+            # 读取strm文件内容
+            with open(src_strm, 'r', encoding='utf-8') as f:
+                content = f.read().strip()
+            
+            # 从URL中提取云盘路径
+            cloud_path = content.replace(f"{self.settings.alist_url}/d", "")
+            if self.settings.encode:
+                from urllib.parse import unquote
+                cloud_path = unquote(cloud_path)
+            
+            # 构建目标云盘路径
+            dest_cloud_path = self.settings.alist_scan_path + dest_path[:-5]  # 移除.strm后缀
+            
+            # 移动云盘文件
+            if os.path.isdir(src_strm):
+                success = await self.alist_client.move_directory(cloud_path, dest_cloud_path)
+            else:
+                success = await self.alist_client.move_file(cloud_path, dest_cloud_path)
+            
+            if not success:
+                return {"success": False, "message": "移动云盘文件失败"}
+            
+            # 确保目标目录存在
+            os.makedirs(os.path.dirname(dest_strm), exist_ok=True)
+            
+            # 移动strm文件
+            os.rename(src_strm, dest_strm)
+            
+            # 更新strm文件内容
+            base_url = self.settings.alist_url.rstrip('/')
+            if self.settings.encode:
+                encoded_path = quote(dest_cloud_path)
+                play_url = f"{base_url}/d{encoded_path}"
+            else:
+                play_url = f"{base_url}/d{dest_cloud_path}"
+            
+            with open(dest_strm, 'w', encoding='utf-8') as f:
+                f.write(play_url)
+            
+            return {
+                "success": True,
+                "message": f"成功移动: {src_path} -> {dest_path}"
+            }
+            
+        except Exception as e:
+            error_msg = f"移动文件失败: {str(e)}"
+            logger.error(error_msg)
+            return {"success": False, "message": error_msg} 
