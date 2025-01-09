@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from routes import config, strm, health, archive
 from contextlib import asynccontextmanager
-from services.service_manager import service_manager, scheduler_service, strm_service, alist_service
+from services.service_manager import service_manager, scheduler_service, strm_service
 from services.strm_monitor_service import StrmMonitorService
 
 settings = Settings()
@@ -47,10 +47,6 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("等待通过Web界面手动触发STRM生成")
     
-    # 启动strm监控服务
-    monitor_service = StrmMonitorService(strm_service)
-    await monitor_service.start()
-    
     yield
     
     # 关闭时
@@ -58,7 +54,6 @@ async def lifespan(app: FastAPI):
     await service_manager.close()
     await strm_service.close()
     await scheduler_service.stop()
-    await monitor_service.stop()
 
 app = FastAPI(lifespan=lifespan)
 
