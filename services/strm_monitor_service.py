@@ -1,106 +1,57 @@
 import os
-import time
 from pathlib import Path
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
-from typing import Dict, Optional
 import asyncio
 import logging
-import json
+from loguru import logger
 
 class StrmFileHandler(FileSystemEventHandler):
-    def __init__(self, strm_service, alist_service):
+    def __init__(self, strm_service):
         self.strm_service = strm_service
-        self.alist_service = alist_service
-        self.logger = logging.getLogger(__name__)
+        self.logger = logger
         
     def on_moved(self, event):
-        if not event.is_directory and event.src_path.endswith('.strm'):
-            asyncio.create_task(self._handle_strm_move(event.src_path, event.dest_path))
-        elif event.is_directory:
-            asyncio.create_task(self._handle_directory_move(event.src_path, event.dest_path))
-            
-    async def _handle_strm_move(self, src_path: str, dest_path: str):
+        """当文件或目录被移动时触发"""
         try:
-            # 读取strm文件内容
-            with open(dest_path, 'r', encoding='utf-8') as f:
-                content = f.read().strip()
-                
-            # 解析云盘路径
-            if not content.startswith('http'):
+            if not event.src_path.endswith('.strm'):
                 return
                 
             # 获取相对路径
-            src_rel_path = os.path.relpath(src_path, self.strm_service.strm_root)
-            dest_rel_path = os.path.relpath(dest_path, self.strm_service.strm_root)
+            src_rel_path = os.path.relpath(event.src_path, self.strm_service.settings.output_dir)
+            dest_rel_path = os.path.relpath(event.dest_path, self.strm_service.settings.output_dir)
             
-            # 更新云盘中的文件位置
-            src_cloud_path = self._get_cloud_path(src_rel_path)
-            dest_cloud_path = self._get_cloud_path(dest_rel_path)
-            
-            # 调用alist服务移动文件
-            await self.alist_service.move_file(src_cloud_path, dest_cloud_path)
-            
-            # 更新strm文件内容中的路径
-            new_content = content.replace(src_cloud_path, dest_cloud_path)
-            with open(dest_path, 'w', encoding='utf-8') as f:
-                f.write(new_content)
-                
-            self.logger.info(f"已同步移动文件: {src_cloud_path} -> {dest_cloud_path}")
+            # 创建异步任务处理移动
+            asyncio.create_task(self._handle_move(src_rel_path, dest_rel_path))
             
         except Exception as e:
-            self.logger.error(f"处理strm文件移动时出错: {str(e)}")
+            self.logger.error(f"处理文件移动事件时出错: {str(e)}")
             
-    async def _handle_directory_move(self, src_path: str, dest_path: str):
+    async def _handle_move(self, src_path: str, dest_path: str):
+        """处理文件移动"""
         try:
-            # 获取相对路径
-            src_rel_path = os.path.relpath(src_path, self.strm_service.strm_root)
-            dest_rel_path = os.path.relpath(dest_path, self.strm_service.strm_root)
-            
-            # 更新云盘中的目录位置
-            src_cloud_path = self._get_cloud_path(src_rel_path)
-            dest_cloud_path = self._get_cloud_path(dest_rel_path)
-            
-            # 调用alist服务移动目录
-            await self.alist_service.move_directory(src_cloud_path, dest_cloud_path)
-            
-            # 更新目录下所有strm文件的内容
-            for root, _, files in os.walk(dest_path):
-                for file in files:
-                    if file.endswith('.strm'):
-                        file_path = os.path.join(root, file)
-                        with open(file_path, 'r', encoding='utf-8') as f:
-                            content = f.read().strip()
-                        
-                        if content.startswith('http'):
-                            new_content = content.replace(src_cloud_path, dest_cloud_path)
-                            with open(file_path, 'w', encoding='utf-8') as f:
-                                f.write(new_content)
-            
-            self.logger.info(f"已同步移动目录: {src_cloud_path} -> {dest_cloud_path}")
-            
+            result = await self.strm_service.move_strm(src_path, dest_path)
+            if not result["success"]:
+                self.logger.error(f"移动失败: {result['message']}")
+            else:
+                self.logger.info(result["message"])
         except Exception as e:
-            self.logger.error(f"处理目录移动时出错: {str(e)}")
-            
-    def _get_cloud_path(self, rel_path: str) -> str:
-        """将相对路径转换为云盘路径"""
-        return '/' + rel_path.replace('\\', '/')
+            self.logger.error(f"处理移动操作时出错: {str(e)}")
 
 class StrmMonitorService:
-    def __init__(self, strm_service, alist_service):
+    def __init__(self, strm_service):
         self.strm_service = strm_service
-        self.alist_service = alist_service
         self.observer = None
-        self.logger = logging.getLogger(__name__)
+        self.logger = logger
         
     async def start(self):
         """启动监控服务"""
         try:
-            event_handler = StrmFileHandler(self.strm_service, self.alist_service)
+            event_handler = StrmFileHandler(self.strm_service)
             self.observer = Observer()
-            self.observer.schedule(event_handler, self.strm_service.strm_root, recursive=True)
+            self.observer.schedule(event_handler, self.strm_service.settings.output_dir, recursive=True)
             self.observer.start()
-            self.logger.info(f"开始监控strm目录: {self.strm_service.strm_root}")
+            self.logger.info(f"开始监控strm目录: {self.strm_service.settings.output_dir}")
         except Exception as e:
             self.logger.error(f"启动监控服务时出错: {str(e)}")
             

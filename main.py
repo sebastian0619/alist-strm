@@ -47,9 +47,9 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("等待通过Web界面手动触发STRM生成")
     
-    # 初始化strm监控服务
-    strm_monitor_service = StrmMonitorService(strm_service, alist_service)
-    await strm_monitor_service.start()
+    # 启动strm监控服务
+    monitor_service = StrmMonitorService(strm_service)
+    await monitor_service.start()
     
     yield
     
@@ -58,7 +58,7 @@ async def lifespan(app: FastAPI):
     await service_manager.close()
     await strm_service.close()
     await scheduler_service.stop()
-    await strm_monitor_service.stop()
+    await monitor_service.stop()
 
 app = FastAPI(lifespan=lifespan)
 
