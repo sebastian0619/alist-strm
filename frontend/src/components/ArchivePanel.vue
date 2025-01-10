@@ -276,8 +276,7 @@ import { InfoCircleOutlined, MenuOutlined } from '@ant-design/icons-vue'
 import { message } from 'ant-design-vue'
 import axios from 'axios'
 import draggable from 'vuedraggable/src/vuedraggable'
-import cronstrue from 'cronstrue/i18n'
-import 'cronstrue/locales/zh_CN'
+import cronstrue from 'cronstrue'
 
 const config = ref({
   archive_enabled: false,
@@ -436,22 +435,26 @@ const getCronDescription = (cron) => {
   const parts = cron.split(' ')
   if (parts.length !== 5) return '无效的Cron表达式'
   
-  if (parts[1] === '*/6' && parts[2] === '*' && parts[3] === '*' && parts[4] === '*') {
-    return '每6小时执行一次'
+  try {
+    return cronstrue.toString(cron, { locale: 'zh_CN' })
+  } catch (error) {
+    if (parts[1] === '*/6' && parts[2] === '*' && parts[3] === '*' && parts[4] === '*') {
+      return '每6小时执行一次'
+    }
+    if (parts[1] === '0' && parts[2] === '*' && parts[3] === '*' && parts[4] === '*') {
+      return '每小时执行一次'
+    }
+    if (parts[1] === '0' && parts[2] === '0' && parts[3] === '*' && parts[4] === '*') {
+      return '每天0点执行'
+    }
+    if (parts[1] === '0' && parts[2] === '3' && parts[3] === '*' && parts[4] === '*') {
+      return '每天凌晨3点执行'
+    }
+    if (parts[1] === '0' && parts[2] === '*/12' && parts[3] === '*' && parts[4] === '*') {
+      return '每12小时执行一次'
+    }
+    return '自定义执行计划'
   }
-  if (parts[1] === '0' && parts[2] === '*' && parts[3] === '*' && parts[4] === '*') {
-    return '每小时执行一次'
-  }
-  if (parts[1] === '0' && parts[2] === '0' && parts[3] === '*' && parts[4] === '*') {
-    return '每天0点执行'
-  }
-  if (parts[1] === '0' && parts[2] === '3' && parts[3] === '*' && parts[4] === '*') {
-    return '每天凌晨3点执行'
-  }
-  if (parts[1] === '0' && parts[2] === '*/12' && parts[3] === '*' && parts[4] === '*') {
-    return '每12小时执行一次'
-  }
-  return '自定义执行计划'
 }
 
 // 将对象转换为数组以支持拖拽排序
