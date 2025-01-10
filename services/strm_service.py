@@ -380,13 +380,12 @@ class StrmService:
             # 构建相对路径
             rel_path = path.replace(self.settings.alist_scan_path, '').lstrip('/')
             
-            # 构建输出路径
-            output_path = os.path.join(self.settings.output_dir, rel_path)
-            os.makedirs(output_path, exist_ok=True)
+            # 构建输出路径，移除.mkv后缀
+            output_path = os.path.join(self.settings.output_dir, os.path.splitext(rel_path)[0])
+            os.makedirs(os.path.dirname(output_path), exist_ok=True)
             
             # 构建strm文件路径
-            strm_filename = os.path.splitext(filename)[0] + '.strm'
-            strm_path = os.path.join(output_path, strm_filename)
+            strm_path = output_path + '.strm'
             
             # 构建strm文件内容
             file_path = path
