@@ -28,12 +28,13 @@ class ArchiveService:
         )
         
         # 从文件加载媒体类型配置
-        self.media_types = self._load_media_types()
+        self._media_types = self._load_media_types()
+        # 初始化阈值配置
         self.thresholds = {
             name: MediaThreshold(
                 info["creation_days"],
                 info["mtime_days"]
-            ) for name, info in self.media_types.items()
+            ) for name, info in self._media_types.items()
         }
     
     def _get_service_manager(self):
@@ -210,15 +211,19 @@ class ArchiveService:
                 )
                 return result
 
-            if test_mode:
-                result["message"] = f"[测试] {directory.name} 可以归档，无近期文件"
-                result["success"] = True
-                return result
-            
-            # 准备归档
+            # 获取目标路径
             target_dir = Path(self.settings.archive_target_root)
             relative_path = directory.relative_to(self.settings.archive_source_root)
             destination = target_dir / relative_path
+
+            if test_mode:
+                result["message"] = (
+                    f"[测试] {directory.name}\n"
+                    f"状态: 可以归档，无近期文件\n"
+                    f"目标: {destination}"
+                )
+                result["success"] = True
+                return result
             
             # 创建目标目录
             destination.parent.mkdir(parents=True, exist_ok=True)
@@ -407,11 +412,30 @@ class ArchiveService:
         """保存媒体类型配置到config/archive.json"""
         config_file = "config/archive.json"
         try:
+            # 确保config目录存在
+            os.makedirs(os.path.dirname(config_file), exist_ok=True)
             with open(config_file, 'w', encoding='utf-8') as f:
                 json.dump(self.media_types, f, ensure_ascii=False, indent=4)
             logger.info("媒体类型配置已保存")
         except Exception as e:
-            logger.error(f"保存媒体类型配置失败: {e}") 
+            logger.error(f"保存媒体类型配置失败: {e}")
+            
+    @property
+    def media_types(self) -> Dict[str, Dict]:
+        return self._media_types
+        
+    @media_types.setter
+    def media_types(self, value: Dict[str, Dict]):
+        self._media_types = value
+        # 当media_types被更新时，自动保存到文件
+        self.save_media_types()
+        # 更新阈值配置
+        self.thresholds = {
+            name: MediaThreshold(
+                info["creation_days"],
+                info["mtime_days"]
+            ) for name, info in self._media_types.items()
+        }
 
     async def process_file(self, source_path: Path) -> Dict:
         """处理单个文件的归档
