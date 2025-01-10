@@ -389,10 +389,14 @@ class StrmService:
             strm_path = os.path.join(output_path, strm_filename)
             
             # 构建strm文件内容
-            file_path = os.path.join(path, filename).replace('\\', '/')
+            file_path = path.replace('\\', '/')
             if not file_path.startswith('/'):
                 file_path = '/' + file_path
-            strm_url = f"{self.settings.alist_url}/d{quote(file_path)}"
+            # 避免重复的文件名
+            if file_path.endswith('/' + filename):
+                strm_url = f"{self.settings.alist_url}/d{quote(file_path)}"
+            else:
+                strm_url = f"{self.settings.alist_url}/d{quote(file_path + '/' + filename)}"
             
             # 检查文件是否已存在且内容相同
             if os.path.exists(strm_path):
