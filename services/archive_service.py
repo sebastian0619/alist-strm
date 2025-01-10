@@ -179,11 +179,11 @@ class ArchiveService:
             for root, _, files in os.walk(directory):
                 root_path = Path(root)
                 for file in files:
-                    file_path = root_path / file
-                    # 跳过特定格式的文件
-                    if file.endswith(('.nfo', '.jpg', '.png')):
+                    # 检查文件扩展名是否在排除列表中
+                    if any(file.lower().endswith(ext.strip().lower()) for ext in self.excluded_extensions):
                         continue
                         
+                    file_path = root_path / file
                     stats = file_path.stat()
                     mtime = stats.st_mtime
                     ctime = stats.st_ctime
@@ -232,6 +232,10 @@ class ArchiveService:
                 all_verified = True
                 for src_file in directory.rglob("*"):
                     if src_file.is_file():
+                        # 跳过排除的文件格式
+                        if any(src_file.name.lower().endswith(ext.strip().lower()) for ext in self.excluded_extensions):
+                            continue
+                            
                         dst_file = destination / src_file.relative_to(directory)
                         if not self.verify_files(src_file, dst_file):
                             all_verified = False
@@ -251,11 +255,22 @@ class ArchiveService:
                     return result
             else:
                 # 如果不需要删除源文件，直接复制
-                shutil.copytree(str(directory), str(destination), dirs_exist_ok=True)
-                for src_file in directory.rglob("*"):
-                    if src_file.is_file():
-                        result["total_size"] += src_file.stat().st_size
-                        result["moved_files"] += 1
+                # 使用自定义的copytree来排除特定格式的文件
+                def custom_copy(src, dst):
+                    if not dst.exists():
+                        dst.mkdir(parents=True, exist_ok=True)
+                    for item in src.iterdir():
+                        if item.is_file():
+                            # 跳过排除的文件格式
+                            if any(item.name.lower().endswith(ext.strip().lower()) for ext in self.excluded_extensions):
+                                continue
+                            shutil.copy2(str(item), str(dst / item.name))
+                            result["total_size"] += item.stat().st_size
+                            result["moved_files"] += 1
+                        elif item.is_dir():
+                            custom_copy(item, dst / item.name)
+                
+                custom_copy(directory, destination)
                 result["message"] = (
                     f"[归档] {directory.name} -> {destination.name}"
                 )
@@ -302,29 +317,41 @@ class ArchiveService:
             test_results = []
             all_results = []
             
-            # 遍历源目录下的所有子目录
-            for root, dirs, files in os.walk(source_dir):
+            # 只遍历配置的目录
+            for media_type, info in self.media_types.items():
                 if self._stop_flag:
                     break
                     
-                root_path = Path(root)
-                # 只处理包含文件的目录（叶子目录）
-                if files and not any(d.startswith('.') for d in root_path.parts):
-                    logger.info(f"\n处理目录: {root_path}")
+                target_dir = source_dir / info['dir'].lstrip('/')
+                if not target_dir.exists():
+                    logger.warning(f"配置的目录不存在: {target_dir}")
+                    continue
                     
-                    result = await self.process_directory(root_path, test_mode)
-                    if result["success"]:
-                        total_processed += result["moved_files"]
-                        total_size += result["total_size"]
-                    if test_mode:
-                        test_results.append(result)
+                logger.info(f"\n开始处理媒体类型 {media_type} 的目录: {target_dir}")
+                
+                # 遍历目标目录下的所有子目录
+                for root, dirs, files in os.walk(target_dir):
+                    if self._stop_flag:
+                        break
                         
-                    # 只收集有意义的结果（跳过、归档或错误）
-                    if "[跳过]" in result["message"] or "[归档]" in result["message"] or "[错误]" in result["message"]:
-                        all_results.append(result["message"])
-                    
-                    # 让出控制权
-                    await asyncio.sleep(0)
+                    root_path = Path(root)
+                    # 只处理包含文件的目录（叶子目录）
+                    if files and not any(d.startswith('.') for d in root_path.parts):
+                        logger.info(f"\n处理目录: {root_path}")
+                        
+                        result = await self.process_directory(root_path, test_mode)
+                        if result["success"]:
+                            total_processed += result["moved_files"]
+                            total_size += result["total_size"]
+                        if test_mode:
+                            test_results.append(result)
+                            
+                        # 只收集有意义的结果（跳过、归档或错误）
+                        if "[跳过]" in result["message"] or "[归档]" in result["message"] or "[错误]" in result["message"]:
+                            all_results.append(result["message"])
+                        
+                        # 让出控制权
+                        await asyncio.sleep(0)
             
             # 生成汇总消息
             if all_results:
