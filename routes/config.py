@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, RootModel
 from typing import Dict, Any
 import os
 import json
@@ -15,9 +15,9 @@ class ConfigUpdate(BaseModel):
     key: str
     value: Any
 
-class MediaTypesConfig(BaseModel):
+class MediaTypesConfig(RootModel):
     """媒体类型配置模型"""
-    __root__: Dict[str, Dict[str, Any]]
+    root: Dict[str, Dict[str, Any]]
 
 @router.get("/api/config")
 async def get_config():
@@ -86,7 +86,7 @@ async def get_archive_types():
 async def save_archive_types(media_types: MediaTypesConfig):
     """保存媒体类型配置到archive.json"""
     try:
-        archive_service.media_types = media_types.__root__
+        archive_service.media_types = media_types.root
         return {"status": "success", "message": "媒体类型配置已保存"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) 
