@@ -61,13 +61,69 @@ class StrmFileHandler(FileSystemEventHandler):
             self.logger.error(f"处理文件删除事件时出错: {str(e)}")
             
     async def _handle_move(self, src_path: str, dest_path: str):
-        """处理文件移动"""
+        """处理文件移动
+        
+        当strm文件被移动时：
+        1. 读取源strm文件内容，获取原云盘文件路径
+        2. 根据新的strm路径，构建新的云盘文件路径
+        3. 移动云盘中的文件到新位置
+        4. 更新移动后的strm文件内容
+        """
         try:
-            result = await self.strm_service.move_strm(src_path, dest_path)
-            if not result["success"]:
-                self.logger.error(f"移动失败: {result['message']}")
+            # 构建完整的strm文件路径
+            src_strm_path = os.path.join(self.strm_service.settings.output_dir, src_path)
+            dest_strm_path = os.path.join(self.strm_service.settings.output_dir, dest_path)
+            
+            if not os.path.exists(dest_strm_path):
+                self.logger.error(f"源文件不存在: {src_path}")
+                return
+                
+            # 读取strm文件内容，获取原云盘文件路径
+            with open(dest_strm_path, 'r', encoding='utf-8') as f:
+                content = f.read().strip()
+                
+            # 从URL中提取云盘路径
+            old_cloud_path = content.replace(f"{self.strm_service.settings.alist_url}/d", "")
+            if self.strm_service.settings.encode:
+                from urllib.parse import unquote
+                old_cloud_path = unquote(old_cloud_path)
+                
+            # 构建新的云盘文件路径
+            if not old_cloud_path.startswith(self.strm_service.settings.alist_scan_path):
+                self.logger.error(f"云盘路径不在扫描路径下: {old_cloud_path}")
+                return
+                
+            # 获取文件在扫描路径下的相对路径
+            rel_cloud_path = old_cloud_path[len(self.strm_service.settings.alist_scan_path):].lstrip('/')
+            
+            # 根据新的strm路径构建新的云盘路径
+            new_rel_path = os.path.dirname(dest_path)
+            new_cloud_path = os.path.join(
+                self.strm_service.settings.alist_scan_path,
+                new_rel_path,
+                os.path.basename(old_cloud_path)
+            )
+            
+            # 移动云盘中的文件
+            if os.path.isdir(dest_strm_path):
+                success = await self.strm_service.alist_client.move_directory(old_cloud_path, new_cloud_path)
             else:
-                self.logger.info(result["message"])
+                success = await self.strm_service.alist_client.move_file(old_cloud_path, new_cloud_path)
+                
+            if success:
+                # 更新strm文件内容
+                new_content = f"{self.strm_service.settings.alist_url}/d{new_cloud_path}"
+                if self.strm_service.settings.encode:
+                    from urllib.parse import quote
+                    new_content = quote(new_content)
+                    
+                with open(dest_strm_path, 'w', encoding='utf-8') as f:
+                    f.write(new_content)
+                    
+                self.logger.info(f"已移动文件并更新strm: {old_cloud_path} -> {new_cloud_path}")
+            else:
+                self.logger.error(f"移动云盘文件失败: {old_cloud_path}")
+                
         except Exception as e:
             self.logger.error(f"处理移动操作时出错: {str(e)}")
             
