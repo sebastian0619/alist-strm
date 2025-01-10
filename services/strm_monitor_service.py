@@ -104,10 +104,9 @@ class StrmFileHandler(FileSystemEventHandler):
             _, ext = os.path.splitext(cloud_path)
             # 2. 在源目录的archive子目录下构建路径
             archive_path = os.path.join(
-                self.strm_service.settings.alist_scan_path,
+                os.path.dirname(cloud_path),
                 'archive',
-                rel_dir,
-                rel_name + ext
+                os.path.basename(cloud_path)
             )
             
             # 移动文件到archive目录
@@ -118,6 +117,15 @@ class StrmFileHandler(FileSystemEventHandler):
                 
             if success:
                 self.logger.info(f"已将文件移动到归档目录: {cloud_path} -> {archive_path}")
+                # 移动成功后删除原文件
+                if os.path.isdir(strm_path):
+                    success = await self.strm_service.alist_client.delete_directory(cloud_path)
+                else:
+                    success = await self.strm_service.alist_client.delete_file(cloud_path)
+                if success:
+                    self.logger.info(f"已删除原文件: {cloud_path}")
+                else:
+                    self.logger.error(f"删除原文件失败: {cloud_path}")
             else:
                 self.logger.error(f"移动文件到归档目录失败: {cloud_path}")
                 
