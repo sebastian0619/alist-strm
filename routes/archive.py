@@ -34,9 +34,16 @@ async def get_media_types():
     """获取媒体类型配置"""
     try:
         media_types = service_manager.archive_service.media_types
-        return {"success": True, "data": media_types}
+        return {
+            "success": True,
+            "data": media_types,
+            "message": "获取成功"
+        }
     except Exception as e:
-        return {"success": False, "message": str(e)}
+        return {
+            "success": False,
+            "message": str(e)
+        }
 
 @router.post("/media_types")
 async def save_media_types(media_types: dict):

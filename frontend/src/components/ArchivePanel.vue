@@ -154,6 +154,13 @@
                     <template #extra>
                       <a-space>
                         <menu-outlined class="drag-handle" style="cursor: move" />
+                        <a-button 
+                          type="link" 
+                          @click="saveMediaType(element)"
+                          :loading="element.saving"
+                        >
+                          保存到archive.json
+                        </a-button>
                         <a-button type="link" danger @click="removeMediaType(element.name)">
                           删除
                         </a-button>
@@ -164,6 +171,7 @@
                       <a-input
                         v-model:value="element.config.dir"
                         placeholder="请输入目录名称，支持多级目录，如: 电影 或 电影/外语"
+                        @change="() => handleMediaTypeChange(element.name)"
                       />
                     </a-form-item>
                     
@@ -175,6 +183,7 @@
                             :min="0"
                             addon-after="天"
                             style="width: 120px"
+                            @change="() => handleMediaTypeChange(element.name)"
                           />
                         </a-form-item>
                         <a-form-item label="修改时间" style="margin-bottom: 0; margin-left: 8px">
@@ -183,10 +192,15 @@
                             :min="0"
                             addon-after="天"
                             style="width: 120px"
+                            @change="() => handleMediaTypeChange(element.name)"
                           />
                         </a-form-item>
                       </a-input-group>
                     </a-form-item>
+
+                    <div class="save-tip" v-if="element.hasChanges" style="color: #ff4d4f; font-size: 12px; margin-top: 8px;">
+                      * 配置已修改，请点击保存按钮保存到 archive.json
+                    </div>
                   </a-card>
                 </a-space>
               </div>
@@ -262,6 +276,8 @@ import { InfoCircleOutlined, MenuOutlined } from '@ant-design/icons-vue'
 import { message } from 'ant-design-vue'
 import axios from 'axios'
 import draggable from 'vuedraggable/src/vuedraggable'
+import cronstrue from 'cronstrue/i18n'
+import 'cronstrue/locales/zh_CN'
 
 const config = ref({
   archive_enabled: false,
@@ -371,11 +387,7 @@ const loadConfig = async () => {
     originalConfig.value = JSON.parse(JSON.stringify(configResponse.data))
     
     // 加载媒体类型配置
-    const mediaTypesResponse = await axios.get('/api/archive/media_types')
-    if (!mediaTypesResponse.data.success) {
-      throw new Error(mediaTypesResponse.data.message)
-    }
-    mediaTypes.value = mediaTypesResponse.data.data
+    await loadMediaTypes()
   } catch (error) {
     message.error('加载配置失败: ' + error.message)
   }
@@ -446,7 +458,9 @@ const getCronDescription = (cron) => {
 const mediaTypesList = computed({
   get: () => Object.entries(mediaTypes.value).map(([name, config]) => ({
     name,
-    config: { ...config }  // 创建配置的深拷贝
+    config: { ...config },
+    hasChanges: false,
+    saving: false
   })),
   set: (list) => {
     const newTypes = {}
@@ -460,6 +474,53 @@ const mediaTypesList = computed({
 const handleDragEnd = () => {
   // 拖拽结束后自动保存
   saveConfig()
+}
+
+const handleMediaTypeChange = (name) => {
+  const mediaType = mediaTypesList.value.find(item => item.name === name)
+  if (mediaType) {
+    mediaType.hasChanges = true
+  }
+}
+
+const saveMediaType = async (mediaType) => {
+  try {
+    mediaType.saving = true
+    
+    // 构建媒体类型配置对象
+    const mediaTypesData = {}
+    mediaTypesList.value.forEach(type => {
+      mediaTypesData[type.name] = type.config
+    })
+
+    // 调用API保存到archive.json
+    const response = await axios.post('/api/archive/media_types', mediaTypesData)
+    if (!response.data.success) {
+      throw new Error(response.data.message)
+    }
+    
+    // 更新状态
+    mediaType.hasChanges = false
+    message.success(`媒体类型 "${mediaType.name}" 已保存到 archive.json`)
+  } catch (error) {
+    console.error('保存媒体类型失败:', error)
+    message.error(`保存失败: ${error.message || '未知错误'}`)
+  } finally {
+    mediaType.saving = false
+  }
+}
+
+const loadMediaTypes = async () => {
+  try {
+    const response = await axios.get('/api/archive/media_types')
+    if (!response.data.success) {
+      throw new Error(response.data.message)
+    }
+    mediaTypes.value = response.data.data || {}
+  } catch (error) {
+    console.error('加载媒体类型失败:', error)
+    message.error('加载媒体类型失败: ' + error.message)
+  }
 }
 
 // 在组件挂载时加载配置
