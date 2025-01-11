@@ -206,6 +206,13 @@ class StrmService:
         """检查是否应该跳过某些文件"""
         # 检查文件扩展名
         ext = os.path.splitext(filename)[1].lower()
+        
+        # 如果开启了下载元数据，不跳过元数据文件
+        if self.settings.download_metadata:
+            metadata_extensions = {'.ass', '.ssa', '.srt', '.png', '.nfo', '.jpg', '.jpeg'}
+            if ext in metadata_extensions:
+                return False
+        
         if ext in self.settings.skip_extensions_list:
             logger.info(f"跳过指定扩展名的文件: {filename}")
             return True
@@ -350,6 +357,29 @@ class StrmService:
             logger.error(f"处理目录 {path} 时出错: {str(e)}")
             return
     
+    async def _download_file(self, url: str, path: str):
+        """下载文件
+        
+        Args:
+            url: 文件URL
+            path: 保存路径
+        """
+        try:
+            async with httpx.AsyncClient() as client:
+                async with client.stream('GET', url) as response:
+                    response.raise_for_status()
+                    # 确保目录存在
+                    os.makedirs(os.path.dirname(path), exist_ok=True)
+                    # 写入文件
+                    with open(path, 'wb') as f:
+                        async for chunk in response.aiter_bytes():
+                            f.write(chunk)
+            logger.info(f"文件下载成功: {path}")
+            return True
+        except Exception as e:
+            logger.error(f"文件下载失败: {str(e)}")
+            return False
+    
     async def _process_file(self, path, file_info):
         """处理单个文件
         
@@ -368,7 +398,29 @@ class StrmService:
             if self._should_skip_file(filename):
                 return False
                 
-            # 检查文件大小
+            ext = os.path.splitext(filename)[1].lower()
+            metadata_extensions = {'.ass', '.ssa', '.srt', '.png', '.nfo', '.jpg', '.jpeg'}
+            
+            # 如果是元数据文件且开启了下载元数据
+            if self.settings.download_metadata and ext in metadata_extensions:
+                # 构建下载路径
+                rel_path = path.replace(self.settings.alist_scan_path, '').lstrip('/')
+                download_path = os.path.join(self.settings.output_dir, rel_path)
+                
+                # 构建下载URL
+                file_path = path
+                if not file_path.startswith('/'):
+                    file_path = '/' + file_path
+                download_url = f"{self.settings.alist_url}/d{quote(file_path)}"
+                
+                # 下载文件
+                success = await self._download_file(download_url, download_path)
+                if success:
+                    self._processed_files += 1
+                    self._total_size += file_info.get('size', 0)
+                return success
+            
+            # 检查文件大小（只对视频文件）
             if file_info.get('size', 0) < self.settings.min_file_size * 1024 * 1024:
                 logger.debug(f"跳过小文件: {filename}")
                 return False
@@ -424,8 +476,9 @@ class StrmService:
     
     def _is_video_file(self, filename: str) -> bool:
         """判断是否为视频文件"""
+        ext = os.path.splitext(filename)[1].lower()
         video_extensions = {'.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.m4v', '.rmvb'}
-        return os.path.splitext(filename)[1].lower() in video_extensions 
+        return ext in video_extensions
     
     def _remove_empty_directories(self, path):
         """递归删除空文件夹"""
