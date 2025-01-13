@@ -5,6 +5,7 @@ from watchdog.events import FileSystemEventHandler
 import asyncio
 from loguru import logger
 from functools import partial
+from services.strm_service import AlistClient
 
 class StrmFileHandler(FileSystemEventHandler):
     def __init__(self, strm_service, loop):
@@ -104,25 +105,35 @@ class StrmFileHandler(FileSystemEventHandler):
                 os.path.basename(old_cloud_path)
             )
             
-            # 移动云盘中的文件
-            if os.path.isdir(dest_strm_path):
-                success = await self.strm_service.alist_client.move_directory(old_cloud_path, new_cloud_path)
-            else:
-                success = await self.strm_service.alist_client.move_file(old_cloud_path, new_cloud_path)
-                
-            if success:
-                # 更新strm文件内容
-                new_content = f"{self.strm_service.settings.alist_url}/d{new_cloud_path}"
-                if self.strm_service.settings.encode:
-                    from urllib.parse import quote
-                    new_content = quote(new_content)
+            # 创建新的AlistClient实例
+            alist_client = AlistClient(
+                self.strm_service.settings.alist_url,
+                self.strm_service.settings.alist_token
+            )
+            
+            try:
+                # 移动云盘中的文件
+                if os.path.isdir(dest_strm_path):
+                    success = await alist_client.move_directory(old_cloud_path, new_cloud_path)
+                else:
+                    success = await alist_client.move_file(old_cloud_path, new_cloud_path)
                     
-                with open(dest_strm_path, 'w', encoding='utf-8') as f:
-                    f.write(new_content)
-                    
-                self.logger.info(f"已移动文件并更新strm: {old_cloud_path} -> {new_cloud_path}")
-            else:
-                self.logger.error(f"移动云盘文件失败: {old_cloud_path}")
+                if success:
+                    # 更新strm文件内容
+                    new_content = f"{self.strm_service.settings.alist_url}/d{new_cloud_path}"
+                    if self.strm_service.settings.encode:
+                        from urllib.parse import quote
+                        new_content = quote(new_content)
+                        
+                    with open(dest_strm_path, 'w', encoding='utf-8') as f:
+                        f.write(new_content)
+                        
+                    self.logger.info(f"已移动文件并更新strm: {old_cloud_path} -> {new_cloud_path}")
+                else:
+                    self.logger.error(f"移动云盘文件失败: {old_cloud_path}")
+            finally:
+                # 确保关闭客户端
+                await alist_client.close()
                 
         except Exception as e:
             self.logger.error(f"处理移动操作时出错: {str(e)}")
