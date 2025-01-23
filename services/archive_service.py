@@ -306,21 +306,18 @@ class ArchiveService:
             self._is_running = True
             
             service_manager = self._get_service_manager()
-            await service_manager.telegram_service.send_message(
-                "🔍 开始归档测试..." if test_mode else "🚀 开始归档处理..."
-            )
+            logger.info("🔍 开始归档测试..." if test_mode else "🚀 开始归档处理...")
             
             source_dir = Path(self.settings.archive_source_root)
             if not source_dir.exists():
                 error_msg = f"源目录不存在: {source_dir}"
                 logger.error(error_msg)
-                await service_manager.telegram_service.send_message(f"❌ {error_msg}")
                 return
                 
             total_processed = 0
             total_size = 0
             test_results = []
-            all_results = []
+            success_results = []  # 只记录成功的结果
             
             # 只遍历配置的目录
             for media_type, info in self.media_types.items():
@@ -348,31 +345,31 @@ class ArchiveService:
                         if result["success"]:
                             total_processed += result["moved_files"]
                             total_size += result["total_size"]
+                            if "[归档]" in result["message"]:
+                                success_results.append(result["message"])
                         if test_mode:
                             test_results.append(result)
-                            
-                        # 只收集有意义的结果（跳过、归档或错误）
-                        if "[跳过]" in result["message"] or "[归档]" in result["message"] or "[错误]" in result["message"]:
-                            all_results.append(result["message"])
                         
                         # 让出控制权
                         await asyncio.sleep(0)
             
             # 生成汇总消息
-            if all_results:
-                summary_message = "归档处理结果:\n\n" + "\n\n".join(all_results)
-                # 如果消息太长，只保留前20个结果
-                if len(summary_message) > 3000:
-                    all_results = all_results[:20]
-                    summary_message = "归档处理结果（仅显示前20个）:\n\n" + "\n\n".join(all_results)
-                await service_manager.telegram_service.send_message(summary_message)
-            
             summary = (
                 f"✅ 归档{'测试' if test_mode else ''}完成\n"
                 f"📁 {'识别' if test_mode else '处理'}文件: {total_processed} 个\n"
                 f"💾 总大小: {total_size / 1024 / 1024:.2f} MB"
             )
             logger.info(summary)
+            
+            # 如果有成功归档的结果，发送到Telegram
+            if success_results:
+                success_message = "归档成功的文件:\n\n" + "\n\n".join(success_results)
+                # 如果消息太长，只保留前20个结果
+                if len(success_message) > 3000:
+                    success_results = success_results[:20]
+                    success_message = "归档成功的文件（仅显示前20个）:\n\n" + "\n\n".join(success_results)
+                await service_manager.telegram_service.send_message(success_message)
+            
             await service_manager.telegram_service.send_message(summary)
             
             # 如果配置了自动运行STRM扫描且不是测试模式

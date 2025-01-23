@@ -418,6 +418,7 @@ class StrmService:
                 if success:
                     self._processed_files += 1
                     self._total_size += file_info.get('size', 0)
+                    logger.info(f"下载元数据文件成功: {download_path}")
                 return success
             
             # 检查文件大小（只对视频文件）
@@ -459,10 +460,9 @@ class StrmService:
             self._processed_files += 1
             self._total_size += file_info.get('size', 0)
             
-            # 记录STRM文件信息
-            service_manager = self._get_service_manager()
-            await service_manager.telegram_service.send_message(
-                f"✅ 生成STRM文件:\n"
+            # 记录到日志
+            logger.info(
+                f"生成STRM文件:\n"
                 f"源文件: {file_path}\n"
                 f"STRM路径: {strm_path}\n"
                 f"STRM内容: {strm_url}"
