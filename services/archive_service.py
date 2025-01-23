@@ -177,6 +177,18 @@ class ArchiveService:
         try:
             # 检查目录中的文件修改时间
             recent_files = []
+            # 获取媒体类型
+            media_type = self.get_media_type(directory)
+            if not media_type:
+                result["message"] = (
+                    f"[跳过] {directory.name}\n"
+                    f"原因: 未匹配到媒体类型"
+                )
+                return result
+                
+            # 获取阈值配置
+            threshold = self.thresholds[media_type]
+            
             for root, _, files in os.walk(directory):
                 root_path = Path(root)
                 for file in files:
@@ -187,14 +199,14 @@ class ArchiveService:
                     file_path = root_path / file
                     stats = file_path.stat()
                     mtime = stats.st_mtime
-                    ctime = stats.st_ctime
+                    ctime = self.get_creation_time(file_path)
                     
                     # 计算文件的创建时间和修改时间距今的天数
                     mtime_days = (time.time() - mtime) / 86400
                     ctime_days = (time.time() - ctime) / 86400
                     
-                    # 如果文件的创建时间或修改时间在阈值内，添加到最近文件列表
-                    if mtime_days < 30 or ctime_days < 30:  # 使用30天作为默认阈值
+                    # 使用配置的阈值
+                    if ctime_days < threshold.creation_days or mtime_days < threshold.mtime_days:
                         recent_files.append((file_path, min(mtime_days, ctime_days)))
 
             if recent_files:
