@@ -10,6 +10,7 @@ from config import Settings
 import asyncio
 import importlib
 import json
+from services.alist_client import AlistClient
 
 class MediaThreshold(NamedTuple):
     """媒体文件的时间阈值配置"""
@@ -36,6 +37,19 @@ class ArchiveService:
                 info["mtime_days"]
             ) for name, info in self._media_types.items()
         }
+        
+        # 初始化待删除文件队列
+        self._pending_deletions = []
+        # 删除延迟时间（秒）
+        self._deletion_delay = 7 * 24 * 3600  # 7天
+        # 启动删除检查任务
+        asyncio.create_task(self._check_pending_deletions())
+        
+        # 初始化AlistClient
+        self.alist_client = AlistClient(
+            self.settings.alist_url,
+            self.settings.alist_token
+        )
     
     def _get_service_manager(self):
         """动态获取service_manager以避免循环依赖"""
@@ -157,16 +171,38 @@ class ArchiveService:
         self._stop_flag = True
         logger.info("收到停止信号，正在停止归档...")
     
+    async def _check_pending_deletions(self):
+        """定期检查待删除文件，删除超过延迟时间的文件"""
+        while True:
+            try:
+                current_time = time.time()
+                # 复制列表以避免在迭代时修改
+                for item in self._pending_deletions[:]:
+                    if current_time >= item["delete_time"]:
+                        path = item["path"]
+                        try:
+                            if path.is_dir():
+                                shutil.rmtree(str(path))
+                            else:
+                                path.unlink()
+                            logger.info(f"已删除延迟文件: {path}")
+                            self._pending_deletions.remove(item)
+                        except Exception as e:
+                            logger.error(f"删除文件失败 {path}: {e}")
+            except Exception as e:
+                logger.error(f"检查待删除文件时出错: {e}")
+            finally:
+                await asyncio.sleep(3600)  # 每小时检查一次
+
+    def _add_to_pending_deletion(self, path: Path):
+        """添加文件到待删除队列"""
+        self._pending_deletions.append({
+            "path": path,
+            "delete_time": time.time() + self._deletion_delay
+        })
+        logger.info(f"已添加到延迟删除队列: {path}, 将在 {self._deletion_delay/86400:.1f} 天后删除")
+
     async def process_directory(self, directory: Path, test_mode: bool = False) -> Dict:
-        """处理单个目录的归档
-        
-        Args:
-            directory: 要处理的目录路径
-            test_mode: 是否为测试模式（只识别不执行）
-            
-        Returns:
-            Dict: 处理结果
-        """
         result = {
             "success": False,
             "message": "",
@@ -208,7 +244,7 @@ class ArchiveService:
                     # 使用配置的阈值
                     if ctime_days < threshold.creation_days or mtime_days < threshold.mtime_days:
                         recent_files.append((file_path, min(mtime_days, ctime_days)))
-
+            
             if recent_files:
                 # 按时间排序，展示最近的3个文件
                 recent_files.sort(key=lambda x: x[1])
@@ -237,16 +273,19 @@ class ArchiveService:
                 result["success"] = True
                 return result
             
-            # 创建目标目录
-            destination.parent.mkdir(parents=True, exist_ok=True)
+            # 构建Alist路径
+            source_alist_path = str(directory).replace(str(self.settings.archive_source_root), "").lstrip("/")
+            dest_alist_path = str(destination).replace(str(self.settings.archive_target_root), "").lstrip("/")
             
-            # 复制或移动文件
-            if self.settings.archive_delete_source:
-                # 如果需要删除源文件，先复制再验证
-                shutil.copytree(str(directory), str(destination), dirs_exist_ok=True)
-                
-                # 验证所有文件
+            # 使用Alist API复制目录
+            success = await self.alist_client.copy_directory(source_alist_path, dest_alist_path)
+            
+            if success:
+                # 验证目录中的所有文件
                 all_verified = True
+                total_size = 0
+                moved_files = 0
+                
                 for src_file in directory.rglob("*"):
                     if src_file.is_file():
                         # 跳过排除的文件格式
@@ -257,42 +296,30 @@ class ArchiveService:
                         if not self.verify_files(src_file, dst_file):
                             all_verified = False
                             break
-                        result["total_size"] += src_file.stat().st_size
-                        result["moved_files"] += 1
+                        total_size += src_file.stat().st_size
+                        moved_files += 1
                 
                 if all_verified:
-                    # 验证成功后删除源文件
-                    shutil.rmtree(str(directory))
-                    result["message"] = (
-                        f"[归档] {directory.name} -> {destination.name}\n"
-                        f"已验证并删除源文件"
-                    )
+                    result["total_size"] = total_size
+                    result["moved_files"] = moved_files
+                    
+                    # 验证成功后将源目录添加到待删除队列
+                    if self.settings.archive_delete_source:
+                        self._add_to_pending_deletion(directory)
+                        result["message"] = (
+                            f"[归档] {directory.name} -> {destination.name}\n"
+                            f"已验证并加入延迟删除队列"
+                        )
+                    else:
+                        result["message"] = f"[归档] {directory.name} -> {destination.name}"
+                    
+                    result["success"] = True
                 else:
+                    # 如果验证失败，删除目标目录
+                    await self.alist_client.delete(dest_alist_path)
                     result["message"] = f"[错误] {directory.name} 文件验证失败"
-                    return result
             else:
-                # 如果不需要删除源文件，直接复制
-                # 使用自定义的copytree来排除特定格式的文件
-                def custom_copy(src, dst):
-                    if not dst.exists():
-                        dst.mkdir(parents=True, exist_ok=True)
-                    for item in src.iterdir():
-                        if item.is_file():
-                            # 跳过排除的文件格式
-                            if any(item.name.lower().endswith(ext.strip().lower()) for ext in self.excluded_extensions):
-                                continue
-                            shutil.copy2(str(item), str(dst / item.name))
-                            result["total_size"] += item.stat().st_size
-                            result["moved_files"] += 1
-                        elif item.is_dir():
-                            custom_copy(item, dst / item.name)
-                
-                custom_copy(directory, destination)
-                result["message"] = (
-                    f"[归档] {directory.name} -> {destination.name}"
-                )
-
-            result["success"] = True
+                result["message"] = f"[错误] {directory.name} 复制失败"
             
         except Exception as e:
             result["message"] = f"[错误] 归档失败 {directory.name}: {str(e)}"
@@ -495,18 +522,19 @@ class ArchiveService:
             relative_path = source_path.relative_to(self.settings.archive_source_root)
             dest_path = Path(self.settings.archive_target_root) / relative_path
             
-            # 确保目标目录存在
-            dest_path.parent.mkdir(parents=True, exist_ok=True)
+            # 构建Alist路径
+            source_alist_path = str(source_path).replace(str(self.settings.archive_source_root), "").lstrip("/")
+            dest_alist_path = str(dest_path).replace(str(self.settings.archive_target_root), "").lstrip("/")
             
             # 如果目标文件已存在，验证文件
             if dest_path.exists():
                 if self.verify_files(source_path, dest_path):
                     # 如果配置了删除源文件且验证通过
                     if self.settings.archive_delete_source:
-                        source_path.unlink()
+                        self._add_to_pending_deletion(source_path)
                         return {
                             "success": True,
-                            "message": f"🗑️ {source_path} 已存在于目标位置，删除源文件",
+                            "message": f"🗑️ {source_path} 已存在于目标位置，已加入延迟删除队列",
                             "size": file_size
                         }
                     return {
@@ -521,14 +549,20 @@ class ArchiveService:
                         "size": 0
                     }
             
-            # 复制文件
-            shutil.copy2(source_path, dest_path)
+            # 使用Alist API复制文件
+            success = await self.alist_client.copy_file(source_alist_path, dest_alist_path)
+            
+            if not success:
+                return {
+                    "success": False,
+                    "message": f"❌ {source_path} 复制失败",
+                    "size": 0
+                }
             
             # 验证复制后的文件
             if not self.verify_files(source_path, dest_path):
                 # 如果验证失败，删除目标文件
-                if dest_path.exists():
-                    dest_path.unlink()
+                await self.alist_client.delete(dest_alist_path)
                 return {
                     "success": False,
                     "message": f"❌ {source_path} 复制验证失败",
@@ -537,10 +571,10 @@ class ArchiveService:
             
             # 如果配置了删除源文件
             if self.settings.archive_delete_source:
-                source_path.unlink()
+                self._add_to_pending_deletion(source_path)
                 return {
                     "success": True,
-                    "message": f"✅ {source_path} -> {dest_path} (已删除源文件)",
+                    "message": f"✅ {source_path} -> {dest_path} (已加入延迟删除队列)",
                     "size": file_size
                 }
             
