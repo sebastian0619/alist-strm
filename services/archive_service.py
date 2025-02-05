@@ -42,14 +42,33 @@ class ArchiveService:
         self._pending_deletions = []
         # 删除延迟时间（秒）
         self._deletion_delay = 7 * 24 * 3600  # 7天
-        # 启动删除检查任务
-        asyncio.create_task(self._check_pending_deletions())
         
         # 初始化AlistClient
         self.alist_client = AlistClient(
             self.settings.alist_url,
             self.settings.alist_token
         )
+        
+        # 删除检查任务将在initialize方法中启动
+        self._deletion_check_task = None
+    
+    async def initialize(self):
+        """初始化服务，启动后台任务"""
+        if not self._deletion_check_task:
+            self._deletion_check_task = asyncio.create_task(self._check_pending_deletions())
+    
+    async def shutdown(self):
+        """关闭服务，清理资源"""
+        if self._deletion_check_task:
+            self._deletion_check_task.cancel()
+            try:
+                await self._deletion_check_task
+            except asyncio.CancelledError:
+                pass
+            self._deletion_check_task = None
+        
+        if self.alist_client:
+            await self.alist_client.close()
     
     def _get_service_manager(self):
         """动态获取service_manager以避免循环依赖"""
