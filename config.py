@@ -88,6 +88,9 @@ class Settings(BaseSettings):
         alias="ARCHIVE_MEDIA_TYPES"
     )
     
+    # 下载元数据文件配置
+    download_metadata: bool = Field(default=False, alias="DOWNLOAD_METADATA")
+    
     # 定时任务配置
 
     model_config = ConfigDict(

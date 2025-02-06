@@ -3,10 +3,9 @@ from services.strm_service import StrmService
 import os
 from loguru import logger
 from pydantic import BaseModel
-from services.service_manager import strm_service
+from services.service_manager import service_manager
 
 router = APIRouter(prefix="/api/strm", tags=["strm"])
-strm_service = None
 
 class MoveRequest(BaseModel):
     src_path: str
@@ -14,29 +13,23 @@ class MoveRequest(BaseModel):
 
 @router.post("/start")
 async def start_scan():
-    global strm_service
-    if strm_service is not None:
+    if service_manager.strm_service._is_running:
         raise HTTPException(status_code=400, detail="扫描已在进行中")
     
-    strm_service = StrmService()
     try:
-        await strm_service.strm()
+        await service_manager.strm_service.strm()
         return {"status": "success"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        await strm_service.close()
-        strm_service = None
 
 @router.post("/stop")
 async def stop_scan():
     """停止扫描"""
-    global strm_service
-    if strm_service is None:
+    if not service_manager.strm_service._is_running:
         return {"status": "success", "message": "没有正在进行的扫描"}
     
     try:
-        strm_service.stop()
+        service_manager.strm_service.stop()
         return {"status": "success", "message": "已发送停止信号"}
     except Exception as e:
         logger.error(f"停止扫描失败: {str(e)}")
@@ -45,19 +38,16 @@ async def stop_scan():
 @router.get("/status")
 async def get_status():
     """获取扫描状态"""
-    return {"status": "scanning" if strm_service is not None else "idle"}
+    return {"status": "scanning" if service_manager.strm_service._is_running else "idle"}
 
 @router.post("/clear-cache")
 async def clear_cache():
     """清除缓存"""
-    service = StrmService()
     try:
-        result = await service.clear_cache()
+        result = await service_manager.strm_service.clear_cache()
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        await service.close()
 
 @router.get("/logs")
 async def get_logs():
@@ -80,7 +70,7 @@ async def get_logs():
 @router.post("/move")
 async def move_strm(request: MoveRequest):
     """移动strm文件和对应的云盘文件"""
-    result = await strm_service.move_strm(request.src_path, request.dest_path)
+    result = await service_manager.strm_service.move_strm(request.src_path, request.dest_path)
     if not result["success"]:
         raise HTTPException(status_code=400, detail=result["message"])
     return result 
