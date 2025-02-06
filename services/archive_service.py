@@ -230,6 +230,9 @@ class ArchiveService:
         }
         
         try:
+            logger.info(f"开始处理目录: {directory}")
+            logger.info(f"- 相对路径: {directory.relative_to(self.settings.archive_source_root)}")
+            
             # 检查目录中的文件修改时间
             recent_files = []
             # 获取媒体类型
@@ -239,16 +242,23 @@ class ArchiveService:
                     f"[跳过] {directory.name}\n"
                     f"原因: 未匹配到媒体类型"
                 )
+                logger.info(f"目录 {directory} 未匹配到媒体类型")
                 return result
                 
+            logger.info(f"匹配到媒体类型: {media_type}")
+            
             # 获取阈值配置
             threshold = self.thresholds[media_type]
+            logger.info(f"阈值设置: 创建时间 {threshold.creation_days} 天, 修改时间 {threshold.mtime_days} 天")
             
+            # 扫描文件
+            logger.info("开始扫描文件时间...")
             for root, _, files in os.walk(directory):
                 root_path = Path(root)
                 for file in files:
                     # 检查文件扩展名是否在排除列表中
                     if any(file.lower().endswith(ext.strip().lower()) for ext in self.excluded_extensions):
+                        logger.debug(f"跳过排除的文件: {file}")
                         continue
                         
                     file_path = root_path / file
@@ -260,9 +270,16 @@ class ArchiveService:
                     mtime_days = (time.time() - mtime) / 86400
                     ctime_days = (time.time() - ctime) / 86400
                     
+                    logger.debug(f"文件: {file}")
+                    logger.debug(f"- 创建时间: {ctime_days:.1f} 天前")
+                    logger.debug(f"- 修改时间: {mtime_days:.1f} 天前")
+                    
                     # 使用配置的阈值
                     if ctime_days < threshold.creation_days or mtime_days < threshold.mtime_days:
                         recent_files.append((file_path, min(mtime_days, ctime_days)))
+                        logger.debug(f"- 状态: 未达到阈值")
+                    else:
+                        logger.debug(f"- 状态: 已达到阈值")
             
             if recent_files:
                 # 按时间排序，展示最近的3个文件
@@ -276,6 +293,8 @@ class ArchiveService:
                     f"原因: 存在近期创建或修改的文件\n"
                     f"文件: {', '.join(example_files)}"
                 )
+                logger.info(f"目录包含近期文件，跳过处理")
+                logger.info(f"近期文件示例: {', '.join(example_files)}")
                 return result
 
             # 获取目标路径
@@ -284,6 +303,10 @@ class ArchiveService:
             # 构建Alist路径
             source_alist_path = str(Path(self.settings.archive_source_alist) / relative_path).lstrip("/")
             dest_alist_path = str(Path(self.settings.archive_target_root) / relative_path).lstrip("/")
+            
+            logger.info("准备进行归档:")
+            logger.info(f"- 源Alist路径: {source_alist_path}")
+            logger.info(f"- 目标Alist路径: {dest_alist_path}")
 
             if test_mode:
                 result["message"] = (
@@ -296,9 +319,11 @@ class ArchiveService:
                 return result
             
             # 使用Alist API复制目录
+            logger.info("开始使用Alist API复制目录...")
             success = await self.alist_client.copy_directory(source_alist_path, dest_alist_path)
             
             if success:
+                logger.info("目录复制成功，开始验证文件...")
                 # 验证目录中的所有文件
                 all_verified = True
                 total_size = 0
@@ -314,15 +339,22 @@ class ArchiveService:
                         relative_file_path = src_file.relative_to(directory)
                         dst_file = Path(self.settings.archive_target_root) / relative_path / relative_file_path
                         
+                        logger.debug(f"验证文件: {src_file.name}")
                         if not self.verify_files(src_file, dst_file):
+                            logger.error(f"文件验证失败: {src_file.name}")
                             all_verified = False
                             break
                         total_size += src_file.stat().st_size
                         moved_files += 1
+                        logger.debug(f"- 验证成功")
                 
                 if all_verified:
                     result["total_size"] = total_size
                     result["moved_files"] = moved_files
+                    
+                    logger.info(f"所有文件验证成功")
+                    logger.info(f"- 移动文件数: {moved_files}")
+                    logger.info(f"- 总大小: {total_size / 1024 / 1024:.2f} MB")
                     
                     # 验证成功后将源目录添加到待删除队列
                     if self.settings.archive_delete_source:
@@ -337,14 +369,16 @@ class ArchiveService:
                     result["success"] = True
                 else:
                     # 如果验证失败，删除目标目录
+                    logger.error("文件验证失败，正在删除目标目录...")
                     await self.alist_client.delete(dest_alist_path)
                     result["message"] = f"[错误] {directory.name} 文件验证失败"
             else:
+                logger.error("Alist API复制目录失败")
                 result["message"] = f"[错误] {directory.name} 复制失败"
             
         except Exception as e:
             result["message"] = f"[错误] 归档失败 {directory.name}: {str(e)}"
-            logger.error(f"处理目录失败 {directory}: {e}")
+            logger.error(f"处理目录失败 {directory}: {e}", exc_info=True)
             
         return result
     
