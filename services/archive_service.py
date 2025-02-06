@@ -279,22 +279,21 @@ class ArchiveService:
                 return result
 
             # 获取目标路径
-            target_dir = Path(self.settings.archive_target_root)
             relative_path = directory.relative_to(self.settings.archive_source_root)
-            destination = target_dir / relative_path
+            
+            # 构建Alist路径
+            source_alist_path = str(Path(self.settings.archive_source_alist) / relative_path).lstrip("/")
+            dest_alist_path = str(Path(self.settings.archive_target_root) / relative_path).lstrip("/")
 
             if test_mode:
                 result["message"] = (
                     f"[测试] {directory.name}\n"
                     f"状态: 可以归档，无近期文件\n"
-                    f"目标: {destination}"
+                    f"源路径: {source_alist_path}\n"
+                    f"目标路径: {dest_alist_path}"
                 )
                 result["success"] = True
                 return result
-            
-            # 构建Alist路径
-            source_alist_path = str(directory).replace(str(self.settings.archive_source_root), "").lstrip("/")
-            dest_alist_path = str(destination).replace(str(self.settings.archive_target_root), "").lstrip("/")
             
             # 使用Alist API复制目录
             success = await self.alist_client.copy_directory(source_alist_path, dest_alist_path)
@@ -311,7 +310,10 @@ class ArchiveService:
                         if any(src_file.name.lower().endswith(ext.strip().lower()) for ext in self.excluded_extensions):
                             continue
                             
-                        dst_file = destination / src_file.relative_to(directory)
+                        # 获取本地和Alist的相对路径
+                        relative_file_path = src_file.relative_to(directory)
+                        dst_file = Path(self.settings.archive_target_root) / relative_path / relative_file_path
+                        
                         if not self.verify_files(src_file, dst_file):
                             all_verified = False
                             break
@@ -326,11 +328,11 @@ class ArchiveService:
                     if self.settings.archive_delete_source:
                         self._add_to_pending_deletion(directory)
                         result["message"] = (
-                            f"[归档] {directory.name} -> {destination.name}\n"
+                            f"[归档] {directory.name} -> {dest_alist_path}\n"
                             f"已验证并加入延迟删除队列"
                         )
                     else:
-                        result["message"] = f"[归档] {directory.name} -> {destination.name}"
+                        result["message"] = f"[归档] {directory.name} -> {dest_alist_path}"
                     
                     result["success"] = True
                 else:

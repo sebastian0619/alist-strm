@@ -62,9 +62,10 @@ class Settings(BaseSettings):
     tg_proxy_url: str = Field(default="", alias="TG_PROXY_URL")
     
     # 归档配置
-    archive_enabled: bool = Field(default=False, alias="ARCHIVE_ENABLED")
-    archive_source_root: str = Field(default="", alias="ARCHIVE_SOURCE_ROOT")  # 源根目录
-    archive_target_root: str = Field(default="", alias="ARCHIVE_TARGET_ROOT")  # 目标根目录
+    archive_enabled: bool = Field(default=False, alias="ARCHIVE_ENABLED")  # 是否启用归档
+    archive_source_root: str = Field(default="", alias="ARCHIVE_SOURCE_ROOT")  # 源目录（本地路径）
+    archive_source_alist: str = Field(default="", alias="ARCHIVE_SOURCE_ALIST")  # 源目录（Alist路径）
+    archive_target_root: str = Field(default="", alias="ARCHIVE_TARGET_ROOT")  # 目标目录（Alist路径）
     archive_auto_strm: bool = Field(default=False, alias="ARCHIVE_AUTO_STRM")
     archive_delete_source: bool = Field(default=False, alias="ARCHIVE_DELETE_SOURCE")
     

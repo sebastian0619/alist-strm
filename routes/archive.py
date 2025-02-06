@@ -2,8 +2,10 @@ from fastapi import APIRouter, HTTPException
 from services.service_manager import service_manager
 from pydantic import BaseModel
 import json
+import logging
 
 router = APIRouter(prefix="/api/archive")
+logger = logging.getLogger(__name__)
 
 @router.post("/start")
 async def start_archive():
@@ -49,8 +51,11 @@ async def get_media_types():
 async def save_media_types(media_types: dict):
     """保存媒体类型配置"""
     try:
+        logger.info(f"收到保存媒体类型请求: {json.dumps(media_types, ensure_ascii=False)}")
         service_manager.archive_service.media_types = media_types
         service_manager.archive_service.save_media_types()
+        logger.info("媒体类型配置保存成功")
         return {"success": True, "message": "保存成功"}
     except Exception as e:
+        logger.error(f"保存媒体类型配置失败: {str(e)}")
         return {"success": False, "message": str(e)} 

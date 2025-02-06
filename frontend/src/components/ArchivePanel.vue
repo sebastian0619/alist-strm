@@ -21,27 +21,40 @@
           <!-- 基本配置 -->
           <a-divider>基本配置</a-divider>
           
-          <a-form-item label="源目录">
+          <a-form-item label="源目录（本地路径）">
             <a-input
               v-model:value="config.archive_source_root"
-              placeholder="请输入源目录路径"
+              placeholder="请输入源目录的本地路径，用于扫描文件时间"
             />
             <a-tooltip>
               <template #title>
-                需要归档的文件所在的根目录
+                需要归档的文件所在的本地路径，用于扫描文件的创建时间和修改时间
               </template>
               <info-circle-outlined style="margin-left: 8px" />
             </a-tooltip>
           </a-form-item>
 
-          <a-form-item label="目标目录">
+          <a-form-item label="源目录（Alist路径）">
             <a-input
-              v-model:value="config.archive_target_root"
-              placeholder="请输入目标目录路径"
+              v-model:value="config.archive_source_alist"
+              placeholder="请输入源目录在Alist中的路径"
             />
             <a-tooltip>
               <template #title>
-                文件归档后存放的根目录
+                源目录在Alist中的路径，用于文件复制操作，例如: /local/video
+              </template>
+              <info-circle-outlined style="margin-left: 8px" />
+            </a-tooltip>
+          </a-form-item>
+
+          <a-form-item label="目标目录（Alist路径）">
+            <a-input
+              v-model:value="config.archive_target_root"
+              placeholder="请输入目标目录在Alist中的路径"
+            />
+            <a-tooltip>
+              <template #title>
+                文件归档后在Alist中存放的路径
               </template>
               <info-circle-outlined style="margin-left: 8px" />
             </a-tooltip>
@@ -281,6 +294,7 @@ import cronstrue from 'cronstrue'
 const config = ref({
   archive_enabled: false,
   archive_source_root: '',
+  archive_source_alist: '',
   archive_target_root: '',
   archive_auto_strm: false,
   archive_delete_source: false,
@@ -360,15 +374,9 @@ const saveConfig = async () => {
       }
     }
     
-    // 保存媒体类型配置
-    const mediaTypesResponse = await axios.post('/api/archive/media_types', mediaTypes.value)
-    if (!mediaTypesResponse.data.success) {
-      throw new Error(mediaTypesResponse.data.message)
-    }
-    
     // 更新原始配置
     originalConfig.value = JSON.parse(JSON.stringify(config.value))
-    message.success('配置保存成功')
+    message.success('基本配置保存成功')
   } catch (error) {
     message.error('配置保存失败: ' + error.message)
   }
