@@ -207,19 +207,21 @@ class StrmService:
         # 检查文件扩展名
         ext = os.path.splitext(filename)[1].lower()
         
-        # 如果开启了下载元数据，不跳过元数据文件
-        if self.settings.download_metadata:
-            metadata_extensions = {'.ass', '.ssa', '.srt', '.png', '.nfo', '.jpg', '.jpeg'}
-            if ext in metadata_extensions:
-                return False
+        # 定义元数据文件扩展名
+        metadata_extensions = {'.ass', '.ssa', '.srt', '.png', '.nfo', '.jpg', '.jpeg'}
         
-        if ext in self.settings.skip_extensions_list:
-            logger.info(f"跳过指定扩展名的文件: {filename}")
-            return True
-            
+        # 如果是元数据文件且开启了下载元数据，不跳过
+        if self.settings.download_metadata and ext in metadata_extensions:
+            return False
+        
         # 检查用户配置的模式
         if any(re.search(pattern, filename) for pattern in self.settings.skip_patterns_list):
             logger.info(f"跳过匹配模式的文件: {filename}")
+            return True
+            
+        # 如果不是元数据文件，检查是否在跳过扩展名列表中
+        if ext not in metadata_extensions and ext in self.settings.skip_extensions_list:
+            logger.info(f"跳过指定扩展名的文件: {filename}")
             return True
             
         return False
@@ -421,13 +423,13 @@ class StrmService:
                     logger.info(f"下载元数据文件成功: {download_path}")
                 return success
             
-            # 检查文件大小（只对视频文件）
-            if file_info.get('size', 0) < self.settings.min_file_size * 1024 * 1024:
-                logger.debug(f"跳过小文件: {filename}")
-                return False
-                
             # 只处理视频文件
             if not self._is_video_file(filename):
+                return False
+                
+            # 检查视频文件大小
+            if file_info.get('size', 0) < self.settings.min_file_size * 1024 * 1024:
+                logger.debug(f"跳过小视频文件: {filename}")
                 return False
                 
             # 构建相对路径

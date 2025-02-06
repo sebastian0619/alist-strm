@@ -324,14 +324,14 @@ class ArchiveService:
             logger.info(f"- 源Alist路径: {source_alist_path}")
             logger.info(f"- 目标Alist路径: {dest_alist_path}")
             logger.info(f"- 文件数量: {len(files_info)}")
-            logger.info(f"- 总大小: {total_size / 1024 / 1024:.2f} MB")
+            logger.info(f"- 总大小: {total_size / 1024 / 1024 / 1024:.2f} GB")
 
             if test_mode:
                 result["message"] = (
                     f"[测试] {folder_name}\n"
                     f"状态: 可以归档，无近期文件\n"
                     f"文件数: {len(files_info)}\n"
-                    f"总大小: {total_size / 1024 / 1024:.2f} MB"
+                    f"总大小: {total_size / 1024 / 1024 / 1024:.2f} GB"
                 )
                 result["success"] = True
                 result["moved_files"] = len(files_info)
@@ -366,7 +366,7 @@ class ArchiveService:
                     
                     logger.info(f"所有文件验证成功")
                     logger.info(f"- 移动文件数: {moved_files}")
-                    logger.info(f"- 总大小: {total_size / 1024 / 1024:.2f} MB")
+                    logger.info(f"- 总大小: {total_size / 1024 / 1024 / 1024:.2f} GB")
                     
                     # 验证成功后将源目录添加到待删除队列
                     if self.settings.archive_delete_source:
@@ -375,13 +375,13 @@ class ArchiveService:
                             f"[归档] {folder_name}\n"
                             f"已验证并加入延迟删除队列\n"
                             f"文件数: {moved_files}\n"
-                            f"总大小: {total_size / 1024 / 1024:.2f} MB"
+                            f"总大小: {total_size / 1024 / 1024 / 1024:.2f} GB"
                         )
                     else:
                         result["message"] = (
                             f"[归档] {folder_name}\n"
                             f"文件数: {moved_files}\n"
-                            f"总大小: {total_size / 1024 / 1024:.2f} MB"
+                            f"总大小: {total_size / 1024 / 1024 / 1024:.2f} GB"
                         )
                     
                     result["success"] = True
@@ -495,7 +495,7 @@ class ArchiveService:
             summary = (
                 f"✅ 归档{'测试' if test_mode else ''}完成\n"
                 f"📁 {'识别' if test_mode else '处理'}文件: {total_processed} 个\n"
-                f"💾 总大小: {total_size / 1024 / 1024:.2f} MB"
+                f"💾 总大小: {total_size / 1024 / 1024 / 1024:.2f} GB"
             )
             logger.info(summary)
             
