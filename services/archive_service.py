@@ -368,12 +368,33 @@ class ArchiveService:
             service_manager = self._get_service_manager()
             logger.info("🔍 开始归档测试..." if test_mode else "🚀 开始归档处理...")
             
+            # 检查配置
+            logger.info(f"当前配置:")
+            logger.info(f"- 本地源目录: {self.settings.archive_source_root}")
+            logger.info(f"- Alist源目录: {self.settings.archive_source_alist}")
+            logger.info(f"- 目标目录: {self.settings.archive_target_root}")
+            
+            # 检查本地源目录
             source_dir = Path(self.settings.archive_source_root)
             if not source_dir.exists():
-                error_msg = f"源目录不存在: {source_dir}"
+                error_msg = f"本地源目录不存在: {source_dir}"
+                logger.error(error_msg)
+                return
+            if not source_dir.is_dir():
+                error_msg = f"本地源目录路径不是目录: {source_dir}"
                 logger.error(error_msg)
                 return
                 
+            # 检查目录权限
+            try:
+                test_file = source_dir / ".archive_test"
+                test_file.touch()
+                test_file.unlink()
+            except Exception as e:
+                error_msg = f"本地源目录权限检查失败: {source_dir}, 错误: {str(e)}"
+                logger.error(error_msg)
+                return
+            
             total_processed = 0
             total_size = 0
             test_results = []
@@ -385,12 +406,15 @@ class ArchiveService:
                     break
                     
                 target_dir = source_dir / info['dir'].lstrip('/')
+                logger.info(f"\n开始处理媒体类型 {media_type}:")
+                logger.info(f"- 配置的目录: {info['dir']}")
+                logger.info(f"- 本地完整路径: {target_dir}")
+                logger.info(f"- 对应的Alist路径: {Path(self.settings.archive_source_alist) / info['dir'].lstrip('/')}")
+                
                 if not target_dir.exists():
                     logger.warning(f"配置的目录不存在: {target_dir}")
                     continue
                     
-                logger.info(f"\n开始处理媒体类型 {media_type} 的目录: {target_dir}")
-                
                 # 遍历目标目录下的所有子目录
                 for root, dirs, files in os.walk(target_dir):
                     if self._stop_flag:
@@ -400,6 +424,8 @@ class ArchiveService:
                     # 只处理包含文件的目录（叶子目录）
                     if files and not any(d.startswith('.') for d in root_path.parts):
                         logger.info(f"\n处理目录: {root_path}")
+                        logger.info(f"- 相对路径: {root_path.relative_to(source_dir)}")
+                        logger.info(f"- 包含文件数: {len(files)}")
                         
                         result = await self.process_directory(root_path, test_mode)
                         if result["success"]:
