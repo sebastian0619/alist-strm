@@ -408,6 +408,7 @@ const startArchive = async () => {
     message.success('归档任务已启动')
   } catch (error) {
     message.error('启动归档失败: ' + error.message)
+  } finally {
     archiving.value = false
   }
 }

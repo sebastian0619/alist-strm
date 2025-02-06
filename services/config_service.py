@@ -58,12 +58,13 @@ class ConfigService:
                 # 归档配置
                 "archive_enabled": self.settings.archive_enabled,
                 "archive_source_root": self.settings.archive_source_root,
+                "archive_source_alist": self.settings.archive_source_alist,
                 "archive_target_root": self.settings.archive_target_root,
                 "archive_auto_strm": self.settings.archive_auto_strm,
                 "archive_delete_source": self.settings.archive_delete_source,
                 "archive_schedule_enabled": self.settings.archive_schedule_enabled,
                 "archive_schedule_cron": self.settings.archive_schedule_cron,
-                "archive_video_extensions": self.settings.archive_video_extensions,
+                "archive_excluded_extensions": self.settings.archive_excluded_extensions,
                 "archive_media_types": self.settings.archive_media_types,
             }
             self.save_config(config)
@@ -72,31 +73,38 @@ class ConfigService:
     def load_config(self) -> Dict[str, Any]:
         """加载配置"""
         try:
-            if os.path.exists(self.config_file):
-                with open(self.config_file, 'r', encoding='utf-8') as f:
-                    return json.load(f)
+            with open(self.config_file, 'r', encoding='utf-8') as f:
+                return json.load(f)
         except Exception as e:
-            logger.error(f"加载配置文件失败: {str(e)}")
-        return {}
+            logger.error(f"加载配置失败: {e}")
+            return {}
     
     def save_config(self, config: Dict[str, Any]):
         """保存配置"""
         try:
             with open(self.config_file, 'w', encoding='utf-8') as f:
-                json.dump(config, f, ensure_ascii=False, indent=2)
-            logger.info("配置已保存")
+                json.dump(config, f, ensure_ascii=False, indent=4)
         except Exception as e:
-            logger.error(f"保存配置文件失败: {str(e)}")
+            logger.error(f"保存配置失败: {e}")
+            raise
     
     def update_config(self, key: str, value: Any):
         """更新单个配置项"""
-        config = self.load_config()
-        config[key] = value
-        self.save_config(config)
-        
-        # 同步更新到settings
-        if hasattr(self.settings, key):
-            setattr(self.settings, key, value)
+        try:
+            logger.info(f"更新配置: {key} = {value}")
+            config = self.load_config()
+            config[key] = value
+            self.save_config(config)
+            
+            # 同步更新到settings
+            if hasattr(self.settings, key):
+                setattr(self.settings, key, value)
+                logger.info(f"配置已同步到settings: {key}")
+            
+            logger.info("配置更新成功")
+        except Exception as e:
+            logger.error(f"更新配置失败: {e}")
+            raise
     
     def get_config(self, key: str) -> Any:
         """获取配置项"""

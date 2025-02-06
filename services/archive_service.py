@@ -11,6 +11,7 @@ import asyncio
 import importlib
 import json
 from services.alist_client import AlistClient
+import re
 
 class MediaThreshold(NamedTuple):
     """媒体文件的时间阈值配置"""
@@ -233,18 +234,21 @@ class ArchiveService:
             logger.info(f"开始处理目录: {directory}")
             logger.info(f"- 相对路径: {directory.relative_to(self.settings.archive_source_root)}")
             
+            # 获取最后的文件夹名称
+            folder_name = directory.name
+            
             # 检查目录中的文件修改时间
             recent_files = []
             # 获取媒体类型
             media_type = self.get_media_type(directory)
             if not media_type:
                 result["message"] = (
-                    f"[跳过] {directory.name}\n"
+                    f"[跳过] {folder_name}\n"
                     f"原因: 未匹配到媒体类型"
                 )
                 logger.info(f"目录 {directory} 未匹配到媒体类型")
                 return result
-                
+            
             logger.info(f"匹配到媒体类型: {media_type}")
             
             # 获取阈值配置
@@ -253,6 +257,10 @@ class ArchiveService:
             
             # 扫描文件
             logger.info("开始扫描文件时间...")
+            
+            # 预先统计文件信息
+            files_info = []
+            total_size = 0
             for root, _, files in os.walk(directory):
                 root_path = Path(root)
                 for file in files:
@@ -280,6 +288,14 @@ class ArchiveService:
                         logger.debug(f"- 状态: 未达到阈值")
                     else:
                         logger.debug(f"- 状态: 已达到阈值")
+                        # 记录需要处理的文件信息
+                        file_size = stats.st_size
+                        total_size += file_size
+                        files_info.append({
+                            "path": file_path,
+                            "size": file_size,
+                            "relative_path": file_path.relative_to(directory)
+                        })
             
             if recent_files:
                 # 按时间排序，展示最近的3个文件
@@ -289,7 +305,7 @@ class ArchiveService:
                     example_files.append(f"{f.name} ({days:.1f}天)")
                 
                 result["message"] = (
-                    f"[跳过] {directory.name}\n"
+                    f"[跳过] {folder_name}\n"
                     f"原因: 存在近期创建或修改的文件\n"
                     f"文件: {', '.join(example_files)}"
                 )
@@ -307,15 +323,19 @@ class ArchiveService:
             logger.info("准备进行归档:")
             logger.info(f"- 源Alist路径: {source_alist_path}")
             logger.info(f"- 目标Alist路径: {dest_alist_path}")
+            logger.info(f"- 文件数量: {len(files_info)}")
+            logger.info(f"- 总大小: {total_size / 1024 / 1024:.2f} MB")
 
             if test_mode:
                 result["message"] = (
-                    f"[测试] {directory.name}\n"
+                    f"[测试] {folder_name}\n"
                     f"状态: 可以归档，无近期文件\n"
-                    f"源路径: {source_alist_path}\n"
-                    f"目标路径: {dest_alist_path}"
+                    f"文件数: {len(files_info)}\n"
+                    f"总大小: {total_size / 1024 / 1024:.2f} MB"
                 )
                 result["success"] = True
+                result["moved_files"] = len(files_info)
+                result["total_size"] = total_size
                 return result
             
             # 使用Alist API复制目录
@@ -326,27 +346,19 @@ class ArchiveService:
                 logger.info("目录复制成功，开始验证文件...")
                 # 验证目录中的所有文件
                 all_verified = True
-                total_size = 0
                 moved_files = 0
                 
-                for src_file in directory.rglob("*"):
-                    if src_file.is_file():
-                        # 跳过排除的文件格式
-                        if any(src_file.name.lower().endswith(ext.strip().lower()) for ext in self.excluded_extensions):
-                            continue
-                            
-                        # 获取本地和Alist的相对路径
-                        relative_file_path = src_file.relative_to(directory)
-                        dst_file = Path(self.settings.archive_target_root) / relative_path / relative_file_path
-                        
-                        logger.debug(f"验证文件: {src_file.name}")
-                        if not self.verify_files(src_file, dst_file):
-                            logger.error(f"文件验证失败: {src_file.name}")
-                            all_verified = False
-                            break
-                        total_size += src_file.stat().st_size
-                        moved_files += 1
-                        logger.debug(f"- 验证成功")
+                for file_info in files_info:
+                    # 获取本地和Alist的相对路径
+                    dst_file = Path(self.settings.archive_target_root) / relative_path / file_info["relative_path"]
+                    
+                    logger.debug(f"验证文件: {file_info['path'].name}")
+                    if not self.verify_files(file_info["path"], dst_file):
+                        logger.error(f"文件验证失败: {file_info['path'].name}")
+                        all_verified = False
+                        break
+                    moved_files += 1
+                    logger.debug(f"- 验证成功")
                 
                 if all_verified:
                     result["total_size"] = total_size
@@ -360,24 +372,30 @@ class ArchiveService:
                     if self.settings.archive_delete_source:
                         self._add_to_pending_deletion(directory)
                         result["message"] = (
-                            f"[归档] {directory.name} -> {dest_alist_path}\n"
-                            f"已验证并加入延迟删除队列"
+                            f"[归档] {folder_name}\n"
+                            f"已验证并加入延迟删除队列\n"
+                            f"文件数: {moved_files}\n"
+                            f"总大小: {total_size / 1024 / 1024:.2f} MB"
                         )
                     else:
-                        result["message"] = f"[归档] {directory.name} -> {dest_alist_path}"
+                        result["message"] = (
+                            f"[归档] {folder_name}\n"
+                            f"文件数: {moved_files}\n"
+                            f"总大小: {total_size / 1024 / 1024:.2f} MB"
+                        )
                     
                     result["success"] = True
                 else:
                     # 如果验证失败，删除目标目录
                     logger.error("文件验证失败，正在删除目标目录...")
                     await self.alist_client.delete(dest_alist_path)
-                    result["message"] = f"[错误] {directory.name} 文件验证失败"
+                    result["message"] = f"[错误] {folder_name} 文件验证失败"
             else:
                 logger.error("Alist API复制目录失败")
-                result["message"] = f"[错误] {directory.name} 复制失败"
+                result["message"] = f"[错误] {folder_name} 复制失败"
             
         except Exception as e:
-            result["message"] = f"[错误] 归档失败 {directory.name}: {str(e)}"
+            result["message"] = f"[错误] 归档失败 {folder_name}: {str(e)}"
             logger.error(f"处理目录失败 {directory}: {e}", exc_info=True)
             
         return result
@@ -483,11 +501,18 @@ class ArchiveService:
             
             # 如果有成功归档的结果，发送到Telegram
             if success_results:
-                success_message = "归档成功的文件:\n\n" + "\n\n".join(success_results)
+                # 格式化每个结果，只保留文件夹名称
+                formatted_results = []
+                for result in success_results:
+                    # 提取 [归档] 后面的文件夹名称，直到第一个换行符
+                    if match := re.search(r'\[归档\] ([^\n]+)', result):
+                        formatted_results.append(match.group(1))
+                
+                success_message = "归档成功的文件夹:\n\n" + "\n".join(formatted_results)
                 # 如果消息太长，只保留前20个结果
                 if len(success_message) > 3000:
-                    success_results = success_results[:20]
-                    success_message = "归档成功的文件（仅显示前20个）:\n\n" + "\n\n".join(success_results)
+                    formatted_results = formatted_results[:20]
+                    success_message = "归档成功的文件夹（仅显示前20个）:\n\n" + "\n".join(formatted_results)
                 await service_manager.telegram_service.send_message(success_message)
             
             await service_manager.telegram_service.send_message(summary)

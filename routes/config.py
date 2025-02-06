@@ -63,6 +63,9 @@ async def update_config(config_update: ConfigUpdate):
         # 更新配置
         config_service.update_config(config_update.key, config_update.value)
         
+        # 重新加载配置
+        settings._load_from_config()
+        
         # 如果更新了定时任务配置，需要重新启动调度器
         if config_update.key in ['schedule_enabled', 'schedule_cron']:
             await scheduler_service.update_schedule(
