@@ -11,6 +11,9 @@
         <a-tab-pane key="archive" tab="网盘归档">
           <archive-panel />
         </a-tab-pane>
+        <a-tab-pane key="pending" tab="待删除文件">
+          <pending-deletion-panel />
+        </a-tab-pane>
       </a-tabs>
     </a-layout-content>
   </a-layout>
@@ -20,6 +23,7 @@
 import { ref } from 'vue'
 import ConfigPanel from './components/ConfigPanel.vue'
 import ArchivePanel from './components/ArchivePanel.vue'
+import PendingDeletionPanel from './components/PendingDeletionPanel.vue'
 
 const activeKey = ref('config')
 </script>

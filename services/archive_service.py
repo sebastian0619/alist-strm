@@ -44,10 +44,12 @@ class ArchiveService:
             ) for name, info in self._media_types.items()
         }
         
+        # 定义待删除文件列表的JSON文件路径
+        self._pending_deletions_file = os.path.join(self.settings.cache_dir, "pending_deletions.json")
         # 初始化待删除文件队列
-        self._pending_deletions = []
-        # 删除延迟时间（秒）
-        self._deletion_delay = 7 * 24 * 3600  # 7天
+        self._pending_deletions = self._load_pending_deletions()
+        # 删除延迟时间（秒）- 从配置中读取
+        self._deletion_delay = self.settings.archive_delete_delay_days * 24 * 3600  # 转换为秒
         
         # 初始化AlistClient
         self.alist_client = AlistClient(
@@ -57,6 +59,40 @@ class ArchiveService:
         
         # 删除检查任务将在initialize方法中启动
         self._deletion_check_task = None
+    
+    def _load_pending_deletions(self) -> list:
+        """从JSON文件加载待删除列表"""
+        try:
+            os.makedirs(self.settings.cache_dir, exist_ok=True)
+            if os.path.exists(self._pending_deletions_file):
+                with open(self._pending_deletions_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    # 转换路径字符串回Path对象
+                    for item in data:
+                        if 'path' in item and isinstance(item['path'], str):
+                            item['path'] = Path(item['path'])
+                    return data
+        except Exception as e:
+            logger.error(f"加载待删除列表失败: {e}")
+        return []
+    
+    def _save_pending_deletions(self):
+        """将待删除列表保存到JSON文件"""
+        try:
+            os.makedirs(self.settings.cache_dir, exist_ok=True)
+            
+            # 将Path对象转换为字符串以便JSON序列化
+            data_to_save = []
+            for item in self._pending_deletions:
+                data_item = item.copy()
+                if 'path' in data_item and isinstance(data_item['path'], Path):
+                    data_item['path'] = str(data_item['path'])
+                data_to_save.append(data_item)
+                
+            with open(self._pending_deletions_file, 'w', encoding='utf-8') as f:
+                json.dump(data_to_save, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.error(f"保存待删除列表失败: {e}")
     
     def _setup_logger_handler(self):
         """设置日志处理器，记录日志历史"""
@@ -216,6 +252,8 @@ class ArchiveService:
         while True:
             try:
                 current_time = time.time()
+                items_changed = False
+                
                 # 复制列表以避免在迭代时修改
                 for item in self._pending_deletions[:]:
                     if current_time >= item["delete_time"]:
@@ -227,8 +265,14 @@ class ArchiveService:
                                 path.unlink()
                             logger.info(f"已删除延迟文件: {path}")
                             self._pending_deletions.remove(item)
+                            items_changed = True
                         except Exception as e:
                             logger.error(f"删除文件失败 {path}: {e}")
+                
+                # 如果列表有变化，保存到文件
+                if items_changed:
+                    self._save_pending_deletions()
+                    
             except Exception as e:
                 logger.error(f"检查待删除文件时出错: {e}")
             finally:
@@ -240,6 +284,8 @@ class ArchiveService:
             "path": path,
             "delete_time": time.time() + self._deletion_delay
         })
+        # 保存待删除列表到JSON文件
+        self._save_pending_deletions()
         logger.info(f"已添加到延迟删除队列: {path}, 将在 {self._deletion_delay/86400:.1f} 天后删除")
 
     async def process_directory(self, directory: Path, test_mode: bool = False) -> Dict:

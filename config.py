@@ -68,6 +68,7 @@ class Settings(BaseSettings):
     archive_target_root: str = Field(default="", alias="ARCHIVE_TARGET_ROOT")  # 目标目录（Alist路径）
     archive_auto_strm: bool = Field(default=False, alias="ARCHIVE_AUTO_STRM")
     archive_delete_source: bool = Field(default=False, alias="ARCHIVE_DELETE_SOURCE")
+    archive_delete_delay_days: int = Field(default=7, alias="ARCHIVE_DELETE_DELAY_DAYS")  # 删除延迟天数
     
     # 归档阈值配置
     archive_excluded_extensions: str = Field(
