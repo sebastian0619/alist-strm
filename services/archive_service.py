@@ -103,7 +103,15 @@ class ArchiveService:
                 self.history_list = history_list
                 
             def write(self, record):
-                self.history_list.append(record["message"])
+                # 修复：处理不同类型的record
+                if isinstance(record, dict) and "message" in record:
+                    # 旧格式，保持兼容
+                    message = record["message"]
+                else:
+                    # 新格式，record直接是消息字符串
+                    message = str(record)
+                    
+                self.history_list.append(message)
                 # 保持日志历史在一个合理的大小
                 if len(self.history_list) > 1000:
                     self.history_list.pop(0)
@@ -319,11 +327,15 @@ class ArchiveService:
             # 获取最后的文件夹名称
             folder_name = directory.name
             
-            # 记录电视剧目录的更完整信息
+            # 获取完整的剧集名称（如果是季目录）
+            full_folder_name = folder_name
             if "Season" in folder_name or "season" in folder_name:
                 parent_dir = directory.parent
                 if parent_dir.name and parent_dir != self.settings.archive_source_root:
+                    # 记录电视剧名称用于日志
                     logger.info(f"- 电视剧名称: {parent_dir.name}")
+                    # 构建完整的显示名称
+                    full_folder_name = f"{parent_dir.name} - {folder_name}"
             
             # 检查目录中的文件修改时间
             recent_files = []
@@ -331,7 +343,7 @@ class ArchiveService:
             media_type = self.get_media_type(directory)
             if not media_type:
                 result["message"] = (
-                    f"[跳过] {folder_name}\n"
+                    f"[跳过] {full_folder_name}\n"
                     f"原因: 未匹配到媒体类型"
                 )
                 logger.info(f"目录 {directory} 未匹配到媒体类型")
@@ -393,7 +405,7 @@ class ArchiveService:
                     example_files.append(f"{f.name} ({days:.1f}天)")
                 
                 result["message"] = (
-                    f"[跳过] {folder_name}\n"
+                    f"[跳过] {full_folder_name}\n"
                     f"原因: 存在近期创建或修改的文件\n"
                     f"文件: {', '.join(example_files)}"
                 )
@@ -416,7 +428,7 @@ class ArchiveService:
 
             if test_mode:
                 result["message"] = (
-                    f"[测试] {folder_name}\n"
+                    f"[测试] {full_folder_name}\n"
                     f"状态: 可以归档，无近期文件\n"
                     f"文件数: {len(files_info)}\n"
                     f"总大小: {total_size / 1024 / 1024 / 1024:.2f} GB"
@@ -460,14 +472,14 @@ class ArchiveService:
                     if self.settings.archive_delete_source:
                         self._add_to_pending_deletion(directory)
                         result["message"] = (
-                            f"[归档] {folder_name}\n"
+                            f"[归档] {full_folder_name}\n"
                             f"已验证并加入延迟删除队列\n"
                             f"文件数: {moved_files}\n"
                             f"总大小: {total_size / 1024 / 1024 / 1024:.2f} GB"
                         )
                     else:
                         result["message"] = (
-                            f"[归档] {folder_name}\n"
+                            f"[归档] {full_folder_name}\n"
                             f"文件数: {moved_files}\n"
                             f"总大小: {total_size / 1024 / 1024 / 1024:.2f} GB"
                         )
@@ -477,10 +489,10 @@ class ArchiveService:
                     # 如果验证失败，删除目标目录
                     logger.error("文件验证失败，正在删除目标目录...")
                     await self.alist_client.delete(dest_alist_path)
-                    result["message"] = f"[错误] {folder_name} 文件验证失败"
+                    result["message"] = f"[错误] {full_folder_name} 文件验证失败"
             else:
                 logger.error("Alist API复制目录失败")
-                result["message"] = f"[错误] {folder_name} 复制失败"
+                result["message"] = f"[错误] {full_folder_name} 复制失败"
             
         except Exception as e:
             result["message"] = f"[错误] 归档失败 {folder_name}: {str(e)}"
