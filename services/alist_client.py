@@ -161,7 +161,7 @@ class AlistClient:
             dst_dir = os.path.dirname(dest_path)
             basename = os.path.basename(src_path)
             
-            logger.info(f"复制目录请求: 从 {src_dir} 到 {dst_dir}, 文件名: {basename}")
+            logger.debug(f"复制目录请求: 从 {src_dir} 到 {dst_dir}, 文件名: {basename}")
             
             # 构建请求数据
             data = {
@@ -195,7 +195,7 @@ class AlistClient:
                     logger.warning(f"复制目录没有生成任务ID: {src_path}")
                     return False
                     
-                logger.info(f"等待任务完成: {task_ids}")
+                logger.debug(f"等待任务完成: {task_ids}")
                 
                 # 等待所有任务完成
                 if await self.wait_for_tasks(task_ids):
@@ -253,7 +253,7 @@ class AlistClient:
             return False
             
         start_time = time.time()
-        logger.info(f"开始等待 {len(task_ids)} 个任务完成，超时时间: {timeout}秒")
+        logger.debug(f"开始等待 {len(task_ids)} 个任务完成，超时时间: {timeout}秒")
         
         while time.time() - start_time < timeout:
             all_done = True
@@ -273,13 +273,13 @@ class AlistClient:
                 if state == 0:  # 进行中
                     all_done = False
                     progress = task.get("progress", 0)
-                    logger.info(f"任务 {task_id} 进度: {progress}%")
+                    logger.debug(f"任务 {task_id} 进度: {progress}%")
                 elif state == 2:  # 失败
                     error = task.get("error", "未知错误")
                     logger.error(f"任务 {task_id} 失败: {error}")
                     all_successful = False
                 elif state == 1:  # 完成
-                    logger.info(f"任务 {task_id} 已完成")
+                    logger.debug(f"任务 {task_id} 已完成")
             
             if all_done:
                 if all_successful:

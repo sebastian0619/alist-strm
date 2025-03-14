@@ -325,6 +325,25 @@ class ArchiveService:
         self._save_pending_deletions()
         logger.info(f"已添加到延迟删除队列: {path}, 将在 {self._deletion_delay/86400:.1f} 天后删除")
 
+    def _should_skip_directory(self, path: Path) -> bool:
+        """检查是否应该跳过某个目录"""
+        # 系统目录
+        if any(skip_dir in str(path) for skip_dir in self._skip_dirs):
+            logger.debug(f"跳过系统目录: {path}")
+            return True
+        
+        # 用户配置的目录
+        if any(skip_folder in str(path) for skip_folder in self.settings.skip_folders_list):
+            logger.debug(f"跳过用户配置的目录: {path}")
+            return True
+        
+        # 检查用户配置的模式
+        if any(re.search(pattern, str(path)) for pattern in self.settings.skip_patterns_list):
+            logger.debug(f"跳过匹配模式的目录: {path}")
+            return True
+        
+        return False
+
     async def process_directory(self, directory: Path, test_mode: bool = False) -> Dict:
         """处理单个目录的归档
         
@@ -345,7 +364,7 @@ class ArchiveService:
         try:
             logger.info(f"开始处理目录: {directory}")
             rel_path = directory.relative_to(self.settings.archive_source_root)
-            logger.info(f"- 相对路径: {rel_path}")
+            logger.debug(f"- 相对路径: {rel_path}")
             
             # 获取最后的文件夹名称
             folder_name = directory.name
@@ -359,14 +378,14 @@ class ArchiveService:
                 if parent_dir.name and parent_dir != self.settings.archive_source_root:
                     parent_dir_name = parent_dir.name
                     # 记录电视剧名称用于日志
-                    logger.info(f"- 电视剧名称: {parent_dir_name}")
+                    logger.debug(f"- 电视剧名称: {parent_dir_name}")
                     # 构建完整的显示名称(使用 - 而不是特殊字符)
                     full_folder_name = f"{parent_dir_name} - {folder_name}"
             
             # 处理特殊字符，确保路径安全
             safe_folder_name = re.sub(r'[:\\/*?\"<>|]', '_', full_folder_name)
             if safe_folder_name != full_folder_name:
-                logger.info(f"- 处理后的安全名称: {safe_folder_name}")
+                logger.debug(f"- 处理后的安全名称: {safe_folder_name}")
             
             # 检查目录中的文件修改时间
             recent_files = []
@@ -377,17 +396,17 @@ class ArchiveService:
                     f"[跳过] {full_folder_name}\n"
                     f"原因: 未匹配到媒体类型"
                 )
-                logger.info(f"目录 {directory} 未匹配到媒体类型")
+                logger.debug(f"目录 {directory} 未匹配到媒体类型")
                 return result
             
             logger.info(f"匹配到媒体类型: {media_type}")
             
             # 获取阈值配置
             threshold = self.thresholds[media_type]
-            logger.info(f"阈值设置: 创建时间 {threshold.creation_days} 天, 修改时间 {threshold.mtime_days} 天")
+            logger.debug(f"阈值设置: 创建时间 {threshold.creation_days} 天, 修改时间 {threshold.mtime_days} 天")
             
             # 扫描文件
-            logger.info("开始扫描文件时间...")
+            logger.debug("开始扫描文件时间...")
             
             # 预先统计文件信息
             files_info = []
@@ -440,8 +459,8 @@ class ArchiveService:
                     f"原因: 存在近期创建或修改的文件\n"
                     f"文件: {', '.join(example_files)}"
                 )
-                logger.info(f"目录包含近期文件，跳过处理")
-                logger.info(f"近期文件示例: {', '.join(example_files)}")
+                logger.debug(f"目录包含近期文件，跳过处理")
+                logger.debug(f"近期文件示例: {', '.join(example_files)}")
                 return result
 
             # 获取目标路径
@@ -457,11 +476,11 @@ class ArchiveService:
                 dest_alist_path = str(Path(self.settings.archive_target_root) / relative_path).replace('\\', '/').lstrip("/")
                 
                 # 记录详细信息，方便调试
-                logger.info(f"- 处理季目录路径:")
-                logger.info(f"  - 父目录: {parent_dir_name}")
-                logger.info(f"  - 季目录: {folder_name}")
-                logger.info(f"  - 完整名称: {full_folder_name}")
-                logger.info(f"  - 安全名称: {safe_folder_name}")
+                logger.debug(f"- 处理季目录路径:")
+                logger.debug(f"  - 父目录: {parent_dir_name}")
+                logger.debug(f"  - 季目录: {folder_name}")
+                logger.debug(f"  - 完整名称: {full_folder_name}")
+                logger.debug(f"  - 安全名称: {safe_folder_name}")
             else:
                 # 非季文件夹，使用常规方式构建路径
                 source_alist_path = str(Path(self.settings.archive_source_alist) / relative_path).replace('\\', '/').lstrip("/")
@@ -476,11 +495,11 @@ class ArchiveService:
                     source_alist_path = safe_source_path
                     dest_alist_path = safe_dest_path
             
-            logger.info("准备进行归档:")
-            logger.info(f"- 源Alist路径: {source_alist_path}")
-            logger.info(f"- 目标Alist路径: {dest_alist_path}")
-            logger.info(f"- 文件数量: {len(files_info)}")
-            logger.info(f"- 总大小: {total_size / 1024 / 1024 / 1024:.2f} GB")
+            logger.info(f"准备归档: {full_folder_name}")
+            logger.debug(f"- 源Alist路径: {source_alist_path}")
+            logger.debug(f"- 目标Alist路径: {dest_alist_path}")
+            logger.debug(f"- 文件数量: {len(files_info)}")
+            logger.debug(f"- 总大小: {total_size / 1024 / 1024 / 1024:.2f} GB")
 
             if test_mode:
                 result["message"] = (
@@ -587,10 +606,10 @@ class ArchiveService:
             await service_manager.telegram_service.send_message(start_msg)
             
             # 检查配置
-            logger.info(f"当前配置:")
-            logger.info(f"- 本地源目录: {self.settings.archive_source_root}")
-            logger.info(f"- Alist源目录: {self.settings.archive_source_alist}")
-            logger.info(f"- 目标目录: {self.settings.archive_target_root}")
+            logger.debug(f"当前配置:")
+            logger.debug(f"- 本地源目录: {self.settings.archive_source_root}")
+            logger.debug(f"- Alist源目录: {self.settings.archive_source_alist}")
+            logger.debug(f"- 目标目录: {self.settings.archive_target_root}")
             
             # 检查本地源目录
             source_dir = Path(self.settings.archive_source_root)
@@ -632,9 +651,11 @@ class ArchiveService:
                 root_path = Path(root)
                 # 只处理包含文件的目录（叶子目录）
                 if files and not any(d.startswith('.') for d in root_path.parts):
-                    logger.info(f"\n处理目录: {root_path}")
-                    logger.info(f"- 相对路径: {root_path.relative_to(source_dir)}")
-                    logger.info(f"- 包含文件数: {len(files)}")
+                    # 仅对包含文件的目录记录详细日志
+                    if len(files) > 0:
+                        logger.debug(f"\n处理目录: {root_path}")
+                        logger.debug(f"- 相对路径: {root_path.relative_to(source_dir)}")
+                        logger.debug(f"- 包含文件数: {len(files)}")
                     
                     result = await self.process_directory(root_path, test_mode)
                     if result["success"]:
