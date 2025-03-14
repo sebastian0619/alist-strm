@@ -99,6 +99,7 @@ const loadPendingItems = async () => {
     const data = await response.json();
     
     if (data.success) {
+      console.log('加载待删除项目成功:', data.data);
       // 处理API返回的数据，添加格式化的日期和剩余天数
       pendingItems.value = data.data.map(item => {
         const deleteTimestamp = item.delete_time * 1000; // 转为毫秒
@@ -117,9 +118,11 @@ const loadPendingItems = async () => {
         };
       });
     } else {
+      console.error('加载待删除项目失败:', data.message);
       message.error(data.message || '加载失败');
     }
   } catch (error) {
+    console.error('加载待删除项目异常:', error);
     message.error('加载失败: ' + error.message);
   } finally {
     loading.value = false;

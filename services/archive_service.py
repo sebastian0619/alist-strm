@@ -272,29 +272,43 @@ class ArchiveService:
     
     async def _check_pending_deletions(self):
         """定期检查待删除文件，删除超过延迟时间的文件"""
+        logger.info("待删除文件检查任务已启动")
+        
+        # 初始加载，确保有最新数据
+        self._pending_deletions = self._load_pending_deletions()
+        logger.info(f"初始化时待删除文件数量: {len(self._pending_deletions)}")
+        
         while True:
             try:
                 current_time = time.time()
-                items_changed = False
+                items_to_delete = []
                 
-                # 复制列表以避免在迭代时修改
-                for item in self._pending_deletions[:]:
+                # 确保使用最新列表
+                if len(self._pending_deletions) > 0:
+                    logger.info(f"检查待删除文件列表，共 {len(self._pending_deletions)} 个项目")
+                
+                # 识别需要删除的项目
+                for item in self._pending_deletions:
                     if current_time >= item["delete_time"]:
-                        path = item["path"]
-                        try:
-                            if path.is_dir():
-                                shutil.rmtree(str(path))
-                            else:
-                                path.unlink()
-                            logger.info(f"已删除延迟文件: {path}")
-                            self._pending_deletions.remove(item)
-                            items_changed = True
-                        except Exception as e:
-                            logger.error(f"删除文件失败 {path}: {e}")
+                        items_to_delete.append(item)
                 
-                # 如果列表有变化，保存到文件
-                if items_changed:
+                # 执行删除操作
+                for item in items_to_delete:
+                    path = item["path"]
+                    try:
+                        if path.is_dir():
+                            shutil.rmtree(str(path))
+                        else:
+                            path.unlink()
+                        logger.info(f"已删除延迟文件: {path}")
+                        self._pending_deletions.remove(item)
+                    except Exception as e:
+                        logger.error(f"删除文件失败 {path}: {e}")
+                
+                # 如果有删除操作，保存更新后的列表
+                if items_to_delete:
                     self._save_pending_deletions()
+                    logger.info(f"已删除 {len(items_to_delete)} 个过期文件，剩余 {len(self._pending_deletions)} 个待删除项目")
                     
             except Exception as e:
                 logger.error(f"检查待删除文件时出错: {e}")

@@ -121,6 +121,7 @@ class TelegramService:
                 request_kwargs = {'proxy_url': proxy_url}
                 
                 # 配置应用的请求参数
+                from telegram.request import HTTPXRequest
                 self.application.bot._request = HTTPXRequest(
                     proxy=proxy_url, 
                     connection_pool_size=8
@@ -142,7 +143,12 @@ class TelegramService:
             self._polling_error = None
             
             # 启动轮询
-            await self.application.run_polling(allowed_updates=Update.ALL_TYPES)
+            await self.application.initialize()
+            await self.application.start()
+            await self.application.updater.start_polling(allowed_updates=Update.ALL_TYPES)
+            await self.application.updater.stop()
+            await self.application.stop()
+            await self.application.shutdown()
             
         except Exception as e:
             self._polling_error = str(e)
@@ -152,11 +158,6 @@ class TelegramService:
         finally:
             # 清理资源
             self._is_polling = False
-            try:
-                if self.application:
-                    await self.application.shutdown()
-            except Exception as e:
-                logger.error(f"清理Telegram轮询资源失败: {e}")
 
     async def start(self):
         """启动Telegram服务"""
@@ -211,28 +212,33 @@ class TelegramService:
     
     async def close(self):
         """关闭Telegram服务"""
-        if self.initialized:
-            try:
-                # 发送停止信号
-                self._stop_event.set()
-                
-                # 等待轮询线程结束
-                if self._polling_thread and self._polling_thread.is_alive():
-                    self._polling_thread.join(timeout=5)
+        try:
+            # 发送停止信号
+            self._stop_event.set()
+            
+            # 如果轮询任务正在运行，尝试取消它
+            if self._polling_task and not self._polling_task.done():
+                self._polling_task.cancel()
+                try:
+                    await self._polling_task
+                except asyncio.CancelledError:
+                    pass
                     
-                # 确保应用正确关闭
-                if self.application:
-                    if hasattr(self.application, 'updater') and self.application.updater.running:
-                        await self.application.updater.stop()
+            # 确保应用正确关闭
+            if self.application and self._is_polling:
+                try:
+                    await self.application.updater.stop()
                     await self.application.stop()
                     await self.application.shutdown()
-                    self.application = None
+                except Exception as e:
+                    logger.error(f"关闭Telegram应用程序失败: {e}")
                     
-                self.initialized = False
-                logger.info("Telegram服务已关闭")
-            except Exception as e:
-                logger.error(f"关闭Telegram服务失败: {e}")
-                raise
+            self._is_polling = False
+            logger.info("Telegram服务已关闭")
+        except Exception as e:
+            logger.error(f"关闭Telegram服务失败: {e}")
+            # 不要抛出异常，让其他服务能继续关闭
+            self._is_polling = False
 
     async def send_message(self, text):
         """发送消息到指定聊天ID

@@ -6,6 +6,7 @@ from services.archive_service import ArchiveService
 from services.strm_monitor_service import StrmMonitorService
 from loguru import logger
 import asyncio
+from config import Settings
 
 class ServiceManager:
     _instance = None
@@ -18,6 +19,7 @@ class ServiceManager:
 
     def __init__(self):
         if not self.initialized:
+            self.settings = Settings()
             self.scheduler_service = None
             self.strm_service = None
             self.copy_service = None
