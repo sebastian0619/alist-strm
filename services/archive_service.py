@@ -326,6 +326,15 @@ class ArchiveService:
         logger.info(f"已添加到延迟删除队列: {path}, 将在 {self._deletion_delay/86400:.1f} 天后删除")
 
     async def process_directory(self, directory: Path, test_mode: bool = False) -> Dict:
+        """处理单个目录的归档
+        
+        Args:
+            directory: 要归档的目录
+            test_mode: 是否为测试模式（只识别不执行）
+            
+        Returns:
+            Dict: 处理结果
+        """
         result = {
             "success": False,
             "message": "",
@@ -343,13 +352,21 @@ class ArchiveService:
             
             # 获取完整的剧集名称（如果是季目录）
             full_folder_name = folder_name
-            if "Season" in folder_name or "season" in folder_name:
+            parent_dir_name = ""
+            
+            if re.search(r'(?i)season\s*\d+|s\d+|第.+?季', folder_name):
                 parent_dir = directory.parent
                 if parent_dir.name and parent_dir != self.settings.archive_source_root:
+                    parent_dir_name = parent_dir.name
                     # 记录电视剧名称用于日志
-                    logger.info(f"- 电视剧名称: {parent_dir.name}")
-                    # 构建完整的显示名称
-                    full_folder_name = f"{parent_dir.name} - {folder_name}"
+                    logger.info(f"- 电视剧名称: {parent_dir_name}")
+                    # 构建完整的显示名称(使用 - 而不是特殊字符)
+                    full_folder_name = f"{parent_dir_name} - {folder_name}"
+            
+            # 处理特殊字符，确保路径安全
+            safe_folder_name = re.sub(r'[:\\/*?\"<>|]', '_', full_folder_name)
+            if safe_folder_name != full_folder_name:
+                logger.info(f"- 处理后的安全名称: {safe_folder_name}")
             
             # 检查目录中的文件修改时间
             recent_files = []
@@ -430,9 +447,34 @@ class ArchiveService:
             # 获取目标路径
             relative_path = directory.relative_to(self.settings.archive_source_root)
             
-            # 构建Alist路径
-            source_alist_path = str(Path(self.settings.archive_source_alist) / relative_path).lstrip("/")
-            dest_alist_path = str(Path(self.settings.archive_target_root) / relative_path).lstrip("/")
+            # 检查是否是季文件夹，如果是则处理路径
+            if parent_dir_name and re.search(r'(?i)season\s*\d+|s\d+|第.+?季', folder_name):
+                # 如果是季文件夹，获取父目录和当前目录对应的alist路径
+                parent_relative_path = directory.parent.relative_to(self.settings.archive_source_root)
+                source_alist_path = str(Path(self.settings.archive_source_alist) / relative_path).replace('\\', '/').lstrip("/")
+                
+                # 目标路径使用原有的方式构建
+                dest_alist_path = str(Path(self.settings.archive_target_root) / relative_path).replace('\\', '/').lstrip("/")
+                
+                # 记录详细信息，方便调试
+                logger.info(f"- 处理季目录路径:")
+                logger.info(f"  - 父目录: {parent_dir_name}")
+                logger.info(f"  - 季目录: {folder_name}")
+                logger.info(f"  - 完整名称: {full_folder_name}")
+                logger.info(f"  - 安全名称: {safe_folder_name}")
+            else:
+                # 非季文件夹，使用常规方式构建路径
+                source_alist_path = str(Path(self.settings.archive_source_alist) / relative_path).replace('\\', '/').lstrip("/")
+                dest_alist_path = str(Path(self.settings.archive_target_root) / relative_path).replace('\\', '/').lstrip("/")
+                
+                # 确认路径不包含非法字符
+                safe_source_path = re.sub(r'[:\\/*?\"<>|]', '_', source_alist_path)
+                safe_dest_path = re.sub(r'[:\\/*?\"<>|]', '_', dest_alist_path)
+                
+                if safe_source_path != source_alist_path or safe_dest_path != dest_alist_path:
+                    logger.warning(f"路径包含特殊字符，将被替换:")
+                    source_alist_path = safe_source_path
+                    dest_alist_path = safe_dest_path
             
             logger.info("准备进行归档:")
             logger.info(f"- 源Alist路径: {source_alist_path}")
@@ -482,34 +524,29 @@ class ArchiveService:
                     logger.info(f"- 移动文件数: {moved_files}")
                     logger.info(f"- 总大小: {total_size / 1024 / 1024 / 1024:.2f} GB")
                     
-                    # 验证成功后将源目录添加到待删除队列
+                    # 添加到删除队列
                     if self.settings.archive_delete_source:
                         self._add_to_pending_deletion(directory)
-                        result["message"] = (
-                            f"[归档] {full_folder_name}\n"
-                            f"已验证并加入延迟删除队列\n"
-                            f"文件数: {moved_files}\n"
-                            f"总大小: {total_size / 1024 / 1024 / 1024:.2f} GB"
-                        )
-                    else:
-                        result["message"] = (
-                            f"[归档] {full_folder_name}\n"
-                            f"文件数: {moved_files}\n"
-                            f"总大小: {total_size / 1024 / 1024 / 1024:.2f} GB"
-                        )
+                        logger.info(f"已将目录添加到待删除队列: {directory}")
+                    
+                    result["message"] = (
+                        f"[归档] {full_folder_name}\n"
+                        f"文件数: {moved_files}\n"
+                        f"总大小: {total_size / 1024 / 1024 / 1024:.2f} GB"
+                    )
                     
                     result["success"] = True
                 else:
                     # 如果验证失败，删除目标目录
                     logger.error("文件验证失败，正在删除目标目录...")
                     await self.alist_client.delete(dest_alist_path)
-                    result["message"] = f"[错误] {full_folder_name} 文件验证失败"
+                    result["message"] = f"[错误] {full_folder_name}\n文件验证失败\n源路径: {source_alist_path}"
             else:
                 logger.error("Alist API复制目录失败")
-                result["message"] = f"[错误] {full_folder_name} 复制失败"
+                result["message"] = f"[错误] {full_folder_name}\n复制失败\n源路径: {source_alist_path}\n目标路径: {dest_alist_path}"
             
         except Exception as e:
-            result["message"] = f"[错误] 归档失败 {folder_name}: {str(e)}"
+            result["message"] = f"[错误] 归档失败 {full_folder_name}: {str(e)}"
             logger.error(f"处理目录失败 {directory}: {e}", exc_info=True)
             
         return result
