@@ -105,39 +105,84 @@ class ServiceManager:
     
     async def _start_schedule(self):
         """启动STRM定时任务"""
+        if not self.settings.schedule_enabled:
+            logger.info("STRM定时任务未启用")
+            return
+            
         try:
-            logger.info(f"启动STRM定时任务，Cron表达式: {self.settings.schedule_cron}")
-            # 使用调度器服务启动任务
-            if self.scheduler_service:
-                self.scheduler_service.add_cron_job(
-                    "strm_scan",
-                    self.settings.schedule_cron,
-                    self.strm_service.strm
+            # 使用add_cron_job方法添加STRM定时任务
+            success = self.scheduler_service.add_cron_job(
+                'strm_job', 
+                self.settings.schedule_cron, 
+                self.strm_service.strm
+            )
+            
+            if success:
+                logger.info(f"STRM定时任务已启动，执行计划: {self.settings.schedule_cron}")
+                await self.telegram_service.send_message(
+                    f"⏰ STRM定时任务已启动\n执行计划: {self.settings.schedule_cron}"
                 )
+            else:
+                raise Exception("添加STRM定时任务失败")
+                
         except Exception as e:
-            logger.error(f"启动STRM定时任务失败: {str(e)}")
+            error_msg = f"启动STRM定时任务失败: {str(e)}"
+            logger.error(error_msg)
+            await self.telegram_service.send_message(f"❌ {error_msg}")
+            raise
             
     async def _start_archive_schedule(self):
         """启动归档定时任务"""
+        if not self.settings.archive_schedule_enabled or not self.settings.archive_enabled:
+            logger.info("归档定时任务未启用")
+            return
+            
         try:
-            logger.info(f"启动归档定时任务，Cron表达式: {self.settings.archive_schedule_cron}")
-            # 使用调度器服务启动任务
-            if self.scheduler_service:
-                self.scheduler_service.add_cron_job(
-                    "archive",
-                    self.settings.archive_schedule_cron,
-                    self.archive_service.archive
+            # 使用add_cron_job方法添加归档定时任务
+            success = self.scheduler_service.add_cron_job(
+                'archive_job', 
+                self.settings.archive_schedule_cron, 
+                self.archive_service.archive
+            )
+            
+            if success:
+                logger.info(f"归档定时任务已启动，执行计划: {self.settings.archive_schedule_cron}")
+                await self.telegram_service.send_message(
+                    f"⏰ 归档定时任务已启动\n执行计划: {self.settings.archive_schedule_cron}"
                 )
+            else:
+                raise Exception("添加归档定时任务失败")
+                
         except Exception as e:
-            logger.error(f"启动归档定时任务失败: {str(e)}")
+            error_msg = f"启动归档定时任务失败: {str(e)}"
+            logger.error(error_msg)
+            await self.telegram_service.send_message(f"❌ {error_msg}")
+            # 不抛出异常，允许应用继续运行
     
     async def _run_start_scan(self):
-        """启动后执行STRM扫描"""
+        """在服务启动后执行一次STRM扫描"""
+        if not self.settings.start_scan_enabled:
+            logger.info("启动时STRM扫描未启用")
+            return
+            
         try:
-            logger.info("应用启动后执行STRM扫描")
+            logger.info("正在执行启动时STRM扫描")
+            await self.telegram_service.send_message("🔍 执行启动时STRM扫描")
+            
+            # 延迟几秒，确保其他服务已经完全启动
+            await asyncio.sleep(5)
+            
+            # 执行STRM扫描
             await self.strm_service.strm()
+            
+            logger.info("启动时STRM扫描完成")
+            await self.telegram_service.send_message("✅ 启动时STRM扫描完成")
+            
         except Exception as e:
-            logger.error(f"启动后执行STRM扫描失败: {str(e)}")
+            error_msg = f"启动时STRM扫描失败: {str(e)}"
+            logger.error(error_msg)
+            await self.telegram_service.send_message(f"❌ {error_msg}")
+            # 不抛出异常，允许应用继续运行
     
     async def close(self):
         """关闭所有服务"""

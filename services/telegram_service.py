@@ -107,57 +107,66 @@ class TelegramService:
         return builder.build()
     
     async def _run_polling(self):
-        """运行轮询逻辑"""
+        """启动Telegram机器人轮询"""
+        self._is_polling = True
         try:
-            # 初始化应用
+            logger.info("正在初始化Telegram机器人")
+            
+            # 构建应用
             self.application = Application.builder().token(self.settings.tg_token).build()
             
-            # 配置代理
+            # 配置代理（如果设置了）
             if self.settings.tg_proxy_url:
-                proxy_url = self.settings.tg_proxy_url
-                logger.info(f"使用代理 {proxy_url}")
-                
-                # 构建代理参数
-                request_kwargs = {'proxy_url': proxy_url}
-                
-                # 配置应用的请求参数
-                from telegram.request import HTTPXRequest
-                self.application.bot._request = HTTPXRequest(
-                    proxy=proxy_url, 
-                    connection_pool_size=8
-                )
+                logger.info(f"使用代理配置Telegram: {self.settings.tg_proxy_url}")
+                request_kwargs = {
+                    'proxy_url': self.settings.tg_proxy_url
+                }
+                request = HTTPXRequest(connection_pool_size=8, proxy_url=self.settings.tg_proxy_url)
+                self.application = Application.builder().token(self.settings.tg_token).request(request).build()
             
-            # 添加处理程序
-            self.application.add_handler(CommandHandler('start', self._start_command))
-            self.application.add_handler(CommandHandler('help', self._help_command))
+            # 添加命令处理器
+            self.application.add_handler(CommandHandler("start", self._start_command))
+            self.application.add_handler(CommandHandler("help", self._help_command))
+            
+            # 添加错误处理器
             self.application.add_error_handler(self._error_handler)
             
-            # 清除可能存在的未处理更新
+            logger.info("正在启动Telegram机器人轮询")
+            
+            # 清除之前的更新以避免冲突
             try:
-                await self.application.bot.get_updates(offset=-1, timeout=1)
+                # 获取最新的更新ID并跳过它，以清除所有待处理的更新
+                updates = await self.application.bot.get_updates(offset=-1, timeout=1, limit=1)
+                if updates:
+                    logger.info(f"清除了 {len(updates)} 条待处理的Telegram更新")
+                    # 将offset设置为最新更新的ID + 1，以跳过所有旧更新
+                    await self.application.bot.get_updates(offset=updates[-1].update_id + 1, timeout=1)
             except Exception as e:
-                logger.warning(f"清除旧更新时出错: {e}")
+                logger.warning(f"清除待处理更新时发生错误: {str(e)}")
             
-            logger.info("开始Telegram轮询...")
-            self._is_polling = True
-            self._polling_error = None
-            
-            # 启动轮询
-            await self.application.initialize()
-            await self.application.start()
-            await self.application.updater.start_polling(allowed_updates=Update.ALL_TYPES)
-            await self.application.updater.stop()
-            await self.application.stop()
-            await self.application.shutdown()
-            
+            # 使用带有冲突处理的启动方式
+            logger.info("开始轮询Telegram更新")
+            # 设置更长的轮询超时，默认为None，这里设置为60秒比较合理
+            # 添加dropped_pending_updates=True以丢弃任何待处理的更新，防止冲突
+            await self.application.run_polling(
+                allowed_updates=Update.ALL_TYPES, 
+                poll_interval=1.0,
+                timeout=60,
+                dropped_pending_updates=True
+            )
         except Exception as e:
-            self._polling_error = str(e)
-            logger.error(f"Telegram轮询出错: {e}")
+            logger.error(f"Telegram轮询任务发生错误: {str(e)}")
             self._is_polling = False
-            
         finally:
-            # 清理资源
+            # 确保资源被正确释放
+            if hasattr(self, 'application') and self.application:
+                try:
+                    await self.application.shutdown()
+                    logger.info("Telegram应用已关闭")
+                except Exception as e:
+                    logger.error(f"关闭Telegram应用时发生错误: {str(e)}")
             self._is_polling = False
+            logger.info("Telegram轮询已停止")
 
     async def start(self):
         """启动Telegram服务"""

@@ -3,7 +3,7 @@ from apscheduler.triggers.cron import CronTrigger
 from loguru import logger
 from config import Settings
 import importlib
-from typing import List, Dict
+from typing import List, Dict, Callable, Any
 
 class SchedulerService:
     def __init__(self):
@@ -40,6 +40,41 @@ class SchedulerService:
             logger.error(error_msg)
             service_manager = self._get_service_manager()
             await service_manager.telegram_service.send_message(error_msg)
+    
+    def add_cron_job(self, job_id: str, cron_expression: str, func: Callable[..., Any], **kwargs) -> bool:
+        """添加一个新的cron定时任务
+        
+        Args:
+            job_id: 任务ID
+            cron_expression: Cron表达式，例如 "0 */6 * * *"
+            func: 要执行的函数
+            **kwargs: 传递给函数的参数
+            
+        Returns:
+            bool: 是否成功添加任务
+        """
+        try:
+            # 确保调度器已启动
+            if not self.scheduler.running:
+                self.scheduler.start()
+                logger.info("调度器已启动")
+            
+            # 添加任务
+            job = self.scheduler.add_job(
+                func,
+                CronTrigger.from_crontab(cron_expression),
+                id=job_id,
+                replace_existing=True,
+                kwargs=kwargs
+            )
+            
+            logger.info(f"已添加定时任务 {job_id}，执行计划: {cron_expression}")
+            return True
+            
+        except Exception as e:
+            error_msg = f"添加定时任务 {job_id} 失败: {str(e)}"
+            logger.error(error_msg)
+            return False
     
     async def start(self):
         """启动调度器"""
