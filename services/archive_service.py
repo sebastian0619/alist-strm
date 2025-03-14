@@ -45,7 +45,7 @@ class ArchiveService:
         }
         
         # 定义待删除文件列表的JSON文件路径
-        self._pending_deletions_file = os.path.join(self.settings.cache_dir, "pending_deletions.json")
+        self._pending_deletions_file = os.path.join("config", "pending_deletions.json")
         # 初始化待删除文件队列
         self._pending_deletions = self._load_pending_deletions()
         # 删除延迟时间（秒）- 从配置中读取
@@ -63,7 +63,8 @@ class ArchiveService:
     def _load_pending_deletions(self) -> list:
         """从JSON文件加载待删除列表"""
         try:
-            os.makedirs(self.settings.cache_dir, exist_ok=True)
+            # 确保config目录存在
+            os.makedirs("config", exist_ok=True)
             if os.path.exists(self._pending_deletions_file):
                 with open(self._pending_deletions_file, 'r', encoding='utf-8') as f:
                     data = json.load(f)
@@ -79,7 +80,8 @@ class ArchiveService:
     def _save_pending_deletions(self):
         """将待删除列表保存到JSON文件"""
         try:
-            os.makedirs(self.settings.cache_dir, exist_ok=True)
+            # 确保config目录存在
+            os.makedirs("config", exist_ok=True)
             
             # 将Path对象转换为字符串以便JSON序列化
             data_to_save = []
@@ -172,9 +174,14 @@ class ArchiveService:
         # 将路径分割成部分
         path_parts = relative_path.split('/')
         
-        # 由于self.media_types的顺序已经由前端排序确定优先级
-        # 所以这里直接按顺序匹配，找到的第一个匹配就是优先级最高的
+        # 使用最长匹配原则，先尝试匹配最具体的路径
+        matched_type = ""
+        max_match_length = 0
+        
         for media_type, info in self.media_types.items():
+            if "dir" not in info:
+                continue
+                
             dir_path = info['dir'].replace('\\', '/').strip('/')
             dir_parts = dir_path.split('/')
             
@@ -185,13 +192,21 @@ class ArchiveService:
             # 2. 配置的目录层级必须小于等于实际路径的层级
             if (len(dir_parts) <= len(path_parts) and 
                 all(dp == pp for dp, pp in zip(dir_parts, path_parts))):
-                logger.debug(f"匹配成功: {media_type}")
-                return media_type
+                
+                # 找到匹配，但使用最长匹配原则
+                if len(dir_parts) > max_match_length:
+                    max_match_length = len(dir_parts)
+                    matched_type = media_type
+                    logger.debug(f"找到更优匹配: {media_type}, 匹配长度: {len(dir_parts)}")
             else:
                 logger.debug(f"匹配失败: 路径部分={path_parts[:len(dir_parts)]}, 配置部分={dir_parts}")
-                
-        logger.debug("没有找到匹配的媒体类型")
-        return ""
+        
+        if matched_type:
+            logger.debug(f"最终匹配: {matched_type}")
+            return matched_type
+        else:        
+            logger.debug("没有找到匹配的媒体类型")
+            return ""
     
     def calculate_file_hash(self, file_path: Path) -> Optional[str]:
         """计算文件的MD5哈希值"""
