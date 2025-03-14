@@ -24,6 +24,11 @@ class ArchiveService:
         self._stop_flag = False
         self._is_running = False
         
+        # 添加日志历史记录列表
+        self.logger_history = []
+        # 添加日志处理器
+        self._setup_logger_handler()
+        
         # 从配置加载要排除的文件扩展名
         self.excluded_extensions = set(
             ext.strip().lower() for ext in self.settings.archive_excluded_extensions.split(',')
@@ -52,6 +57,21 @@ class ArchiveService:
         
         # 删除检查任务将在initialize方法中启动
         self._deletion_check_task = None
+    
+    def _setup_logger_handler(self):
+        """设置日志处理器，记录日志历史"""
+        class LoggerHistoryHandler:
+            def __init__(self, history_list):
+                self.history_list = history_list
+                
+            def write(self, record):
+                self.history_list.append(record["message"])
+                # 保持日志历史在一个合理的大小
+                if len(self.history_list) > 1000:
+                    self.history_list.pop(0)
+        
+        # 添加自定义处理器到logger
+        logger.add(LoggerHistoryHandler(self.logger_history).write)
     
     async def initialize(self):
         """初始化服务，启动后台任务"""
@@ -232,10 +252,17 @@ class ArchiveService:
         
         try:
             logger.info(f"开始处理目录: {directory}")
-            logger.info(f"- 相对路径: {directory.relative_to(self.settings.archive_source_root)}")
+            rel_path = directory.relative_to(self.settings.archive_source_root)
+            logger.info(f"- 相对路径: {rel_path}")
             
             # 获取最后的文件夹名称
             folder_name = directory.name
+            
+            # 记录电视剧目录的更完整信息
+            if "Season" in folder_name or "season" in folder_name:
+                parent_dir = directory.parent
+                if parent_dir.name and parent_dir != self.settings.archive_source_root:
+                    logger.info(f"- 电视剧名称: {parent_dir.name}")
             
             # 检查目录中的文件修改时间
             recent_files = []
@@ -407,7 +434,7 @@ class ArchiveService:
             test_mode: 是否为测试模式（只识别不执行）
             
         Returns:
-            Dict: 如果是测试模式，返回测试结果
+            Dict: 处理结果摘要和详情
         """
         if self._is_running:
             logger.warning("归档任务已在运行中")
@@ -418,7 +445,11 @@ class ArchiveService:
             self._is_running = True
             
             service_manager = self._get_service_manager()
-            logger.info("🔍 开始归档测试..." if test_mode else "🚀 开始归档处理...")
+            
+            # 在开始归档时发送Telegram通知
+            start_msg = "🔍 开始归档测试..." if test_mode else "🚀 开始归档处理..."
+            logger.info(start_msg)
+            await service_manager.telegram_service.send_message(start_msg)
             
             # 检查配置
             logger.info(f"当前配置:")
@@ -431,10 +462,12 @@ class ArchiveService:
             if not source_dir.exists():
                 error_msg = f"本地源目录不存在: {source_dir}"
                 logger.error(error_msg)
+                await service_manager.telegram_service.send_message(f"❌ {error_msg}")
                 return
             if not source_dir.is_dir():
                 error_msg = f"本地源目录路径不是目录: {source_dir}"
                 logger.error(error_msg)
+                await service_manager.telegram_service.send_message(f"❌ {error_msg}")
                 return
                 
             # 检查目录权限
@@ -445,28 +478,25 @@ class ArchiveService:
             except Exception as e:
                 error_msg = f"本地源目录权限检查失败: {source_dir}, 错误: {str(e)}"
                 logger.error(error_msg)
+                await service_manager.telegram_service.send_message(f"❌ {error_msg}")
                 return
             
             total_processed = 0
             total_size = 0
             test_results = []
-            success_results = []  # 只记录成功的结果
+            success_results = []
             
-            # 只遍历配置的目录
-            for media_type, info in self.media_types.items():
-                if self._stop_flag:
-                    break
-                    
-                target_dir = source_dir / info['dir'].lstrip('/')
-                logger.info(f"\n开始处理媒体类型 {media_type}:")
-                logger.info(f"- 配置的目录: {info['dir']}")
-                logger.info(f"- 本地完整路径: {target_dir}")
-                logger.info(f"- 对应的Alist路径: {Path(self.settings.archive_source_alist) / info['dir'].lstrip('/')}")
+            # 检查目标目录
+            if self.settings.archive_target_root and self.settings.archive_source_root:
+                # 初始化Alist客户端
+                self.alist_client = AlistClient(
+                    self.settings.alist_url,
+                    self.settings.alist_token
+                )
                 
-                if not target_dir.exists():
-                    logger.warning(f"配置的目录不存在: {target_dir}")
-                    continue
-                    
+                # 要处理的目标目录
+                target_dir = Path(self.settings.archive_source_root)
+                
                 # 遍历目标目录下的所有子目录
                 for root, dirs, files in os.walk(target_dir):
                     if self._stop_flag:
@@ -499,14 +529,53 @@ class ArchiveService:
             )
             logger.info(summary)
             
-            # 如果有成功归档的结果，发送到Telegram
+            # 发送最终的汇总消息到Telegram
+            await service_manager.telegram_service.send_message(summary)
+            
+            # 如果有成功归档的结果，单独发送到Telegram
             if success_results:
-                # 格式化每个结果，只保留文件夹名称
+                # 格式化每个结果，增强电视剧目录的显示
                 formatted_results = []
                 for result in success_results:
-                    # 提取 [归档] 后面的文件夹名称，直到第一个换行符
-                    if match := re.search(r'\[归档\] ([^\n]+)', result):
-                        formatted_results.append(match.group(1))
+                    # 从结果消息中提取相关信息
+                    folder_name = ""
+                    file_count = 0
+                    total_size_gb = 0.0
+                    
+                    # 提取 [归档] 后面的文件夹名称
+                    if folder_match := re.search(r'\[归档\] ([^\n]+)', result):
+                        folder_name = folder_match.group(1)
+                    
+                    # 提取文件数量
+                    if files_match := re.search(r'文件数: (\d+)', result):
+                        file_count = int(files_match.group(1))
+                    
+                    # 提取文件大小
+                    if size_match := re.search(r'总大小: ([\d\.]+) GB', result):
+                        total_size_gb = float(size_match.group(1))
+                    
+                    # 查找该文件夹对应的剧集信息
+                    show_name = ""
+                    for log_entry in self.logger_history:
+                        if f"开始处理目录" in log_entry and folder_name in log_entry:
+                            # 找到了处理该目录的日志，查找后续的电视剧名称
+                            index = self.logger_history.index(log_entry)
+                            # 查找后面几条日志中是否有电视剧名称
+                            for i in range(index, min(index + 5, len(self.logger_history))):
+                                if "电视剧名称" in self.logger_history[i]:
+                                    show_name_match = re.search(r'- 电视剧名称: (.+)', self.logger_history[i])
+                                    if show_name_match:
+                                        show_name = show_name_match.group(1)
+                                        break
+                            break
+                    
+                    # 构建格式化的结果字符串
+                    if show_name and ("Season" in folder_name or "season" in folder_name):
+                        # 这是一个电视剧季文件夹，显示剧名和季信息
+                        formatted_results.append(f"{show_name} - {folder_name} ({file_count}个文件, {total_size_gb:.2f} GB)")
+                    else:
+                        # 其他文件夹，只显示文件夹名
+                        formatted_results.append(f"{folder_name} ({file_count}个文件, {total_size_gb:.2f} GB)")
                 
                 success_message = "归档成功的文件夹:\n\n" + "\n".join(formatted_results)
                 # 如果消息太长，只保留前20个结果
@@ -515,19 +584,19 @@ class ArchiveService:
                     success_message = "归档成功的文件夹（仅显示前20个）:\n\n" + "\n".join(formatted_results)
                 await service_manager.telegram_service.send_message(success_message)
             
-            await service_manager.telegram_service.send_message(summary)
-            
             # 如果配置了自动运行STRM扫描且不是测试模式
             if not test_mode and self.settings.archive_auto_strm and total_processed > 0:
                 logger.info("开始自动STRM扫描...")
                 await service_manager.telegram_service.send_message("🔄 开始自动STRM扫描...")
                 await service_manager.strm_service.strm()
             
-            if test_mode:
-                return {
-                    "summary": summary,
-                    "results": test_results
-                }
+            # 返回结果
+            return {
+                "summary": summary,
+                "total_processed": total_processed,
+                "total_size": total_size,
+                "results": test_results if test_mode else success_results
+            }
             
         except Exception as e:
             error_msg = f"❌ 归档{'测试' if test_mode else '处理'}出错: {str(e)}"
@@ -537,7 +606,6 @@ class ArchiveService:
             raise
         finally:
             self._is_running = False
-            self._stop_flag = False
 
     def _load_media_types(self) -> Dict[str, Dict]:
         """从config/archive.json加载媒体类型配置"""
