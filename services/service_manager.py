@@ -5,6 +5,7 @@ from services.telegram_service import TelegramService
 from services.archive_service import ArchiveService
 from services.strm_monitor_service import StrmMonitorService
 from loguru import logger
+import asyncio
 
 class ServiceManager:
     _instance = None
@@ -73,10 +74,29 @@ class ServiceManager:
     async def start(self):
         """启动所有服务"""
         try:
-            # 启动Telegram服务
-            await self.telegram_service.start()
+            # 尝试启动Telegram服务
+            try:
+                await self.telegram_service.start()
+            except Exception as e:
+                # 记录错误但继续启动其他服务
+                logger.error(f"Telegram服务启动失败 (应用将继续运行): {str(e)}")
+                # 禁用Telegram服务
+                self.settings.tg_enabled = False
             
-            logger.info("所有服务启动完成")
+            # 初始化归档服务
+            await self.archive_service.initialize()
+            
+            # 如果启用了定时任务，启动定时任务
+            if self.settings.schedule_enabled:
+                self._start_schedule()
+                
+            # 如果启用了归档定时任务，启动归档定时任务
+            if self.settings.archive_schedule_enabled:
+                self._start_archive_schedule()
+                
+            # 如果配置了启动后执行，开始STRM扫描
+            if self.settings.run_after_startup:
+                asyncio.create_task(self._run_start_scan())
         except Exception as e:
             logger.error(f"服务启动失败: {str(e)}")
             raise

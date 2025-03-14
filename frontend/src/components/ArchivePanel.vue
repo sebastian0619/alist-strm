@@ -243,7 +243,7 @@
     <!-- 测试结果对话框 -->
     <a-modal
       v-model:visible="testResultVisible"
-      title="归档测试结果"
+      :title="archiveResultTitle"
       width="800px"
       @ok="testResultVisible = false"
     >
@@ -316,10 +316,14 @@ const newTypeName = ref('')
 
 // 获取结果标签颜色
 const getResultColor = (result) => {
-  if (result.message.startsWith('[测试]')) return 'blue'
-  if (result.message.startsWith('[跳过]')) return 'orange'
-  if (result.message.startsWith('[错误]')) return 'red'
-  return 'green'
+  if (!result.message) return 'default';
+  
+  if (result.message.startsWith('[测试]')) return 'blue';
+  if (result.message.startsWith('[归档]')) return 'green';
+  if (result.message.startsWith('[跳过]')) return 'orange';
+  if (result.message.startsWith('[错误]')) return 'red';
+  
+  return result.success ? 'green' : 'red';
 }
 
 // 添加媒体类型相关
@@ -404,8 +408,13 @@ const loadConfig = async () => {
 const startArchive = async () => {
   try {
     archiving.value = true
-    await axios.post('/api/archive/start')
-    message.success('归档任务已启动')
+    const response = await axios.post('/api/archive/start')
+    if (response.data.success && response.data.data) {
+      // 展示归档结果
+      testResult.value = response.data.data
+      testResultVisible.value = true
+    }
+    message.success('归档任务已完成')
   } catch (error) {
     message.error('启动归档失败: ' + error.message)
   } finally {
@@ -534,6 +543,12 @@ const loadMediaTypes = async () => {
     message.error('加载媒体类型失败: ' + error.message)
   }
 }
+
+const archiveResultTitle = computed(() => {
+  if (!testResult.value) return '归档结果';
+  // 根据summary字段判断是测试还是正常归档
+  return testResult.value.summary.includes('测试') ? '归档测试结果' : '归档处理结果';
+});
 
 // 在组件挂载时加载配置
 onMounted(() => {

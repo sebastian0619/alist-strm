@@ -98,18 +98,56 @@ async def clear_all_pending_deletions():
 @router.post("/start")
 async def start_archive():
     """开始归档处理"""
-    if not service_manager.archive_service.settings.archive_enabled:
-        raise HTTPException(status_code=400, detail="归档功能未启用")
-    result = await service_manager.archive_service.archive()
-    return {"message": "归档任务已完成", "data": result}
+    try:
+        if not service_manager.archive_service.settings.archive_enabled:
+            raise HTTPException(status_code=400, detail="归档功能未启用")
+        
+        result = await service_manager.archive_service.archive()
+        
+        # 返回更详细的结果
+        return {
+            "success": True,
+            "message": "归档任务已完成",
+            "data": {
+                "summary": result["summary"],
+                "total_processed": result["total_processed"],
+                "total_size": result["total_size"],
+                "total_size_gb": result["total_size"] / 1024 / 1024 / 1024,
+                "results": result["results"]
+            }
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"归档处理失败: {str(e)}"
+        }
 
 @router.post("/test")
 async def test_archive():
     """测试归档处理（只识别不执行）"""
-    if not service_manager.archive_service.settings.archive_enabled:
-        raise HTTPException(status_code=400, detail="归档功能未启用")
-    result = await service_manager.archive_service.archive(test_mode=True)
-    return {"message": "归档测试完成", "data": result}
+    try:
+        if not service_manager.archive_service.settings.archive_enabled:
+            raise HTTPException(status_code=400, detail="归档功能未启用")
+        
+        result = await service_manager.archive_service.archive(test_mode=True)
+        
+        # 返回更详细的结果
+        return {
+            "success": True,
+            "message": "归档测试完成",
+            "data": {
+                "summary": result["summary"],
+                "total_processed": result["total_processed"],
+                "total_size": result["total_size"],
+                "total_size_gb": result["total_size"] / 1024 / 1024 / 1024,
+                "results": result["results"]
+            }
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"归档测试失败: {str(e)}"
+        }
 
 @router.post("/stop")
 async def stop_archive():

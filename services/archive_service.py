@@ -511,13 +511,24 @@ class ArchiveService:
         """
         if self._is_running:
             logger.warning("归档任务已在运行中")
-            return
+            return {
+                "summary": "归档任务已在运行中",
+                "total_processed": 0,
+                "total_size": 0,
+                "results": []
+            }
             
         try:
             self._stop_flag = False
             self._is_running = True
             
             service_manager = self._get_service_manager()
+            
+            # 初始化结果变量
+            total_processed = 0
+            total_size = 0
+            success_results = []
+            all_results = []  # 新增：保存所有处理结果
             
             # 在开始归档时发送Telegram通知
             start_msg = "🔍 开始归档测试..." if test_mode else "🚀 开始归档处理..."
@@ -536,13 +547,13 @@ class ArchiveService:
                 error_msg = f"本地源目录不存在: {source_dir}"
                 logger.error(error_msg)
                 await service_manager.telegram_service.send_message(f"❌ {error_msg}")
-                return
-            if not source_dir.is_dir():
-                error_msg = f"本地源目录路径不是目录: {source_dir}"
-                logger.error(error_msg)
-                await service_manager.telegram_service.send_message(f"❌ {error_msg}")
-                return
-                
+                return {
+                    "summary": error_msg,
+                    "total_processed": 0,
+                    "total_size": 0,
+                    "results": []
+                }
+            
             # 检查目录权限
             try:
                 test_file = source_dir / ".archive_test"
@@ -552,47 +563,40 @@ class ArchiveService:
                 error_msg = f"本地源目录权限检查失败: {source_dir}, 错误: {str(e)}"
                 logger.error(error_msg)
                 await service_manager.telegram_service.send_message(f"❌ {error_msg}")
-                return
+                return {
+                    "summary": error_msg,
+                    "total_processed": 0,
+                    "total_size": 0,
+                    "results": []
+                }
             
-            total_processed = 0
-            total_size = 0
-            test_results = []
-            success_results = []
+            # 要处理的目标目录
+            target_dir = Path(self.settings.archive_source_root)
             
-            # 检查目标目录
-            if self.settings.archive_target_root and self.settings.archive_source_root:
-                # 初始化Alist客户端
-                self.alist_client = AlistClient(
-                    self.settings.alist_url,
-                    self.settings.alist_token
-                )
-                
-                # 要处理的目标目录
-                target_dir = Path(self.settings.archive_source_root)
-                
-                # 遍历目标目录下的所有子目录
-                for root, dirs, files in os.walk(target_dir):
-                    if self._stop_flag:
-                        break
-                        
-                    root_path = Path(root)
-                    # 只处理包含文件的目录（叶子目录）
-                    if files and not any(d.startswith('.') for d in root_path.parts):
-                        logger.info(f"\n处理目录: {root_path}")
-                        logger.info(f"- 相对路径: {root_path.relative_to(source_dir)}")
-                        logger.info(f"- 包含文件数: {len(files)}")
-                        
-                        result = await self.process_directory(root_path, test_mode)
-                        if result["success"]:
-                            total_processed += result["moved_files"]
-                            total_size += result["total_size"]
-                            if "[归档]" in result["message"]:
-                                success_results.append(result["message"])
-                        if test_mode:
-                            test_results.append(result)
-                        
-                        # 让出控制权
-                        await asyncio.sleep(0)
+            # 遍历目标目录下的所有子目录
+            for root, dirs, files in os.walk(target_dir):
+                if self._stop_flag:
+                    break
+                    
+                root_path = Path(root)
+                # 只处理包含文件的目录（叶子目录）
+                if files and not any(d.startswith('.') for d in root_path.parts):
+                    logger.info(f"\n处理目录: {root_path}")
+                    logger.info(f"- 相对路径: {root_path.relative_to(source_dir)}")
+                    logger.info(f"- 包含文件数: {len(files)}")
+                    
+                    result = await self.process_directory(root_path, test_mode)
+                    if result["success"]:
+                        total_processed += result["moved_files"]
+                        total_size += result["total_size"]
+                        if "[归档]" in result["message"]:
+                            success_results.append(result["message"])
+                    
+                    # 无论是否成功，都添加到所有结果中
+                    all_results.append(result)
+                    
+                    # 让出控制权
+                    await asyncio.sleep(0)
             
             # 生成汇总消息
             summary = (
@@ -624,7 +628,7 @@ class ArchiveService:
                         file_count = int(files_match.group(1))
                     
                     # 提取文件大小
-                    if size_match := re.search(r'总大小: ([\d\.]+) GB', result):
+                    if size_match := re.search(r'总大小: ([0-9.]+) GB', result):
                         total_size_gb = float(size_match.group(1))
                     
                     # 查找该文件夹对应的剧集信息
@@ -668,7 +672,7 @@ class ArchiveService:
                 "summary": summary,
                 "total_processed": total_processed,
                 "total_size": total_size,
-                "results": test_results if test_mode else success_results
+                "results": all_results  # 修改：无论是测试模式还是正常模式，都返回完整结果
             }
             
         except Exception as e:
@@ -676,7 +680,12 @@ class ArchiveService:
             logger.error(error_msg)
             service_manager = self._get_service_manager()
             await service_manager.telegram_service.send_message(error_msg)
-            raise
+            return {
+                "summary": error_msg,
+                "total_processed": 0,
+                "total_size": 0,
+                "results": []
+            }
         finally:
             self._is_running = False
 

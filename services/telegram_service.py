@@ -10,6 +10,7 @@ import threading
 import httpx
 from telegram.error import NetworkError, TimedOut, RetryAfter
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+import time
 
 class ProcessState:
     """进程状态管理"""
@@ -73,6 +74,9 @@ class TelegramService:
         self._init_event = threading.Event()
         self._retry_count = 0
         self._max_retries = 3
+        self._polling_task = None
+        self._is_polling = False
+        self._polling_error = None
         
     @property
     def enabled(self) -> bool:
@@ -102,105 +106,108 @@ class TelegramService:
         
         return builder.build()
     
-    def _run_polling(self):
-        """运行轮询的后台线程函数"""
-        app = None
+    async def _run_polling(self):
+        """运行轮询逻辑"""
         try:
-            # 创建新的事件循环
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
+            # 初始化应用
+            self.application = Application.builder().token(self.settings.tg_token).build()
             
-            # 在新的事件循环中创建和初始化 application
-            app = self._create_application()
+            # 配置代理
+            if self.settings.tg_proxy_url:
+                proxy_url = self.settings.tg_proxy_url
+                logger.info(f"使用代理 {proxy_url}")
+                
+                # 构建代理参数
+                request_kwargs = {'proxy_url': proxy_url}
+                
+                # 配置应用的请求参数
+                self.application.bot._request = HTTPXRequest(
+                    proxy=proxy_url, 
+                    connection_pool_size=8
+                )
             
-            # 注册命令处理器
-            app.add_handler(CommandHandler("start", self.start_command))
-            app.add_handler(CommandHandler("help", self.help_command))
-            app.add_handler(CommandHandler("status", self.status_command))
-            app.add_handler(CommandHandler("strm", self.strm_command))
-            app.add_handler(CommandHandler("strm_stop", self.strm_stop_command))
-            app.add_handler(CommandHandler("archive", self.archive_command))
-            app.add_handler(CommandHandler("archive_stop", self.archive_stop_command))
+            # 添加处理程序
+            self.application.add_handler(CommandHandler('start', self._start_command))
+            self.application.add_handler(CommandHandler('help', self._help_command))
+            self.application.add_error_handler(self._error_handler)
             
-            # 初始化和启动应用
-            loop.run_until_complete(app.initialize())
-            loop.run_until_complete(app.start())
+            # 清除可能存在的未处理更新
+            try:
+                await self.application.bot.get_updates(offset=-1, timeout=1)
+            except Exception as e:
+                logger.warning(f"清除旧更新时出错: {e}")
             
-            # 设置初始化完成标志
-            self.application = app
-            self.initialized = True
-            self._init_event.set()
+            logger.info("开始Telegram轮询...")
+            self._is_polling = True
+            self._polling_error = None
             
-            # 启动轮询，带有错误处理和重试机制
-            async def run_polling_with_retry():
-                while not self._stop_event.is_set():
-                    try:
-                        if not app.updater.running:
-                            await app.updater.start_polling(
-                                allowed_updates=["message"],
-                                drop_pending_updates=True
-                            )
-                        await asyncio.sleep(1)  # 避免CPU过度使用
-                    except (NetworkError, TimedOut, RetryAfter) as e:
-                        self._retry_count += 1
-                        if self._retry_count > self._max_retries:
-                            logger.error(f"Telegram轮询重试次数超过限制: {e}")
-                            break
-                        wait_time = min(self._retry_count * 5, 30)  # 最多等待30秒
-                        logger.warning(f"Telegram轮询出错，{wait_time}秒后重试: {e}")
-                        await asyncio.sleep(wait_time)
-                    except Exception as e:
-                        if "already running" not in str(e).lower():
-                            logger.error(f"Telegram轮询出现未知错误: {e}")
-                            break
-                        await asyncio.sleep(1)  # 如果已经在运行，等待一秒继续检查
-                    
-            loop.run_until_complete(run_polling_with_retry())
+            # 启动轮询
+            await self.application.run_polling(allowed_updates=Update.ALL_TYPES)
             
         except Exception as e:
+            self._polling_error = str(e)
             logger.error(f"Telegram轮询出错: {e}")
+            self._is_polling = False
+            
         finally:
+            # 清理资源
+            self._is_polling = False
             try:
-                # 清理资源
-                if app:
-                    # 先停止updater
-                    if hasattr(app, 'updater') and app.updater.running:
-                        loop.run_until_complete(app.updater.stop())
-                    # 然后停止和关闭应用
-                    loop.run_until_complete(app.stop())
-                    loop.run_until_complete(app.shutdown())
-                loop.close()
-                self.initialized = False
-                self.application = None
+                if self.application:
+                    await self.application.shutdown()
             except Exception as e:
                 logger.error(f"清理Telegram轮询资源失败: {e}")
 
     async def start(self):
         """启动Telegram服务"""
-        if not self.settings.tg_enabled:
+        if not self.settings.tg_enabled or not self.settings.tg_token or not self.settings.tg_chat_id:
+            logger.warning("Telegram功能未启用或配置不完整，跳过启动")
             return
             
         try:
-            # 重置事件
-            self._stop_event.clear()
-            self._init_event.clear()
+            # 记录启动日志
+            logger.info("正在启动Telegram服务...")
             
-            # 启动轮询线程
-            self._polling_thread = threading.Thread(
-                target=self._run_polling,
-                daemon=True
-            )
-            self._polling_thread.start()
+            # 增加超时时间为60秒（原来可能是30秒）
+            start_timeout = 60  
+            start_time = time.time()
             
-            # 等待初始化完成
-            if self._init_event.wait(timeout=30):
-                logger.info("Telegram服务已启动")
+            # 创建新的轮询任务
+            self._polling_task = asyncio.create_task(self._run_polling())
+            
+            # 等待轮询任务启动或超时
+            while not self._is_polling and time.time() - start_time < start_timeout:
+                # 每秒检查一次是否已经启动
+                await asyncio.sleep(1)
+                
+                # 如果在等待过程中发生了错误，提前抛出
+                if self._polling_error:
+                    error_msg = f"Telegram服务启动失败: {self._polling_error}"
+                    logger.error(error_msg)
+                    raise RuntimeError(error_msg)
+            
+            # 检查是否成功启动
+            if self._is_polling:
+                logger.info("Telegram服务启动成功")
             else:
-                raise TimeoutError("Telegram服务启动超时")
+                # 如果超时，尝试取消任务并抛出错误
+                if self._polling_task and not self._polling_task.done():
+                    self._polling_task.cancel()
+                    try:
+                        await self._polling_task
+                    except asyncio.CancelledError:
+                        pass
+                
+                logger.error("Telegram服务启动超时")
+                # 关闭Telegram功能但不抛出异常
+                self.settings.tg_enabled = False
+                logger.warning("已禁用Telegram功能，应用将继续运行")
                 
         except Exception as e:
-            logger.error(f"启动Telegram服务失败: {e}")
-            raise
+            logger.error(f"启动Telegram服务时出错: {str(e)}")
+            # 关闭Telegram功能但不抛出异常
+            self.settings.tg_enabled = False
+            logger.warning("已禁用Telegram功能，应用将继续运行")
     
     async def close(self):
         """关闭Telegram服务"""
@@ -227,58 +234,83 @@ class TelegramService:
                 logger.error(f"关闭Telegram服务失败: {e}")
                 raise
 
-    @retry(
-        retry=retry_if_exception_type((NetworkError, TimedOut, httpx.ConnectError)),
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=4, max=10)
-    )
-    async def send_message(self, text: str):
-        """发送Telegram消息，失败时自动重试
+    async def send_message(self, text):
+        """发送消息到指定聊天ID
         
         Args:
-            text: 要发送的消息内容
-            
-        重试策略：
-        - 最多重试3次
-        - 指数退避等待（4-10秒）
-        - 只对网络错误进行重试
+            text: 消息文本
         """
-        if not self.enabled or not self.application:
+        if not self.settings.tg_enabled or not self._is_polling:
+            # 如果服务未启用或未成功启动，只记录日志不发送
+            logger.debug(f"Telegram未启用或未成功启动，消息未发送: {text}")
             return
             
-        try:
-            await self.application.bot.send_message(
-                chat_id=self.settings.tg_chat_id,
-                text=text,
-                disable_web_page_preview=True
-            )
-        except Exception as e:
-            logger.error(f"发送Telegram消息失败: {str(e)}")
-            raise  # 抛出异常以触发重试机制
-
-    async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """处理/start命令"""
-        await update.message.reply_text('欢迎使用Alist流媒体服务机器人！\n使用 /help 查看可用命令。')
-
-    async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """处理/help命令"""
-        help_text = """
-可用命令列表：
-
-STRM文件管理：
-/strm - 开始扫描生成STRM文件
-/strm_stop - 停止扫描
-
-归档管理：
-/archive - 开始归档处理
-/archive_stop - 停止归档处理
-
-系统控制：
-/status - 查看系统状态
-/start - 开始使用机器人
-/help - 显示本帮助信息
-        """
+        # 最多尝试3次
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            try:
+                # 分段发送长消息，确保每段不超过4096字符
+                # Telegram限制单条消息不超过4096字符
+                max_length = 4000  # 留一些余量
+                
+                if len(text) <= max_length:
+                    # 短消息直接发送
+                    await self.application.bot.send_message(
+                        chat_id=self.settings.tg_chat_id,
+                        text=text
+                    )
+                else:
+                    # 长消息分段发送
+                    chunks = [text[i:i+max_length] for i in range(0, len(text), max_length)]
+                    for i, chunk in enumerate(chunks):
+                        prefix = f"(消息 {i+1}/{len(chunks)}) " if len(chunks) > 1 else ""
+                        await self.application.bot.send_message(
+                            chat_id=self.settings.tg_chat_id,
+                            text=f"{prefix}{chunk}"
+                        )
+                        # 避免发送过快
+                        if i < len(chunks) - 1:
+                            await asyncio.sleep(0.5)
+                            
+                # 发送成功后退出循环
+                return
+            except (NetworkError, TimedOut) as e:
+                # 网络错误重试
+                if attempt < max_attempts - 1:
+                    wait_time = (attempt + 1) * 2  # 指数退避
+                    logger.warning(f"发送Telegram消息失败，{wait_time}秒后重试: {e}")
+                    await asyncio.sleep(wait_time)
+                else:
+                    logger.error(f"发送Telegram消息失败，已达最大重试次数: {e}")
+            except Exception as e:
+                # 其他错误直接报错
+                logger.error(f"发送Telegram消息时出错: {e}")
+                break
+                
+    async def _start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """处理 /start 命令"""
+        await update.message.reply_text("欢迎使用Alist STRM机器人! 输入 /help 获取帮助。")
+        
+    async def _help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """处理 /help 命令"""
+        help_text = (
+            "可用命令:\n"
+            "/start - 启动机器人\n"
+            "/help - 显示帮助\n"
+        )
         await update.message.reply_text(help_text)
+        
+    async def _error_handler(self, update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """处理错误"""
+        try:
+            if update and isinstance(update, Update) and update.effective_message:
+                await update.effective_message.reply_text(
+                    "抱歉，处理您的请求时出错了。"
+                )
+            # 输出错误信息
+            logger.error(f"更新 {update} 导致错误 {context.error}")
+        except Exception as e:
+            logger.error(f"在错误处理程序中出错: {e}")
 
     async def status_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """处理/status命令"""
