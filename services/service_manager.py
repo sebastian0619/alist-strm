@@ -90,11 +90,11 @@ class ServiceManager:
             
             # 如果启用了定时任务，启动定时任务
             if self.settings.schedule_enabled:
-                self._start_schedule()
+                await self._start_schedule()
                 
             # 如果启用了归档定时任务，启动归档定时任务
             if self.settings.archive_schedule_enabled:
-                self._start_archive_schedule()
+                await self._start_archive_schedule()
                 
             # 如果配置了启动后执行，开始STRM扫描
             if self.settings.run_after_startup:
@@ -102,6 +102,42 @@ class ServiceManager:
         except Exception as e:
             logger.error(f"服务启动失败: {str(e)}")
             raise
+    
+    async def _start_schedule(self):
+        """启动STRM定时任务"""
+        try:
+            logger.info(f"启动STRM定时任务，Cron表达式: {self.settings.schedule_cron}")
+            # 使用调度器服务启动任务
+            if self.scheduler_service:
+                self.scheduler_service.add_cron_job(
+                    "strm_scan",
+                    self.settings.schedule_cron,
+                    self.strm_service.strm
+                )
+        except Exception as e:
+            logger.error(f"启动STRM定时任务失败: {str(e)}")
+            
+    async def _start_archive_schedule(self):
+        """启动归档定时任务"""
+        try:
+            logger.info(f"启动归档定时任务，Cron表达式: {self.settings.archive_schedule_cron}")
+            # 使用调度器服务启动任务
+            if self.scheduler_service:
+                self.scheduler_service.add_cron_job(
+                    "archive",
+                    self.settings.archive_schedule_cron,
+                    self.archive_service.archive
+                )
+        except Exception as e:
+            logger.error(f"启动归档定时任务失败: {str(e)}")
+    
+    async def _run_start_scan(self):
+        """启动后执行STRM扫描"""
+        try:
+            logger.info("应用启动后执行STRM扫描")
+            await self.strm_service.strm()
+        except Exception as e:
+            logger.error(f"启动后执行STRM扫描失败: {str(e)}")
     
     async def close(self):
         """关闭所有服务"""
