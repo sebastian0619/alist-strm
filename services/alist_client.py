@@ -4,15 +4,32 @@ from loguru import logger
 import asyncio
 import time
 from urllib.parse import quote
+import json
 
 class AlistClient:
     def __init__(self, base_url: str, token: str = None):
+        """初始化AlistClient
+
+        Args:
+            base_url: Alist服务器的基本URL
+            token: Alist API的授权令牌
+        """
+        # 确保base_url没有结尾的斜杠
+        base_url = base_url.rstrip('/')
+        
+        # 创建客户端，设置认证头
+        headers = {"Content-Type": "application/json"}
+        if token:
+            # 检查token是否已经包含"Bearer "前缀
+            if not token.startswith("Bearer "):
+                token = f"Bearer {token}"
+            headers["Authorization"] = token
+            
+        logger.debug(f"初始化AlistClient: {base_url}, Token: {'已设置' if token else '无'}")
+        
         self.client = httpx.AsyncClient(
             base_url=base_url,
-            headers={
-                "Authorization": token,  # 直接使用原始token
-                "Content-Type": "application/json"
-            } if token else {},
+            headers=headers,
             timeout=httpx.Timeout(90.0, connect=90.0, read=90.0, write=90.0)
         )
     
@@ -291,13 +308,17 @@ class AlistClient:
                 "override": True  # 添加覆盖选项
             }
             
+            # 记录完整的原始请求数据
+            logger.debug(f"API请求数据(原始): {json.dumps(data, ensure_ascii=False)}")
+            
             # 发送请求
             response = await self.client.post("/api/fs/copy", json=data)
             response.raise_for_status()
             
             # 检查响应类型
             if response.headers.get("content-type", "").startswith("text/html"):
-                logger.error(f"复制目录时收到HTML响应，可能是服务器错误。源路径: {src_path}")
+                logger.error(f"复制目录时收到HTML响应，可能是服务器错误或授权问题。源路径: {src_path}")
+                logger.debug(f"HTML响应内容预览: {response.text[:200]}...")
                 return False
             
             # 解析响应
@@ -342,11 +363,19 @@ class AlistClient:
                     "override": True
                 }
                 
+                # 记录编码后的请求信息
+                logger.debug(f"API请求数据(编码后): {json.dumps(encoded_data, ensure_ascii=False)}")
                 logger.debug(f"使用编码路径重试: 从 {encoded_src_dir} 到 {encoded_dst_dir}, 文件名: {encoded_basename}")
                 
                 # 重新发送请求
                 retry_response = await self.client.post("/api/fs/copy", json=encoded_data)
                 retry_response.raise_for_status()
+                
+                # 检查响应类型
+                if retry_response.headers.get("content-type", "").startswith("text/html"):
+                    logger.error(f"使用编码路径仍收到HTML响应，可能是授权问题。源路径: {src_path}")
+                    logger.debug(f"HTML响应内容预览: {retry_response.text[:200]}...")
+                    return False
                 
                 retry_data = retry_response.json()
                 if retry_data.get("code") == 200:
@@ -381,20 +410,57 @@ class AlistClient:
         """获取任务状态"""
         data = {"id": task_id}
         try:
+            # 记录发送的请求数据
+            logger.debug(f"获取任务状态请求: {task_id}")
+            
+            # 确保我们有正确的授权头
+            current_headers = dict(self.client.headers)
+            logger.debug(f"当前授权: {current_headers.get('Authorization', '无')[:10]}{'...' if current_headers.get('Authorization', '') else ''}")
+            
+            # 尝试使用正确的API路径获取任务状态
+            api_path = "/api/admin/task/status"
+            logger.debug(f"API路径: {api_path}")
+            
             response = await self.client.post(
-                "/api/admin/task/status",
+                api_path,
                 json=data
             )
             response.raise_for_status()
             
             # 检查响应类型
             content_type = response.headers.get("content-type", "")
+            logger.debug(f"响应内容类型: {content_type}")
+            
             if "application/json" not in content_type:
                 logger.error(f"收到非JSON响应 ({content_type}): {response.text[:200]}...")
+                
+                # 检查是否是授权问题
+                if "login" in response.text.lower() or "401" in response.text or "unauthorized" in response.text.lower():
+                    logger.error("可能是授权问题，检查token是否有效或已过期")
+                
+                # 尝试提取更多有用信息
+                if "<title>" in response.text:
+                    import re
+                    title_match = re.search(r"<title>([^<]+)</title>", response.text)
+                    if title_match:
+                        logger.error(f"页面标题: {title_match.group(1)}")
+                
+                # 尝试请求服务器信息以检查连接性
+                try:
+                    info_response = await self.client.get("/api/public/settings")
+                    if info_response.status_code == 200:
+                        logger.debug(f"服务器信息响应: {info_response.text[:100]}...")
+                    else:
+                        logger.error(f"获取服务器信息失败: {info_response.status_code}")
+                except Exception as e:
+                    logger.error(f"请求服务器信息失败: {e}")
+                
                 return {"code": 500, "message": f"Invalid response type: {content_type}", "data": None}
                 
             try:
-                return response.json()
+                json_data = response.json()
+                logger.debug(f"任务状态响应: {json.dumps(json_data, ensure_ascii=False)[:200]}...")
+                return json_data
             except Exception as e:
                 logger.error(f"解析任务状态JSON失败: {str(e)}")
                 return {"code": 500, "message": f"JSON解析失败: {str(e)}", "data": None}
@@ -420,16 +486,28 @@ class AlistClient:
         start_time = time.time()
         logger.debug(f"开始等待 {len(task_ids)} 个任务完成，超时时间: {timeout}秒")
         
+        # 临时保存失败次数，允许一定程度的失败后继续尝试
+        error_counts = {task_id: 0 for task_id in task_ids}
+        max_error_attempts = 5
+        
         while time.time() - start_time < timeout:
             all_done = True
             all_successful = True
             
-            for task_id in task_ids:
+            for task_id in list(task_ids):  # 使用列表副本以便可以移除元素
                 resp = await self.task_status(task_id)
                 
                 if resp.get("code") != 200:
-                    logger.error(f"获取任务 {task_id} 状态失败: {resp.get('message')}")
-                    all_successful = False
+                    error_counts[task_id] += 1
+                    logger.error(f"获取任务 {task_id} 状态失败: {resp.get('message')} (尝试 {error_counts[task_id]}/{max_error_attempts})")
+                    
+                    # 如果连续失败次数超过阈值，认为任务失败
+                    if error_counts[task_id] >= max_error_attempts:
+                        all_successful = False
+                        logger.error(f"任务 {task_id} 状态获取连续失败 {max_error_attempts} 次，视为失败")
+                    else:
+                        # 如果未达到最大尝试次数，暂不认为完成
+                        all_done = False
                     continue
                     
                 task = resp.get("data", {})
@@ -445,7 +523,11 @@ class AlistClient:
                     all_successful = False
                 elif state == 1:  # 完成
                     logger.debug(f"任务 {task_id} 已完成")
+                    # 任务完成后从列表中移除，不再检查
+                    if task_id in error_counts:
+                        del error_counts[task_id]
             
+            # 如果所有任务都已完成或超过尝试次数
             if all_done:
                 if all_successful:
                     logger.info(f"所有任务已成功完成，耗时: {time.time() - start_time:.2f}秒")

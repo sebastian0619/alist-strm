@@ -517,6 +517,11 @@ class ArchiveService:
             
             # 使用Alist API复制目录
             logger.info("开始使用Alist API复制目录...")
+            
+            # 详细记录源路径和目标路径，以便于调试
+            logger.info(f"源完整路径: {source_alist_path}")
+            logger.info(f"目标完整路径: {dest_alist_path}")
+            
             success = await self.alist_client.copy_directory(source_alist_path, dest_alist_path)
             
             if success:
