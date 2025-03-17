@@ -23,13 +23,21 @@ class AlistClient:
             # Alist使用直接的令牌格式，不需要添加Bearer前缀
             headers["Authorization"] = token
             
-        logger.debug(f"初始化AlistClient: {base_url}, Token: {'已设置' if token else '无'}")
+        # 详细记录初始化信息
+        logger.info(f"初始化AlistClient:")
+        logger.info(f"- Base URL: {base_url}")
+        logger.info(f"- Token: {token[:10]}{'...' if token and len(token) > 10 else ''}")
+        logger.info(f"- Headers: {headers}")
         
         self.client = httpx.AsyncClient(
             base_url=base_url,
             headers=headers,
             timeout=httpx.Timeout(90.0, connect=90.0, read=90.0, write=90.0)
         )
+        
+        # 保存初始化参数以便调试
+        self.base_url = base_url
+        self.token = token
     
     def _encode_path_if_needed(self, path: str) -> str:
         """如果路径包含非ASCII字符，则进行URL编码，但保留路径分隔符
@@ -322,8 +330,6 @@ class AlistClient:
             dst_dir = os.path.dirname(dest_path)
             basename = os.path.basename(src_path)
             
-            logger.debug(f"复制目录请求: 从 {src_dir} 到 {dst_dir}, 文件名: {basename}")
-            
             # 构建请求数据 - 使用原始路径，不进行编码
             data = {
                 "src_dir": src_dir,
@@ -332,22 +338,39 @@ class AlistClient:
                 "override": True  # 添加覆盖选项
             }
             
-            # 记录完整的原始请求数据
-            logger.debug(f"API请求数据: {json.dumps(data, ensure_ascii=False)}")
+            # 详细记录完整请求信息
+            full_url = f"{self.base_url}/api/fs/copy"
+            current_headers = dict(self.client.headers)
+            
+            logger.info(f"发送复制目录请求:")
+            logger.info(f"- 完整URL: {full_url}")
+            logger.info(f"- Headers: {current_headers}")
+            logger.info(f"- 请求数据: {json.dumps(data, ensure_ascii=False)}")
+            logger.info(f"- 源路径: {src_path}")
+            logger.info(f"- 目标路径: {dest_path}")
             
             # 发送请求
             response = await self.client.post("/api/fs/copy", json=data)
+            
+            # 记录响应状态码
+            status_code = response.status_code
+            logger.info(f"复制目录响应: 状态码={status_code}")
+            
             response.raise_for_status()
             
             # 检查响应类型
+            content_type = response.headers.get("content-type", "")
+            logger.info(f"响应内容类型: {content_type}")
+            
             if response.headers.get("content-type", "").startswith("text/html"):
                 logger.error(f"复制目录时收到HTML响应，可能是服务器错误或授权问题。源路径: {src_path}")
-                logger.debug(f"HTML响应内容预览: {response.text[:200]}...")
+                logger.info(f"HTML响应内容: {response.text}")
                 return {"success": False, "file_exists": False, "message": "收到HTML响应"}
             
             # 解析响应
             try:
                 resp_data = response.json()
+                logger.info(f"复制目录响应JSON: {json.dumps(resp_data, ensure_ascii=False)}")
             except Exception as e:
                 logger.error(f"解析复制目录响应时出错: {str(e)}, 响应内容: {response.text[:500]}")
                 return {"success": False, "file_exists": False, "message": f"JSON解析错误: {str(e)}"}
@@ -365,7 +388,7 @@ class AlistClient:
                     logger.warning(f"复制目录没有生成任务ID: {src_path}")
                     return {"success": False, "file_exists": False, "message": "没有生成任务ID"}
                     
-                logger.debug(f"等待任务完成: {task_ids}")
+                logger.info(f"等待任务完成: {task_ids}")
                 
                 # 等待所有任务完成
                 if await self.wait_for_tasks(task_ids):
@@ -389,13 +412,17 @@ class AlistClient:
             # 记录发送的请求数据
             logger.debug(f"获取任务状态请求: {task_id}")
             
-            # 确保我们有正确的授权头
+            # 详细记录完整请求信息
             current_headers = dict(self.client.headers)
-            logger.debug(f"当前授权: {current_headers.get('Authorization', '无')[:10]}{'...' if current_headers.get('Authorization', '') else ''}")
+            full_url = f"{self.base_url}/api/admin/task/status"
+            
+            logger.info(f"发送任务状态请求:")
+            logger.info(f"- 完整URL: {full_url}")
+            logger.info(f"- Headers: {current_headers}")
+            logger.info(f"- 请求数据: {data}")
             
             # 尝试使用正确的API路径获取任务状态
             api_path = "/api/admin/task/status"
-            logger.debug(f"API路径: {api_path}")
             
             response = await self.client.post(
                 api_path,
@@ -403,9 +430,10 @@ class AlistClient:
             )
             response.raise_for_status()
             
-            # 检查响应类型
+            # 检查响应类型和状态码
             content_type = response.headers.get("content-type", "")
-            logger.debug(f"响应内容类型: {content_type}")
+            status_code = response.status_code
+            logger.info(f"任务状态响应: 状态码={status_code}, 内容类型={content_type}")
             
             if "application/json" not in content_type:
                 logger.error(f"收到非JSON响应 ({content_type}): {response.text[:200]}...")
@@ -413,6 +441,7 @@ class AlistClient:
                 # 检查是否是授权问题
                 if "login" in response.text.lower() or "401" in response.text or "unauthorized" in response.text.lower():
                     logger.error("可能是授权问题，检查token是否有效或已过期")
+                    logger.info(f"服务器返回的完整响应: {response.text}")
                 
                 # 尝试提取更多有用信息
                 if "<title>" in response.text:
@@ -423,11 +452,14 @@ class AlistClient:
                 
                 # 尝试请求服务器信息以检查连接性
                 try:
+                    logger.info(f"尝试请求服务器公共设置以验证连接...")
                     info_response = await self.client.get("/api/public/settings")
                     if info_response.status_code == 200:
+                        logger.info(f"服务器信息请求成功: 状态码={info_response.status_code}")
                         logger.debug(f"服务器信息响应: {info_response.text[:100]}...")
                     else:
                         logger.error(f"获取服务器信息失败: {info_response.status_code}")
+                        logger.debug(f"错误响应内容: {info_response.text[:200]}")
                 except Exception as e:
                     logger.error(f"请求服务器信息失败: {e}")
                 
@@ -435,7 +467,7 @@ class AlistClient:
                 
             try:
                 json_data = response.json()
-                logger.debug(f"任务状态响应: {json.dumps(json_data, ensure_ascii=False)[:200]}...")
+                logger.debug(f"任务状态响应JSON: {json.dumps(json_data, ensure_ascii=False)[:200]}...")
                 return json_data
             except Exception as e:
                 logger.error(f"解析任务状态JSON失败: {str(e)}")
