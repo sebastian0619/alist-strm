@@ -77,11 +77,20 @@ class TelegramService:
         self._polling_task = None
         self._is_polling = False
         self._polling_error = None
+        self._enabled = None  # 添加私有变量用于存储enabled状态
         
     @property
     def enabled(self) -> bool:
         """检查Telegram功能是否启用"""
+        if self._enabled is not None:
+            return self._enabled
         return self.settings.tg_enabled and bool(self.settings.tg_token)
+    
+    @enabled.setter
+    def enabled(self, value: bool):
+        """设置Telegram功能启用状态"""
+        self._enabled = value
+        logger.info(f"Telegram功能状态已设置为: {'启用' if value else '禁用'}")
     
     async def initialize(self):
         """初始化Telegram服务"""
@@ -101,67 +110,141 @@ class TelegramService:
             builder = builder.proxy_url(self.settings.tg_proxy_url)
             logger.info(f"使用代理: {self.settings.tg_proxy_url}")
             
-        # 配置连接参数
-        builder = builder.connect_timeout(30.0).read_timeout(30.0).write_timeout(30.0)
+        # 配置连接参数 - 增加更长的超时以避免冲突
+        builder = builder.connect_timeout(60.0).read_timeout(60.0).write_timeout(60.0)
         
-        return builder.build()
-    
+        # 使用自定义获取更新方法以避免冲突
+        application = builder.build()
+        return application
+        
     async def _run_polling(self):
         """运行Telegram轮询任务"""
         try:
             logger.info("启动Telegram轮询任务")
             
-            # 初始化应用
-            self.application = Application.builder().token(self.settings.tg_token).build()
+            if self.application is None:
+                # 创建应用实例
+                self.application = self._create_application()
+                
+                # 注册命令处理器
+                await self._register_handlers()
+                
+                # 设置命令列表
+                await self._set_commands()
             
-            # 配置代理
-            if self.settings.tg_proxy_url:
-                try:
-                    logger.info(f"使用代理: {self.settings.tg_proxy_url}")
-                    proxy_url = self.settings.tg_proxy_url
-                    self.application.bot._request = HTTPXRequest(
-                        proxy=proxy_url, 
-                        connection_pool_size=8
-                    )
-                except Exception as e:
-                    logger.error(f"配置Telegram代理时出错: {e}")
+            # 告诉等待的线程服务已准备好
+            self._init_event.set()
             
-            # 添加命令处理器
-            self.application.add_handler(CommandHandler("start", self._start_command))
-            self.application.add_handler(CommandHandler("help", self._help_command))
+            # 在启动前，尝试清除任何旧的更新以避免冲突
+            try:
+                logger.info("尝试清除现有更新以避免冲突...")
+                # 获取当前更新并丢弃，使用较短的超时时间
+                updates = await self.application.bot.get_updates(offset=-1, timeout=1)
+                if updates:
+                    # 使用最后一个更新的ID+1作为新的offset
+                    next_offset = updates[-1].update_id + 1
+                    # 再次请求，跳过所有旧更新
+                    await self.application.bot.get_updates(offset=next_offset, timeout=1)
+                    logger.info(f"已清除 {len(updates)} 个挂起的更新")
+            except Exception as e:
+                # 如果清除失败，记录但继续
+                logger.warning(f"清除现有更新失败: {e}")
+                
+                # 检查是否是多实例冲突错误
+                if "terminated by other getUpdates request" in str(e):
+                    logger.error("检测到另一个Telegram bot实例正在运行")
+                    logger.info("等待30秒让其他实例释放连接...")
+                    # 等待30秒后重试
+                    await asyncio.sleep(30)
             
-            # 添加错误处理器
-            self.application.add_error_handler(self._error_handler)
-            
-            # 清除等待中的更新
-            await self.application.bot.get_updates(offset=-1, timeout=1)
-            
-            # 检查run_polling方法是否支持dropped_pending_updates参数
-            import inspect
-            run_polling_sig = inspect.signature(self.application.run_polling)
-            polling_kwargs = {}
-            
-            # 只有当方法支持该参数时才使用它
-            if 'dropped_pending_updates' in run_polling_sig.parameters:
-                logger.debug("使用dropped_pending_updates参数")
-                polling_kwargs['dropped_pending_updates'] = True
-            else:
-                logger.debug("当前版本不支持dropped_pending_updates参数")
+            # 设置轮询状态
+            self._is_polling = True
             
             # 启动轮询
-            await self.application.run_polling(
-                allowed_updates=Update.ALL_TYPES,
-                **polling_kwargs
-            )
+            # 增加删除_webhook参数，避免与其他实例冲突
+            await self.application.initialize()
+            await self.application.start()
+            
+            # 使用自定义轮询方法，避免冲突
+            logger.info("开始接收Telegram更新...")
+            
+            # 使用长轮询但带有错误处理的方式
+            error_count = 0
+            max_errors = 5
+            
+            while not self._stop_event.is_set():
+                try:
+                    # 使用更保守的参数
+                    await self.application.update_queue.put(
+                        Update.de_json(data={}, bot=self.application.bot)
+                    )
+                    # 轮询成功，重置错误计数
+                    if error_count > 0:
+                        error_count = 0
+                        logger.info("Telegram轮询已恢复正常")
+                    
+                    # 短暂休息，避免过度请求
+                    await asyncio.sleep(1)
+                    
+                except Exception as e:
+                    error_count += 1
+                    logger.error(f"Telegram轮询错误 ({error_count}/{max_errors}): {e}")
+                    
+                    if error_count >= max_errors:
+                        logger.error(f"连续 {max_errors} 次轮询错误，停止轮询")
+                        break
+                        
+                    # 等待时间随错误次数增加
+                    wait_time = min(30, 5 * error_count)
+                    logger.info(f"等待 {wait_time} 秒后重试轮询...")
+                    await asyncio.sleep(wait_time)
+            
+            # 停止应用
+            await self.application.stop()
+            await self.application.shutdown()
+            logger.info("Telegram轮询任务已结束")
             
         except Exception as e:
             logger.error(f"Telegram轮询任务发生错误: {e}")
             import traceback
             logger.debug(f"错误详情: {traceback.format_exc()}")
-            raise
+            # 记录错误以便稍后检查
+            self._polling_error = e
         finally:
-            logger.info("Telegram轮询任务已结束")
             self._is_polling = False
+            logger.info("Telegram轮询任务已结束")
+
+    async def _register_handlers(self):
+        """注册命令处理器"""
+        logger.debug("注册Telegram命令处理器")
+        
+        # 添加命令处理器
+        self.application.add_handler(CommandHandler("start", self._start_command))
+        self.application.add_handler(CommandHandler("help", self._help_command))
+        self.application.add_handler(CommandHandler("status", self.status_command))
+        self.application.add_handler(CommandHandler("strm", self.strm_command))
+        
+        # 添加错误处理器
+        self.application.add_error_handler(self._error_handler)
+        
+        logger.debug("Telegram命令处理器注册完成")
+        
+    async def _set_commands(self):
+        """设置机器人命令列表"""
+        logger.debug("设置Telegram命令列表")
+        
+        commands = [
+            BotCommand("start", "启动机器人"),
+            BotCommand("help", "显示帮助信息"),
+            BotCommand("status", "显示系统状态"),
+            BotCommand("strm", "开始STRM扫描")
+        ]
+        
+        try:
+            await self.application.bot.set_my_commands(commands)
+            logger.debug("Telegram命令列表设置成功")
+        except Exception as e:
+            logger.error(f"设置Telegram命令列表失败: {e}")
 
     async def start(self):
         """启动Telegram服务"""
