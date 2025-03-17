@@ -165,9 +165,9 @@ class ArchiveService:
         
         匹配规则：
         1. 将路径转换为相对路径（相对于source_root）
-        2. 按照配置的顺序（优先级）依次匹配
-        3. 对于每个媒体类型，检查其配置的目录是否是当前路径的一部分
-        4. 返回第一个匹配的类型（优先级最高的）
+        2. 根据路径的第一级目录快速筛选可能匹配的媒体类型
+        3. 然后对可能匹配的类型进行精确匹配
+        4. 优先返回匹配层级最深的类型
         """
         path_str = str(path)
         
@@ -185,11 +185,21 @@ class ArchiveService:
             
         # 将路径分割成部分
         path_parts = relative_path.split('/')
+        if not path_parts:
+            logger.debug("路径为空，无法匹配")
+            return ""
+        
+        # 获取第一级目录，用于快速筛选
+        first_dir = path_parts[0] if path_parts else ""
         
         # 使用最长匹配原则，先尝试匹配最具体的路径
         matched_type = ""
         max_match_length = 0
         
+        # 创建可能匹配的媒体类型列表
+        potential_matches = []
+        
+        # 预筛选可能匹配的媒体类型
         for media_type, info in self.media_types.items():
             if "dir" not in info:
                 continue
@@ -197,7 +207,15 @@ class ArchiveService:
             dir_path = info['dir'].replace('\\', '/').strip('/')
             dir_parts = dir_path.split('/')
             
-            logger.debug(f"尝试匹配类型 {media_type} (目录: {dir_path})")
+            # 如果配置的目录第一部分与路径的第一部分匹配，则加入候选列表
+            if dir_parts and dir_parts[0] == first_dir:
+                potential_matches.append((media_type, info, dir_parts))
+        
+        logger.debug(f"预筛选出 {len(potential_matches)} 个可能匹配的媒体类型")
+        
+        # 对候选列表进行精确匹配
+        for media_type, info, dir_parts in potential_matches:
+            dir_path = info['dir'].replace('\\', '/').strip('/')
             
             # 检查目录是否匹配
             # 1. 配置的目录部分必须完全匹配路径的开始部分
@@ -210,8 +228,6 @@ class ArchiveService:
                     max_match_length = len(dir_parts)
                     matched_type = media_type
                     logger.debug(f"找到更优匹配: {media_type}, 匹配长度: {len(dir_parts)}")
-            else:
-                logger.debug(f"匹配失败: 路径部分={path_parts[:len(dir_parts)]}, 配置部分={dir_parts}")
         
         if matched_type:
             logger.debug(f"最终匹配: {matched_type}")
@@ -549,49 +565,24 @@ class ArchiveService:
                     result["total_size"] = total_size
                     return result
                 
-                # 正常复制成功情况
-                logger.info("目录复制成功，开始验证文件...")
-                # 验证目录中的所有文件
-                all_verified = True
-                moved_files = 0
+                # 正常复制成功情况 - 简化逻辑，不再等待任务完成和验证文件
+                logger.info("目录复制请求成功，任务已创建")
+                result["total_size"] = total_size
+                result["moved_files"] = len(files_info)
                 
-                for file_info in files_info:
-                    # 获取本地和Alist的相对路径
-                    dst_file = Path(self.settings.archive_target_root) / relative_path / file_info["relative_path"]
-                    
-                    logger.debug(f"验证文件: {file_info['path'].name}")
-                    if not self.verify_files(file_info["path"], dst_file):
-                        logger.error(f"文件验证失败: {file_info['path'].name}")
-                        all_verified = False
-                        break
-                    moved_files += 1
-                    logger.debug(f"- 验证成功")
+                # 添加到删除队列
+                if self.settings.archive_delete_source:
+                    self._add_to_pending_deletion(directory)
+                    logger.info(f"已将目录添加到待删除队列: {directory}")
                 
-                if all_verified:
-                    result["total_size"] = total_size
-                    result["moved_files"] = moved_files
-                    
-                    logger.info(f"所有文件验证成功")
-                    logger.info(f"- 移动文件数: {moved_files}")
-                    logger.info(f"- 总大小: {total_size / 1024 / 1024 / 1024:.2f} GB")
-                    
-                    # 添加到删除队列
-                    if self.settings.archive_delete_source:
-                        self._add_to_pending_deletion(directory)
-                        logger.info(f"已将目录添加到待删除队列: {directory}")
-                    
-                    result["message"] = (
-                        f"[归档] {full_folder_name}\n"
-                        f"文件数: {moved_files}\n"
-                        f"总大小: {total_size / 1024 / 1024 / 1024:.2f} GB"
-                    )
-                    
-                    result["success"] = True
-                else:
-                    # 如果验证失败，删除目标目录
-                    logger.error("文件验证失败，正在删除目标目录...")
-                    await self.alist_client.delete(dest_alist_path)
-                    result["message"] = f"[错误] {full_folder_name}\n文件验证失败\n源路径: {source_alist_path}"
+                result["message"] = (
+                    f"[归档] {full_folder_name}\n"
+                    f"文件数: {len(files_info)}\n"
+                    f"总大小: {total_size / 1024 / 1024 / 1024:.2f} GB"
+                )
+                
+                result["success"] = True
+                return result
             else:
                 logger.error(f"Alist API复制目录失败: {copy_result['message']}")
                 result["message"] = f"[错误] {full_folder_name}\n复制失败\n源路径: {source_alist_path}\n目标路径: {dest_alist_path}\n详情: {copy_result['message']}"

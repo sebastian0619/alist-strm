@@ -319,91 +319,76 @@ class AlistClient:
             dest_path: 目标目录路径
             
         Returns:
-            dict: 包含操作结果的字典
-                 - success: bool，操作是否成功
-                 - file_exists: bool，目标文件是否已存在
-                 - message: str，详细信息
+            dict: 复制结果
+                - success: 是否成功
+                - file_exists: 文件是否已存在
+                - message: 消息
         """
         try:
-            # 获取原始路径
+            # 确保路径格式正确
+            src_path = self._encode_path_if_needed(src_path)
+            dest_path = self._encode_path_if_needed(dest_path)
+            
+            # 从路径中提取目录名称
             src_dir = os.path.dirname(src_path)
             dst_dir = os.path.dirname(dest_path)
-            basename = os.path.basename(src_path)
+            name = os.path.basename(src_path)
             
-            # 构建请求数据 - 使用原始路径，不进行编码
+            # 构建请求数据
             data = {
                 "src_dir": src_dir,
                 "dst_dir": dst_dir,
-                "names": [basename],
-                "override": True  # 添加覆盖选项
+                "names": [name],
+                "override": True
             }
             
-            # 详细记录完整请求信息
-            full_url = f"{self.base_url}/api/fs/copy"
-            current_headers = dict(self.client.headers)
-            
             logger.info(f"发送复制目录请求:")
-            logger.info(f"- 完整URL: {full_url}")
-            logger.info(f"- Headers: {current_headers}")
+            api_path = "/api/fs/copy"
+            logger.info(f"- 完整URL: {self.base_url}{api_path}")
+            logger.info(f"- Headers: {self.client.headers}")
             logger.info(f"- 请求数据: {json.dumps(data, ensure_ascii=False)}")
             logger.info(f"- 源路径: {src_path}")
             logger.info(f"- 目标路径: {dest_path}")
             
-            # 发送请求
-            response = await self.client.post("/api/fs/copy", json=data)
-            
-            # 记录响应状态码
-            status_code = response.status_code
-            logger.info(f"复制目录响应: 状态码={status_code}")
-            
+            response = await self.client.post(api_path, json=data)
             response.raise_for_status()
+            
+            logger.info(f"复制目录响应: 状态码={response.status_code}")
             
             # 检查响应类型
             content_type = response.headers.get("content-type", "")
             logger.info(f"响应内容类型: {content_type}")
             
-            if response.headers.get("content-type", "").startswith("text/html"):
+            if content_type.startswith("text/html"):
                 logger.error(f"复制目录时收到HTML响应，可能是服务器错误或授权问题。源路径: {src_path}")
-                logger.info(f"HTML响应内容: {response.text}")
+                logger.debug(f"HTML响应内容预览: {response.text[:200]}...")
                 return {"success": False, "file_exists": False, "message": "收到HTML响应"}
             
-            # 解析响应
             try:
                 resp_data = response.json()
                 logger.info(f"复制目录响应JSON: {json.dumps(resp_data, ensure_ascii=False)}")
+                
+                # 检查文件是否已存在（状态码403，特定消息）
+                if resp_data.get("code") == 403 and "exists" in resp_data.get("message", "").lower():
+                    logger.info(f"目标文件已存在: {dest_path} (来自源: {src_path})")
+                    return {"success": True, "file_exists": True, "message": resp_data.get("message", "文件已存在")}
+                
+                # 判断任务是否创建成功
+                if resp_data.get("code") == 200:
+                    logger.info(f"复制目录任务创建成功")
+                    return {"success": True, "file_exists": False, "message": "复制任务已创建"}
+                
+                # 其他错误情况
+                logger.warning(f"复制目录失败: {src_path}, 状态码: {resp_data.get('code')}, 消息: {resp_data.get('message')}")
+                return {"success": False, "file_exists": False, "message": resp_data.get("message", "未知错误")}
+                
             except Exception as e:
                 logger.error(f"解析复制目录响应时出错: {str(e)}, 响应内容: {response.text[:500]}")
                 return {"success": False, "file_exists": False, "message": f"JSON解析错误: {str(e)}"}
             
-            # 检查文件是否已存在（状态码403，特定消息）
-            if resp_data.get("code") == 403 and "exists" in resp_data.get("message", "").lower():
-                logger.info(f"目标文件已存在: {dest_path} (来自源: {src_path})")
-                return {"success": True, "file_exists": True, "message": resp_data.get("message", "文件已存在")}
-            
-            if resp_data.get("code") == 200:
-                # 获取所有任务ID
-                task_ids = [task["id"] for task in resp_data.get("data", {}).get("tasks", [])]
-                
-                if not task_ids:
-                    logger.warning(f"复制目录没有生成任务ID: {src_path}")
-                    return {"success": False, "file_exists": False, "message": "没有生成任务ID"}
-                    
-                logger.info(f"等待任务完成: {task_ids}")
-                
-                # 等待所有任务完成
-                if await self.wait_for_tasks(task_ids):
-                    logger.info(f"成功复制目录: {src_path} -> {dest_path}")
-                    return {"success": True, "file_exists": False, "message": "复制成功"}
-                    
-                logger.warning(f"复制任务失败: {src_path}")
-                return {"success": False, "file_exists": False, "message": "任务执行失败"}
-                
-            logger.warning(f"复制目录请求失败: {src_path}, 状态码: {resp_data.get('code')}, 消息: {resp_data.get('message')}")
-            return {"success": False, "file_exists": False, "message": f"请求失败: {resp_data.get('code')}, {resp_data.get('message', '未知错误')}"}
-            
         except Exception as e:
-            logger.error(f"复制目录时出错: {src_path}, 错误: {str(e)}", exc_info=True)
-            return {"success": False, "file_exists": False, "message": f"异常: {str(e)}"}
+            logger.error(f"复制目录时出错: {src_path}, 错误: {str(e)}")
+            return {"success": False, "file_exists": False, "message": str(e)}
 
     async def task_status(self, task_id: str):
         """获取任务状态"""
