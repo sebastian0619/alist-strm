@@ -20,9 +20,7 @@ class AlistClient:
         # 创建客户端，设置认证头
         headers = {"Content-Type": "application/json"}
         if token:
-            # 检查token是否已经包含"Bearer "前缀
-            if not token.startswith("Bearer "):
-                token = f"Bearer {token}"
+            # Alist使用直接的令牌格式，不需要添加Bearer前缀
             headers["Authorization"] = token
             
         logger.debug(f"初始化AlistClient: {base_url}, Token: {'已设置' if token else '无'}")
