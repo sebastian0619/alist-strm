@@ -219,15 +219,21 @@ async def update_deletion_delay(settings: DelayDaysSettings):
             }
         
         # 更新配置文件
-        # 注意：这里只是更新内存中的设置，不会修改.env文件
         service_manager.archive_service.settings.archive_delete_delay_days = settings.days
+        
+        # 保存到config.json文件
+        save_result = service_manager.archive_service.settings.save_to_config()
         
         # 更新服务的延迟时间
         service_manager.archive_service._deletion_delay = settings.days * 24 * 3600
         
+        message = f"延迟删除天数已更新为: {settings.days}"
+        if not save_result:
+            message += "（但保存到配置文件失败）"
+            
         return {
             "success": True,
-            "message": f"延迟删除天数已更新为: {settings.days}"
+            "message": message
         }
     except Exception as e:
         return {
@@ -266,6 +272,48 @@ async def delete_file_now(item_info: DeleteItemInfo):
         return {
             "success": False,
             "message": "未找到匹配的待删除项目"
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "message": str(e)
+        }
+
+@router.post("/delete-all-now")
+async def delete_all_files_now():
+    """立即删除所有待删除项目"""
+    try:
+        if not service_manager.archive_service.settings.archive_enabled:
+            raise HTTPException(status_code=400, detail="归档功能未启用")
+        
+        # 复制一份待删除列表，避免在迭代过程中修改原列表
+        pending_items = service_manager.archive_service._pending_deletions.copy()
+        if not pending_items:
+            return {
+                "success": True,
+                "message": "待删除列表为空"
+            }
+        
+        deleted_count = 0
+        failed_count = 0
+        
+        # 执行删除操作
+        for item in pending_items:
+            path = item["path"]
+            # 立即删除文件
+            result = await service_manager.archive_service._delete_file(path)
+            if result:
+                service_manager.archive_service._pending_deletions.remove(item)
+                deleted_count += 1
+            else:
+                failed_count += 1
+        
+        # 保存更新后的列表
+        service_manager.archive_service._save_pending_deletions()
+        
+        return {
+            "success": True,
+            "message": f"已删除 {deleted_count} 个文件，失败 {failed_count} 个"
         }
     except Exception as e:
         return {

@@ -24,6 +24,40 @@ class Settings(BaseSettings):
             except Exception:
                 pass
     
+    def save_to_config(self):
+        """保存当前配置到config/config.json文件"""
+        config_file = "config/config.json"
+        try:
+            # 确保目录存在
+            os.makedirs(os.path.dirname(config_file), exist_ok=True)
+            
+            # 如果文件已存在，先读取现有配置
+            existing_config = {}
+            if os.path.exists(config_file):
+                try:
+                    with open(config_file, 'r', encoding='utf-8') as f:
+                        existing_config = json.load(f)
+                except Exception:
+                    pass
+            
+            # 获取实例的所有属性，但排除以下划线开头的私有属性
+            config_dict = {}
+            for key, value in self.__dict__.items():
+                if not key.startswith('_') and key != 'model_config':
+                    config_dict[key] = value
+            
+            # 更新现有配置
+            existing_config.update(config_dict)
+            
+            # 写入文件
+            with open(config_file, 'w', encoding='utf-8') as f:
+                json.dump(existing_config, f, ensure_ascii=False, indent=4)
+                
+            return True
+        except Exception as e:
+            print(f"保存配置失败: {str(e)}")
+            return False
+    
     # 基本配置
     run_after_startup: bool = Field(default=False, alias="RUN_AFTER_STARTUP")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")

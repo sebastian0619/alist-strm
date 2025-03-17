@@ -29,14 +29,24 @@
           </div>
 
           <div class="list-header">
-            <a-popconfirm
-              title="确定要清空所有待删除项目吗？此操作将取消所有文件的删除计划。"
-              @confirm="clearAllItems"
-            >
-              <a-button type="primary" danger>
-                清空待删除列表
-              </a-button>
-            </a-popconfirm>
+            <a-space>
+              <a-popconfirm
+                title="确定要立即删除所有待删除项目吗？此操作无法撤销，所有文件和目录将被立即删除。"
+                @confirm="deleteAllNow"
+              >
+                <a-button type="primary" danger>
+                  立即删除所有
+                </a-button>
+              </a-popconfirm>
+              <a-popconfirm
+                title="确定要清空所有待删除项目吗？此操作将取消所有文件的删除计划。"
+                @confirm="clearAllItems"
+              >
+                <a-button type="primary" danger>
+                  清空待删除列表
+                </a-button>
+              </a-popconfirm>
+            </a-space>
           </div>
 
           <a-list
@@ -273,6 +283,32 @@ const deleteNow = async (item) => {
     if (data.success) {
       pendingItems.value = pendingItems.value.filter(i => i.path !== item.path);
       message.success('文件已成功删除');
+    } else {
+      message.error(data.message || '删除失败');
+    }
+  } catch (error) {
+    message.error('删除失败: ' + error.message);
+  } finally {
+    loading.value = false;
+  }
+};
+
+// 立即删除所有待删除文件
+const deleteAllNow = async () => {
+  loading.value = true;
+  try {
+    const response = await fetch('/api/archive/delete-all-now', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    const data = await response.json();
+    
+    if (data.success) {
+      pendingItems.value = [];
+      message.success(data.message || '所有文件已成功删除');
     } else {
       message.error(data.message || '删除失败');
     }
