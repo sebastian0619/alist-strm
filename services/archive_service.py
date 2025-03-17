@@ -383,7 +383,7 @@ class ArchiveService:
                     full_folder_name = f"{parent_dir_name} - {folder_name}"
             
             # 处理特殊字符，确保路径安全
-            safe_folder_name = re.sub(r'[:\\/*?\"<>|]', '_', full_folder_name)
+            safe_folder_name = re.sub(r'[:\\*?\"<>|]', '_', full_folder_name)
             if safe_folder_name != full_folder_name:
                 logger.debug(f"- 处理后的安全名称: {safe_folder_name}")
             
@@ -486,12 +486,14 @@ class ArchiveService:
                 source_alist_path = str(Path(self.settings.archive_source_alist) / relative_path).replace('\\', '/').lstrip("/")
                 dest_alist_path = str(Path(self.settings.archive_target_root) / relative_path).replace('\\', '/').lstrip("/")
                 
-                # 确认路径不包含非法字符
-                safe_source_path = re.sub(r'[:\\/*?\"<>|]', '_', source_alist_path)
-                safe_dest_path = re.sub(r'[:\\/*?\"<>|]', '_', dest_alist_path)
+                # 确认路径不包含非法字符（不包括斜杠）
+                safe_source_path = re.sub(r'[:\\*?\"<>|]', '_', source_alist_path)
+                safe_dest_path = re.sub(r'[:\\*?\"<>|]', '_', dest_alist_path)
                 
                 if safe_source_path != source_alist_path or safe_dest_path != dest_alist_path:
-                    logger.warning(f"路径包含特殊字符，将被替换:")
+                    logger.warning(f"路径包含特殊字符，将被替换（保留路径分隔符）:")
+                    logger.warning(f"  原始源路径: {source_alist_path}")
+                    logger.warning(f"  安全源路径: {safe_source_path}")
                     source_alist_path = safe_source_path
                     dest_alist_path = safe_dest_path
             
