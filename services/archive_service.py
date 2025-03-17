@@ -45,7 +45,7 @@ class ArchiveService:
         }
         
         # 定义待删除文件列表的JSON文件路径
-        self._pending_deletions_file = os.path.join("config", "pending_deletions.json")
+        self._pending_deletions_file = os.path.join("/app/cache", "pending_deletions.json")
         # 初始化待删除文件队列
         self._pending_deletions = self._load_pending_deletions()
         # 删除延迟时间（秒）- 从配置中读取
@@ -63,8 +63,8 @@ class ArchiveService:
     def _load_pending_deletions(self) -> list:
         """从JSON文件加载待删除列表"""
         try:
-            # 确保config目录存在
-            os.makedirs("config", exist_ok=True)
+            # 确保cache目录存在
+            os.makedirs("/app/cache", exist_ok=True)
             if os.path.exists(self._pending_deletions_file):
                 with open(self._pending_deletions_file, 'r', encoding='utf-8') as f:
                     data = json.load(f)
@@ -72,7 +72,10 @@ class ArchiveService:
                     for item in data:
                         if 'path' in item and isinstance(item['path'], str):
                             item['path'] = Path(item['path'])
+                    logger.info(f"从 {self._pending_deletions_file} 加载了 {len(data)} 个待删除项目")
                     return data
+            else:
+                logger.info(f"待删除文件列表不存在: {self._pending_deletions_file}")
         except Exception as e:
             logger.error(f"加载待删除列表失败: {e}")
         return []
@@ -80,8 +83,8 @@ class ArchiveService:
     def _save_pending_deletions(self):
         """将待删除列表保存到JSON文件"""
         try:
-            # 确保config目录存在
-            os.makedirs("config", exist_ok=True)
+            # 确保cache目录存在
+            os.makedirs("/app/cache", exist_ok=True)
             
             # 将Path对象转换为字符串以便JSON序列化
             data_to_save = []
@@ -93,6 +96,7 @@ class ArchiveService:
                 
             with open(self._pending_deletions_file, 'w', encoding='utf-8') as f:
                 json.dump(data_to_save, f, ensure_ascii=False, indent=2)
+            logger.info(f"成功保存 {len(data_to_save)} 个待删除项目到 {self._pending_deletions_file}")
         except Exception as e:
             logger.error(f"保存待删除列表失败: {e}")
     
