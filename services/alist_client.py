@@ -17,7 +17,7 @@ class AlistClient:
         )
     
     def _encode_path_if_needed(self, path: str) -> str:
-        """如果路径包含非ASCII字符，则进行URL编码
+        """如果路径包含非ASCII字符，则进行URL编码，但保留路径分隔符
         
         Args:
             path: 原始路径
@@ -27,7 +27,8 @@ class AlistClient:
         """
         # 检查路径中是否包含非ASCII字符
         if any(ord(c) > 127 for c in path):
-            return quote(path)
+            # 使用safe='/'参数确保不编码路径分隔符
+            return quote(path, safe='/')
         return path
     
     async def list_files(self, path: str) -> list:
