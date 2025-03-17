@@ -233,4 +233,42 @@ async def update_deletion_delay(settings: DelayDaysSettings):
         return {
             "success": False,
             "message": str(e)
+        }
+
+@router.post("/delete-now")
+async def delete_file_now(item_info: DeleteItemInfo):
+    """立即删除指定的文件"""
+    try:
+        if not service_manager.archive_service.settings.archive_enabled:
+            raise HTTPException(status_code=400, detail="归档功能未启用")
+        
+        # 找到匹配的项目
+        for item in service_manager.archive_service._pending_deletions[:]:
+            path_str = str(item["path"]) if isinstance(item["path"], Path) else item["path"]
+            if path_str == item_info.path and abs(item["delete_time"] - item_info.delete_time) < 1:
+                # 执行删除操作
+                result = await service_manager.archive_service._delete_file(item["path"])
+                if result:
+                    # 从待删除列表中移除
+                    service_manager.archive_service._pending_deletions.remove(item)
+                    # 保存更新后的列表
+                    service_manager.archive_service._save_pending_deletions()
+                    return {
+                        "success": True,
+                        "message": f"已删除文件: {path_str}"
+                    }
+                else:
+                    return {
+                        "success": False,
+                        "message": f"删除文件失败: {path_str}"
+                    }
+        
+        return {
+            "success": False,
+            "message": "未找到匹配的待删除项目"
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "message": str(e)
         } 

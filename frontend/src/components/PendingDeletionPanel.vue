@@ -59,10 +59,16 @@
                     </div>
                     <div class="item-actions">
                       <a-popconfirm
+                        title="确定要立即删除这个文件吗？此操作无法撤销。"
+                        @confirm="deleteNow(item)"
+                      >
+                        <a-button type="primary" danger style="margin-right: 8px;">立即删除</a-button>
+                      </a-popconfirm>
+                      <a-popconfirm
                         title="确定要取消删除这个文件吗?"
                         @confirm="removeItem(item)"
                       >
-                        <a-button type="primary" danger>取消删除</a-button>
+                        <a-button type="primary">取消删除</a-button>
                       </a-popconfirm>
                     </div>
                   </div>
@@ -242,6 +248,36 @@ const clearAllItems = async () => {
     }
   } catch (error) {
     message.error('操作失败: ' + error.message);
+  } finally {
+    loading.value = false;
+  }
+};
+
+// 立即删除文件
+const deleteNow = async (item) => {
+  loading.value = true;
+  try {
+    const response = await fetch('/api/archive/delete-now', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        path: item.path,
+        delete_time: Math.floor(item.timestamp / 1000) // 转回秒级时间戳
+      })
+    });
+    
+    const data = await response.json();
+    
+    if (data.success) {
+      pendingItems.value = pendingItems.value.filter(i => i.path !== item.path);
+      message.success('文件已成功删除');
+    } else {
+      message.error(data.message || '删除失败');
+    }
+  } catch (error) {
+    message.error('删除失败: ' + error.message);
   } finally {
     loading.value = false;
   }

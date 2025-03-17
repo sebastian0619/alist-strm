@@ -945,4 +945,79 @@ class ArchiveService:
                 "success": False,
                 "message": f"❌ {source_path} 处理失败: {str(e)}",
                 "size": 0
-            } 
+            }
+
+    async def _delete_file(self, path):
+        """立即删除指定的文件或目录
+        
+        Args:
+            path: 要删除的文件或目录路径（Path对象或字符串）
+            
+        Returns:
+            bool: 删除是否成功
+        """
+        try:
+            # 确保path是Path对象
+            if isinstance(path, str):
+                path = Path(path)
+                
+            if not path.exists():
+                logger.warning(f"要删除的文件或目录不存在: {path}")
+                return False
+                
+            # 执行删除操作
+            if path.is_dir():
+                shutil.rmtree(str(path))
+            else:
+                path.unlink()
+                
+            logger.info(f"已立即删除文件或目录: {path}")
+            return True
+        except Exception as e:
+            logger.error(f"删除文件或目录失败 {path}: {e}")
+            return False
+
+    async def _check_pending_deletions(self):
+        """定期检查待删除文件，删除超过延迟时间的文件"""
+        logger.info("待删除文件检查任务已启动")
+        
+        # 初始加载，确保有最新数据
+        self._pending_deletions = self._load_pending_deletions()
+        logger.info(f"初始化时待删除文件数量: {len(self._pending_deletions)}")
+        
+        while True:
+            try:
+                current_time = time.time()
+                items_to_delete = []
+                
+                # 确保使用最新列表
+                if len(self._pending_deletions) > 0:
+                    logger.info(f"检查待删除文件列表，共 {len(self._pending_deletions)} 个项目")
+                
+                # 识别需要删除的项目
+                for item in self._pending_deletions:
+                    if current_time >= item["delete_time"]:
+                        items_to_delete.append(item)
+                
+                # 执行删除操作
+                for item in items_to_delete:
+                    path = item["path"]
+                    try:
+                        if path.is_dir():
+                            shutil.rmtree(str(path))
+                        else:
+                            path.unlink()
+                        logger.info(f"已删除延迟文件: {path}")
+                        self._pending_deletions.remove(item)
+                    except Exception as e:
+                        logger.error(f"删除文件失败 {path}: {e}")
+                
+                # 如果有删除操作，保存更新后的列表
+                if items_to_delete:
+                    self._save_pending_deletions()
+                    logger.info(f"已删除 {len(items_to_delete)} 个过期文件，剩余 {len(self._pending_deletions)} 个待删除项目")
+                    
+            except Exception as e:
+                logger.error(f"检查待删除文件时出错: {e}")
+            finally:
+                await asyncio.sleep(3600)  # 每小时检查一次 
