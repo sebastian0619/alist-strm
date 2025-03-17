@@ -254,6 +254,7 @@ class AlistClient:
                  - message: str，详细信息
         """
         try:
+            # 构建请求数据 - 使用原始路径，不进行编码
             data = {
                 "src_dir": os.path.dirname(src_path),
                 "dst_dir": os.path.dirname(dest_path),
@@ -261,6 +262,9 @@ class AlistClient:
             }
             
             logger.info(f"发送复制请求: {data}")
+            # 记录完整的原始请求数据
+            logger.debug(f"API请求数据: {json.dumps(data, ensure_ascii=False)}")
+            
             response = await self.client.post("/api/fs/copy", json=data)
             response.raise_for_status()
             
@@ -315,14 +319,14 @@ class AlistClient:
                  - message: str，详细信息
         """
         try:
-            # 安全处理路径中的特殊字符
+            # 获取原始路径
             src_dir = os.path.dirname(src_path)
             dst_dir = os.path.dirname(dest_path)
             basename = os.path.basename(src_path)
             
             logger.debug(f"复制目录请求: 从 {src_dir} 到 {dst_dir}, 文件名: {basename}")
             
-            # 构建请求数据 - 不对路径进行编码，由API客户端处理
+            # 构建请求数据 - 使用原始路径，不进行编码
             data = {
                 "src_dir": src_dir,
                 "dst_dir": dst_dir,
@@ -331,7 +335,7 @@ class AlistClient:
             }
             
             # 记录完整的原始请求数据
-            logger.debug(f"API请求数据(原始): {json.dumps(data, ensure_ascii=False)}")
+            logger.debug(f"API请求数据: {json.dumps(data, ensure_ascii=False)}")
             
             # 发送请求
             response = await self.client.post("/api/fs/copy", json=data)
@@ -372,65 +376,6 @@ class AlistClient:
                     
                 logger.warning(f"复制任务失败: {src_path}")
                 return {"success": False, "file_exists": False, "message": "任务执行失败"}
-            
-            # 如果API返回500错误，可能是因为路径问题，尝试使用URL编码后的路径重试
-            if resp_data.get("code") == 500 and "storage not found" in resp_data.get("message", ""):
-                logger.warning(f"首次请求失败，尝试使用URL编码路径重试")
-                
-                # 使用URL编码处理路径
-                encoded_src_dir = self._encode_path_if_needed(src_dir)
-                encoded_dst_dir = self._encode_path_if_needed(dst_dir)
-                encoded_basename = self._encode_path_if_needed(basename)
-                
-                # 构建包含编码路径的请求数据
-                encoded_data = {
-                    "src_dir": encoded_src_dir,
-                    "dst_dir": encoded_dst_dir,
-                    "names": [encoded_basename],
-                    "override": True
-                }
-                
-                # 记录编码后的请求信息
-                logger.debug(f"API请求数据(编码后): {json.dumps(encoded_data, ensure_ascii=False)}")
-                logger.debug(f"使用编码路径重试: 从 {encoded_src_dir} 到 {encoded_dst_dir}, 文件名: {encoded_basename}")
-                
-                # 重新发送请求
-                retry_response = await self.client.post("/api/fs/copy", json=encoded_data)
-                retry_response.raise_for_status()
-                
-                # 检查响应类型
-                if retry_response.headers.get("content-type", "").startswith("text/html"):
-                    logger.error(f"使用编码路径仍收到HTML响应，可能是授权问题。源路径: {src_path}")
-                    logger.debug(f"HTML响应内容预览: {retry_response.text[:200]}...")
-                    return {"success": False, "file_exists": False, "message": "编码后仍收到HTML响应"}
-                
-                retry_data = retry_response.json()
-                
-                # 检查文件是否已存在（状态码403，特定消息）
-                if retry_data.get("code") == 403 and "exists" in retry_data.get("message", "").lower():
-                    logger.info(f"目标文件已存在(编码后检测): {dest_path} (来自源: {src_path})")
-                    return {"success": True, "file_exists": True, "message": retry_data.get("message", "文件已存在")}
-                
-                if retry_data.get("code") == 200:
-                    # 获取所有任务ID
-                    task_ids = [task["id"] for task in retry_data.get("data", {}).get("tasks", [])]
-                    
-                    if not task_ids:
-                        logger.warning(f"编码路径重试后仍未生成任务ID: {src_path}")
-                        return {"success": False, "file_exists": False, "message": "编码后仍未生成任务ID"}
-                        
-                    logger.debug(f"等待任务完成: {task_ids}")
-                    
-                    # 等待所有任务完成
-                    if await self.wait_for_tasks(task_ids):
-                        logger.info(f"使用编码路径成功复制目录: {src_path} -> {dest_path}")
-                        return {"success": True, "file_exists": False, "message": "使用编码路径复制成功"}
-                        
-                    logger.warning(f"使用编码路径的复制任务失败: {src_path}")
-                    return {"success": False, "file_exists": False, "message": "编码后任务执行失败"}
-                
-                logger.warning(f"使用编码路径的复制请求失败: {src_path}, 状态码: {retry_data.get('code')}, 消息: {retry_data.get('message')}")
-                return {"success": False, "file_exists": False, "message": f"编码后请求失败: {retry_data.get('message', '未知错误')}"}
                 
             logger.warning(f"复制目录请求失败: {src_path}, 状态码: {resp_data.get('code')}, 消息: {resp_data.get('message')}")
             return {"success": False, "file_exists": False, "message": f"请求失败: {resp_data.get('code')}, {resp_data.get('message', '未知错误')}"}
