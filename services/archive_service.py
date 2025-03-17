@@ -467,24 +467,32 @@ class ArchiveService:
                             "relative_path": file_path.relative_to(directory)
                         })
             
+            # 如果有最近修改的文件，记录并返回
             if recent_files:
-                # 按时间排序，展示最近的3个文件
-                recent_files.sort(key=lambda x: x[1])
-                example_files = []
-                for f, days in recent_files[:3]:
-                    example_files.append(f"{f.name} ({days:.1f}天)")
+                recent_files.sort(key=lambda x: x[1])  # 按时间升序排序
+                most_recent = recent_files[0]
+                days = most_recent[1]
                 
                 result["message"] = (
                     f"[跳过] {full_folder_name}\n"
-                    f"原因: 存在近期创建或修改的文件\n"
-                    f"文件: {', '.join(example_files)}"
+                    f"原因: 存在最近文件\n"
+                    f"最近文件: {most_recent[0].name}\n"
+                    f"距今时间: {days:.1f} 天"
                 )
-                logger.debug(f"目录包含近期文件，跳过处理")
-                logger.debug(f"近期文件示例: {', '.join(example_files)}")
                 return result
-
-            # 获取目标路径
-            relative_path = directory.relative_to(self.settings.archive_source_root)
+            
+            # 如果没有文件需要处理，跳过
+            if not files_info:
+                result["message"] = (
+                    f"[跳过] {full_folder_name}\n"
+                    f"原因: 目录中没有需要处理的文件"
+                )
+                return result
+            
+            # 构建源和目标的相对路径
+            source_relative_path = directory.relative_to(self.settings.archive_source_root)
+            # 检查source_relative_path是否包含parent_dir_name和folder_name
+            relative_path = source_relative_path
             
             # 检查是否是季文件夹，如果是则处理路径
             if parent_dir_name and re.search(r'(?i)season\s*\d+|s\d+|第.+?季', folder_name):
@@ -563,6 +571,15 @@ class ArchiveService:
                     result["success"] = True
                     result["moved_files"] = len(files_info)
                     result["total_size"] = total_size
+                    
+                    # 无论文件是否已存在，都确保STRM文件存在
+                    try:
+                        strm_generated = await self.generate_strm_for_target(dest_alist_path, directory, files_info)
+                        if strm_generated:
+                            logger.info(f"已生成指向目标目录的STRM文件: {dest_alist_path}")
+                    except Exception as e:
+                        logger.error(f"生成STRM文件失败: {str(e)}")
+                        
                     return result
                 
                 # 正常复制成功情况 - 简化逻辑，不再等待任务完成和验证文件
@@ -570,10 +587,18 @@ class ArchiveService:
                 result["total_size"] = total_size
                 result["moved_files"] = len(files_info)
                 
+                # 立即生成STRM文件，不等待复制完成
+                try:
+                    strm_generated = await self.generate_strm_for_target(dest_alist_path, directory, files_info)
+                    if strm_generated:
+                        logger.info(f"已生成指向目标目录的STRM文件: {dest_alist_path}")
+                except Exception as e:
+                    logger.error(f"生成STRM文件失败: {str(e)}")
+                
                 # 添加到删除队列
                 if self.settings.archive_delete_source:
                     self._add_to_pending_deletion(directory)
-                    logger.info(f"已将目录添加到待删除队列: {directory}")
+                    logger.info(f"已将原目录添加到待删除队列: {directory}")
                 
                 result["message"] = (
                     f"[归档] {full_folder_name}\n"
@@ -592,7 +617,274 @@ class ArchiveService:
             logger.error(f"处理目录失败 {directory}: {e}", exc_info=True)
             
         return result
-    
+        
+    async def generate_strm_for_target(self, target_alist_path: str, source_directory: Path, files_info: list) -> bool:
+        """根据目标Alist路径生成STRM文件，不等待复制完成
+        
+        Args:
+            target_alist_path: 目标Alist路径
+            source_directory: 源目录Path对象
+            files_info: 文件信息列表
+            
+        Returns:
+            bool: 是否成功生成STRM文件
+        """
+        try:
+            logger.info(f"立即为目标路径生成STRM文件: {target_alist_path}")
+            service_manager = self._get_service_manager()
+            strm_service = service_manager.strm_service
+            
+            # 获取相对路径
+            source_rel_path = source_directory.relative_to(self.settings.archive_source_root)
+            
+            # 创建输出目录（与原始strm_service保持一致）
+            output_base_dir = strm_service.settings.output_dir
+            output_rel_dir = str(source_rel_path)
+            output_dir = os.path.join(output_base_dir, output_rel_dir)
+            os.makedirs(output_dir, exist_ok=True)
+            
+            # 统计处理文件数
+            strm_count = 0
+            
+            # 遍历文件列表，为每个视频文件生成strm
+            for file_info in files_info:
+                file_path = file_info["path"]
+                filename = file_path.name
+                
+                # 只处理视频文件
+                if not strm_service._is_video_file(filename):
+                    continue
+                    
+                # 检查文件大小
+                if file_info.get("size", 0) < strm_service.settings.min_file_size * 1024 * 1024:
+                    logger.debug(f"跳过小视频文件: {filename}")
+                    continue
+                
+                # 构建相对路径
+                rel_file_path = str(file_info["relative_path"]).replace('\\', '/')
+                
+                # 构建完整的目标Alist路径
+                target_file_path = f"{target_alist_path}/{rel_file_path}"
+                
+                # 构建strm文件路径
+                output_base_name = os.path.splitext(filename)[0]
+                strm_path = os.path.join(output_dir, f"{output_base_name}.strm")
+                
+                # 构建strm文件内容 - URL编码路径
+                from urllib.parse import quote
+                if not target_file_path.startswith('/'):
+                    target_file_path = '/' + target_file_path
+                strm_url = f"{strm_service.settings.alist_url}/d{quote(target_file_path)}"
+                
+                # 检查文件是否已存在且内容相同
+                if os.path.exists(strm_path):
+                    try:
+                        with open(strm_path, 'r', encoding='utf-8') as f:
+                            existing_content = f.read().strip()
+                        if existing_content == strm_url:
+                            logger.debug(f"STRM文件已存在且内容相同: {strm_path}")
+                            continue
+                    except Exception as e:
+                        logger.warning(f"读取现有STRM文件失败: {str(e)}")
+                
+                # 写入strm文件
+                with open(strm_path, 'w', encoding='utf-8') as f:
+                    f.write(strm_url)
+                
+                logger.info(f"已创建STRM文件: {strm_path}")
+                strm_count += 1
+            
+            logger.info(f"成功生成 {strm_count} 个STRM文件，指向目标路径: {target_alist_path}")
+            return strm_count > 0
+            
+        except Exception as e:
+            logger.error(f"生成STRM文件失败: {str(e)}", exc_info=True)
+            return False
+
+    def _load_media_types(self) -> Dict[str, Dict]:
+        """从config/archive.json加载媒体类型配置"""
+        config_file = "config/archive.json"
+        if os.path.exists(config_file):
+            try:
+                with open(config_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except Exception as e:
+                logger.error(f"加载媒体类型配置失败: {e}")
+        return json.loads(self.settings.archive_media_types)
+
+    def save_media_types(self):
+        """保存媒体类型配置到config/archive.json"""
+        config_file = "config/archive.json"
+        try:
+            # 确保config目录存在
+            os.makedirs(os.path.dirname(config_file), exist_ok=True)
+            with open(config_file, 'w', encoding='utf-8') as f:
+                json.dump(self.media_types, f, ensure_ascii=False, indent=4)
+            logger.info("媒体类型配置已保存")
+        except Exception as e:
+            logger.error(f"保存媒体类型配置失败: {e}")
+            
+    @property
+    def media_types(self) -> Dict[str, Dict]:
+        return self._media_types
+        
+    @media_types.setter
+    def media_types(self, value: Dict[str, Dict]):
+        self._media_types = value
+        # 当media_types被更新时，自动保存到文件
+        self.save_media_types()
+        # 更新阈值配置
+        self.thresholds = {
+            name: MediaThreshold(
+                info["creation_days"],
+                info["mtime_days"]
+            ) for name, info in self._media_types.items()
+        }
+
+    async def process_file(self, source_path: Path) -> Dict:
+        """处理单个文件的归档
+        
+        Args:
+            source_path: 源文件路径
+            
+        Returns:
+            Dict: 处理结果，包含success、message和size字段
+        """
+        try:
+            # 检查文件是否存在且是文件
+            if not source_path.is_file():
+                return {
+                    "success": False,
+                    "message": f"❌ {source_path} 不是文件",
+                    "size": 0
+                }
+            
+            # 获取文件大小
+            file_size = source_path.stat().st_size
+            
+            # 获取媒体类型
+            media_type = self.get_media_type(source_path)
+            if not media_type:
+                return {
+                    "success": False,
+                    "message": f"❌ {source_path} 未匹配到媒体类型",
+                    "size": 0
+                }
+            
+            # 检查文件是否满足阈值条件
+            creation_time = self.get_creation_time(source_path)
+            mtime = source_path.stat().st_mtime
+            
+            threshold = self.thresholds[media_type]
+            creation_days = (time.time() - creation_time) / (24 * 3600)
+            mtime_days = (time.time() - mtime) / (24 * 3600)
+            
+            if creation_days < threshold.creation_days or mtime_days < threshold.mtime_days:
+                return {
+                    "success": False,
+                    "message": f"⏳ {source_path} 未达到归档阈值",
+                    "size": 0
+                }
+            
+            # 构建目标路径，保持相对路径结构
+            relative_path = source_path.relative_to(self.settings.archive_source_root)
+            dest_path = Path(self.settings.archive_target_root) / relative_path
+            
+            # 构建Alist路径
+            source_alist_path = str(source_path).replace(str(self.settings.archive_source_root), "").lstrip("/")
+            dest_alist_path = str(dest_path).replace(str(self.settings.archive_target_root), "").lstrip("/")
+            
+            # 使用Alist API复制文件
+            copy_result = await self.alist_client.copy_file(source_alist_path, dest_alist_path)
+            
+            # 检查复制结果
+            if not copy_result["success"]:
+                return {
+                    "success": False,
+                    "message": f"❌ {source_path} 复制失败: {copy_result['message']}",
+                    "size": 0
+                }
+                
+            # 处理文件已存在的情况
+            if copy_result["file_exists"]:
+                logger.info(f"目标位置已存在文件: {copy_result['message']}")
+                # 如果配置了删除源文件
+                if self.settings.archive_delete_source:
+                    self._add_to_pending_deletion(source_path)
+                    return {
+                        "success": True,
+                        "message": f"🗑️ {source_path} 已存在于目标位置，已加入延迟删除队列",
+                        "size": file_size
+                    }
+                return {
+                    "success": False,
+                    "message": f"⏭️ {source_path} 已存在于目标位置",
+                    "size": 0
+                }
+            
+            # 验证复制后的文件
+            if not self.verify_files(source_path, dest_path):
+                # 如果验证失败，删除目标文件
+                await self.alist_client.delete(dest_alist_path)
+                return {
+                    "success": False,
+                    "message": f"❌ {source_path} 复制验证失败",
+                    "size": 0
+                }
+            
+            # 如果配置了删除源文件
+            if self.settings.archive_delete_source:
+                self._add_to_pending_deletion(source_path)
+                return {
+                    "success": True,
+                    "message": f"✅ {source_path} -> {dest_path} (已加入延迟删除队列)",
+                    "size": file_size
+                }
+            
+            return {
+                "success": True,
+                "message": f"✅ {source_path} -> {dest_path}",
+                "size": file_size
+            }
+            
+        except Exception as e:
+            logger.error(f"处理文件失败 {source_path}: {e}")
+            return {
+                "success": False,
+                "message": f"❌ {source_path} 处理失败: {str(e)}",
+                "size": 0
+            }
+
+    async def _delete_file(self, path):
+        """立即删除指定的文件或目录
+        
+        Args:
+            path: 要删除的文件或目录路径（Path对象或字符串）
+            
+        Returns:
+            bool: 删除是否成功
+        """
+        try:
+            # 确保path是Path对象
+            if isinstance(path, str):
+                path = Path(path)
+                
+            if not path.exists():
+                logger.warning(f"要删除的文件或目录不存在: {path}")
+                return False
+                
+            # 执行删除操作
+            if path.is_dir():
+                shutil.rmtree(str(path))
+            else:
+                path.unlink()
+                
+            logger.info(f"已立即删除文件或目录: {path}")
+            return True
+        except Exception as e:
+            logger.error(f"删除文件或目录失败 {path}: {e}")
+            return False
+
     async def archive(self, test_mode: bool = False):
         """执行归档处理
         
@@ -686,7 +978,7 @@ class ArchiveService:
                         total_size += result["total_size"]
                         if "[归档]" in result["message"]:
                             success_results.append(result["message"])
-                    
+                
                     # 无论是否成功，都添加到所有结果中
                     all_results.append(result)
                     
@@ -937,36 +1229,6 @@ class ArchiveService:
                 "message": f"❌ {source_path} 处理失败: {str(e)}",
                 "size": 0
             }
-
-    async def _delete_file(self, path):
-        """立即删除指定的文件或目录
-        
-        Args:
-            path: 要删除的文件或目录路径（Path对象或字符串）
-            
-        Returns:
-            bool: 删除是否成功
-        """
-        try:
-            # 确保path是Path对象
-            if isinstance(path, str):
-                path = Path(path)
-                
-            if not path.exists():
-                logger.warning(f"要删除的文件或目录不存在: {path}")
-                return False
-                
-            # 执行删除操作
-            if path.is_dir():
-                shutil.rmtree(str(path))
-            else:
-                path.unlink()
-                
-            logger.info(f"已立即删除文件或目录: {path}")
-            return True
-        except Exception as e:
-            logger.error(f"删除文件或目录失败 {path}: {e}")
-            return False
 
     async def _check_pending_deletions(self):
         """定期检查待删除文件，删除超过延迟时间的文件"""
