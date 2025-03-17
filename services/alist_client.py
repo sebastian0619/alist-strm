@@ -240,7 +240,7 @@ class AlistClient:
             logger.error(f"移动目录时出错: {src_path}, 错误: {str(e)}")
             return False
 
-    async def copy_file(self, src_path: str, dest_path: str) -> bool:
+    async def copy_file(self, src_path: str, dest_path: str) -> dict:
         """复制文件到新位置
         
         Args:
@@ -248,7 +248,10 @@ class AlistClient:
             dest_path: 目标文件路径
             
         Returns:
-            bool: 是否成功
+            dict: 包含操作结果的字典
+                 - success: bool，操作是否成功
+                 - file_exists: bool，目标文件是否已存在
+                 - message: str，详细信息
         """
         try:
             data = {
@@ -260,29 +263,45 @@ class AlistClient:
             logger.info(f"发送复制请求: {data}")
             response = await self.client.post("/api/fs/copy", json=data)
             response.raise_for_status()
-            data = response.json()
             
-            if data.get("code") == 200:
+            # 检查响应类型
+            if response.headers.get("content-type", "").startswith("text/html"):
+                logger.error(f"复制文件时收到HTML响应，可能是服务器错误或授权问题。源路径: {src_path}")
+                logger.debug(f"HTML响应内容预览: {response.text[:200]}...")
+                return {"success": False, "file_exists": False, "message": "收到HTML响应"}
+            
+            try:
+                resp_data = response.json()
+            except Exception as e:
+                logger.error(f"解析复制文件响应时出错: {str(e)}, 响应内容: {response.text[:500]}")
+                return {"success": False, "file_exists": False, "message": f"JSON解析错误: {str(e)}"}
+            
+            # 检查文件是否已存在（状态码403，特定消息）
+            if resp_data.get("code") == 403 and "exists" in resp_data.get("message", "").lower():
+                logger.info(f"目标文件已存在: {dest_path} (来自源: {src_path})")
+                return {"success": True, "file_exists": True, "message": resp_data.get("message", "文件已存在")}
+            
+            if resp_data.get("code") == 200:
                 # 获取所有任务ID
-                task_ids = [task["id"] for task in data.get("data", {}).get("tasks", [])]
+                task_ids = [task["id"] for task in resp_data.get("data", {}).get("tasks", [])]
                 logger.info(f"等待任务完成: {task_ids}")
                 
                 # 等待所有任务完成
                 if await self.wait_for_tasks(task_ids):
                     logger.info(f"成功复制文件: {src_path} -> {dest_path}")
-                    return True
+                    return {"success": True, "file_exists": False, "message": "复制成功"}
                     
                 logger.warning(f"复制任务失败: {src_path}")
-                return False
+                return {"success": False, "file_exists": False, "message": "任务执行失败"}
                 
-            logger.warning(f"复制文件失败: {src_path}, 状态码: {data.get('code')}")
-            return False
+            logger.warning(f"复制文件失败: {src_path}, 状态码: {resp_data.get('code')}, 消息: {resp_data.get('message')}")
+            return {"success": False, "file_exists": False, "message": f"请求失败: {resp_data.get('code')}, {resp_data.get('message', '未知错误')}"}
             
         except Exception as e:
             logger.error(f"复制文件时出错: {src_path}, 错误: {str(e)}")
-            return False
+            return {"success": False, "file_exists": False, "message": f"异常: {str(e)}"}
 
-    async def copy_directory(self, src_path: str, dest_path: str) -> bool:
+    async def copy_directory(self, src_path: str, dest_path: str) -> dict:
         """复制目录到新位置
         
         Args:
@@ -290,7 +309,10 @@ class AlistClient:
             dest_path: 目标目录路径
             
         Returns:
-            bool: 是否成功
+            dict: 包含操作结果的字典
+                 - success: bool，操作是否成功
+                 - file_exists: bool，目标文件是否已存在
+                 - message: str，详细信息
         """
         try:
             # 安全处理路径中的特殊字符
@@ -319,14 +341,19 @@ class AlistClient:
             if response.headers.get("content-type", "").startswith("text/html"):
                 logger.error(f"复制目录时收到HTML响应，可能是服务器错误或授权问题。源路径: {src_path}")
                 logger.debug(f"HTML响应内容预览: {response.text[:200]}...")
-                return False
+                return {"success": False, "file_exists": False, "message": "收到HTML响应"}
             
             # 解析响应
             try:
                 resp_data = response.json()
             except Exception as e:
                 logger.error(f"解析复制目录响应时出错: {str(e)}, 响应内容: {response.text[:500]}")
-                return False
+                return {"success": False, "file_exists": False, "message": f"JSON解析错误: {str(e)}"}
+            
+            # 检查文件是否已存在（状态码403，特定消息）
+            if resp_data.get("code") == 403 and "exists" in resp_data.get("message", "").lower():
+                logger.info(f"目标文件已存在: {dest_path} (来自源: {src_path})")
+                return {"success": True, "file_exists": True, "message": resp_data.get("message", "文件已存在")}
             
             if resp_data.get("code") == 200:
                 # 获取所有任务ID
@@ -334,17 +361,17 @@ class AlistClient:
                 
                 if not task_ids:
                     logger.warning(f"复制目录没有生成任务ID: {src_path}")
-                    return False
+                    return {"success": False, "file_exists": False, "message": "没有生成任务ID"}
                     
                 logger.debug(f"等待任务完成: {task_ids}")
                 
                 # 等待所有任务完成
                 if await self.wait_for_tasks(task_ids):
                     logger.info(f"成功复制目录: {src_path} -> {dest_path}")
-                    return True
+                    return {"success": True, "file_exists": False, "message": "复制成功"}
                     
                 logger.warning(f"复制任务失败: {src_path}")
-                return False
+                return {"success": False, "file_exists": False, "message": "任务执行失败"}
             
             # 如果API返回500错误，可能是因为路径问题，尝试使用URL编码后的路径重试
             if resp_data.get("code") == 500 and "storage not found" in resp_data.get("message", ""):
@@ -375,36 +402,42 @@ class AlistClient:
                 if retry_response.headers.get("content-type", "").startswith("text/html"):
                     logger.error(f"使用编码路径仍收到HTML响应，可能是授权问题。源路径: {src_path}")
                     logger.debug(f"HTML响应内容预览: {retry_response.text[:200]}...")
-                    return False
+                    return {"success": False, "file_exists": False, "message": "编码后仍收到HTML响应"}
                 
                 retry_data = retry_response.json()
+                
+                # 检查文件是否已存在（状态码403，特定消息）
+                if retry_data.get("code") == 403 and "exists" in retry_data.get("message", "").lower():
+                    logger.info(f"目标文件已存在(编码后检测): {dest_path} (来自源: {src_path})")
+                    return {"success": True, "file_exists": True, "message": retry_data.get("message", "文件已存在")}
+                
                 if retry_data.get("code") == 200:
                     # 获取所有任务ID
                     task_ids = [task["id"] for task in retry_data.get("data", {}).get("tasks", [])]
                     
                     if not task_ids:
                         logger.warning(f"编码路径重试后仍未生成任务ID: {src_path}")
-                        return False
+                        return {"success": False, "file_exists": False, "message": "编码后仍未生成任务ID"}
                         
                     logger.debug(f"等待任务完成: {task_ids}")
                     
                     # 等待所有任务完成
                     if await self.wait_for_tasks(task_ids):
                         logger.info(f"使用编码路径成功复制目录: {src_path} -> {dest_path}")
-                        return True
+                        return {"success": True, "file_exists": False, "message": "使用编码路径复制成功"}
                         
                     logger.warning(f"使用编码路径的复制任务失败: {src_path}")
-                    return False
+                    return {"success": False, "file_exists": False, "message": "编码后任务执行失败"}
                 
                 logger.warning(f"使用编码路径的复制请求失败: {src_path}, 状态码: {retry_data.get('code')}, 消息: {retry_data.get('message')}")
-                return False
+                return {"success": False, "file_exists": False, "message": f"编码后请求失败: {retry_data.get('message', '未知错误')}"}
                 
             logger.warning(f"复制目录请求失败: {src_path}, 状态码: {resp_data.get('code')}, 消息: {resp_data.get('message')}")
-            return False
+            return {"success": False, "file_exists": False, "message": f"请求失败: {resp_data.get('code')}, {resp_data.get('message', '未知错误')}"}
             
         except Exception as e:
             logger.error(f"复制目录时出错: {src_path}, 错误: {str(e)}", exc_info=True)
-            return False
+            return {"success": False, "file_exists": False, "message": f"异常: {str(e)}"}
 
     async def task_status(self, task_id: str):
         """获取任务状态"""

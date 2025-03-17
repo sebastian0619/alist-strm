@@ -522,9 +522,30 @@ class ArchiveService:
             logger.info(f"源完整路径: {source_alist_path}")
             logger.info(f"目标完整路径: {dest_alist_path}")
             
-            success = await self.alist_client.copy_directory(source_alist_path, dest_alist_path)
+            copy_result = await self.alist_client.copy_directory(source_alist_path, dest_alist_path)
             
-            if success:
+            # 检查复制结果
+            if copy_result["success"]:
+                # 处理文件已存在的情况
+                if copy_result["file_exists"]:
+                    logger.info(f"目标位置已存在文件: {copy_result['message']}")
+                    # 处理同已存在相同
+                    if self.settings.archive_delete_source:
+                        self._add_to_pending_deletion(directory)
+                        logger.info(f"已将原目录添加到待删除队列: {directory}")
+                    
+                    result["message"] = (
+                        f"[已存在] {full_folder_name}\n"
+                        f"文件数: {len(files_info)}\n"
+                        f"总大小: {total_size / 1024 / 1024 / 1024:.2f} GB\n"
+                        f"信息: {copy_result['message']}"
+                    )
+                    result["success"] = True
+                    result["moved_files"] = len(files_info)
+                    result["total_size"] = total_size
+                    return result
+                
+                # 正常复制成功情况
                 logger.info("目录复制成功，开始验证文件...")
                 # 验证目录中的所有文件
                 all_verified = True
@@ -568,8 +589,8 @@ class ArchiveService:
                     await self.alist_client.delete(dest_alist_path)
                     result["message"] = f"[错误] {full_folder_name}\n文件验证失败\n源路径: {source_alist_path}"
             else:
-                logger.error("Alist API复制目录失败")
-                result["message"] = f"[错误] {full_folder_name}\n复制失败\n源路径: {source_alist_path}\n目标路径: {dest_alist_path}"
+                logger.error(f"Alist API复制目录失败: {copy_result['message']}")
+                result["message"] = f"[错误] {full_folder_name}\n复制失败\n源路径: {source_alist_path}\n目标路径: {dest_alist_path}\n详情: {copy_result['message']}"
             
         except Exception as e:
             result["message"] = f"[错误] 归档失败 {full_folder_name}: {str(e)}"
@@ -861,36 +882,31 @@ class ArchiveService:
             source_alist_path = str(source_path).replace(str(self.settings.archive_source_root), "").lstrip("/")
             dest_alist_path = str(dest_path).replace(str(self.settings.archive_target_root), "").lstrip("/")
             
-            # 如果目标文件已存在，验证文件
-            if dest_path.exists():
-                if self.verify_files(source_path, dest_path):
-                    # 如果配置了删除源文件且验证通过
-                    if self.settings.archive_delete_source:
-                        self._add_to_pending_deletion(source_path)
-                        return {
-                            "success": True,
-                            "message": f"🗑️ {source_path} 已存在于目标位置，已加入延迟删除队列",
-                            "size": file_size
-                        }
-                    return {
-                        "success": False,
-                        "message": f"⏭️ {source_path} 已存在于目标位置",
-                        "size": 0
-                    }
-                else:
-                    return {
-                        "success": False,
-                        "message": f"❌ {source_path} 目标位置存在不同文件",
-                        "size": 0
-                    }
-            
             # 使用Alist API复制文件
-            success = await self.alist_client.copy_file(source_alist_path, dest_alist_path)
+            copy_result = await self.alist_client.copy_file(source_alist_path, dest_alist_path)
             
-            if not success:
+            # 检查复制结果
+            if not copy_result["success"]:
                 return {
                     "success": False,
-                    "message": f"❌ {source_path} 复制失败",
+                    "message": f"❌ {source_path} 复制失败: {copy_result['message']}",
+                    "size": 0
+                }
+                
+            # 处理文件已存在的情况
+            if copy_result["file_exists"]:
+                logger.info(f"目标位置已存在文件: {copy_result['message']}")
+                # 如果配置了删除源文件
+                if self.settings.archive_delete_source:
+                    self._add_to_pending_deletion(source_path)
+                    return {
+                        "success": True,
+                        "message": f"🗑️ {source_path} 已存在于目标位置，已加入延迟删除队列",
+                        "size": file_size
+                    }
+                return {
+                    "success": False,
+                    "message": f"⏭️ {source_path} 已存在于目标位置",
                     "size": 0
                 }
             
