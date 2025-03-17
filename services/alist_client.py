@@ -325,10 +325,7 @@ class AlistClient:
                 - message: 消息
         """
         try:
-            # 确保路径格式正确
-            src_path = self._encode_path_if_needed(src_path)
-            dest_path = self._encode_path_if_needed(dest_path)
-            
+            # 使用原始路径，不进行编码
             # 从路径中提取目录名称
             src_dir = os.path.dirname(src_path)
             dst_dir = os.path.dirname(dest_path)

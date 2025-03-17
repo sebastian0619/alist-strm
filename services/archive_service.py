@@ -663,18 +663,25 @@ class ArchiveService:
                 # 构建相对路径
                 rel_file_path = str(file_info["relative_path"]).replace('\\', '/')
                 
-                # 构建完整的目标Alist路径
+                # 构建完整的目标Alist路径（不编码）
                 target_file_path = f"{target_alist_path}/{rel_file_path}"
+                logger.debug(f"原始目标文件路径: {target_file_path}")
                 
                 # 构建strm文件路径
                 output_base_name = os.path.splitext(filename)[0]
                 strm_path = os.path.join(output_dir, f"{output_base_name}.strm")
                 
-                # 构建strm文件内容 - URL编码路径
+                # 构建strm文件内容 - 在此处进行URL编码路径
                 from urllib.parse import quote
                 if not target_file_path.startswith('/'):
-                    target_file_path = '/' + target_file_path
-                strm_url = f"{strm_service.settings.alist_url}/d{quote(target_file_path)}"
+                    encoded_target_path = '/' + target_file_path
+                else:
+                    encoded_target_path = target_file_path
+                    
+                # 仅在生成STRM文件URL时才编码路径
+                encoded_target_path = quote(encoded_target_path)
+                strm_url = f"{strm_service.settings.alist_url}/d{encoded_target_path}"
+                logger.debug(f"编码后的STRM URL: {strm_url}")
                 
                 # 检查文件是否已存在且内容相同
                 if os.path.exists(strm_path):
