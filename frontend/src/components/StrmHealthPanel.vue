@@ -4,25 +4,37 @@
       <a-spin :spinning="loading">
         <div class="action-bar">
           <a-space>
+            <a-dropdown>
+              <template #overlay>
+                <a-menu @click="handleScanTypeChange">
+                  <a-menu-item key="strm_validity">STRM文件有效性检测</a-menu-item>
+                  <a-menu-item key="video_coverage">视频文件覆盖检测</a-menu-item>
+                  <a-menu-item key="all">全面检测 (两种模式)</a-menu-item>
+                </a-menu>
+              </template>
+              <a-button type="primary">
+                {{ getScanTypeName(scanType) }} <down-outlined />
+              </a-button>
+            </a-dropdown>
             <a-button type="primary" @click="startScan" :loading="scanning" :disabled="scanning">
               开始扫描
             </a-button>
             <a-button @click="repairAll" :disabled="!hasProblems || scanning" type="primary" danger>
-              修复所有问题
+              全部修复
             </a-button>
           </a-space>
           
           <a-radio-group v-model:value="filterType" button-style="solid" :disabled="scanning">
             <a-radio-button value="all">全部</a-radio-button>
-            <a-radio-button value="missing_strm">STRM文件缺失</a-radio-button>
-            <a-radio-button value="missing_source">网盘文件缺失</a-radio-button>
+            <a-radio-button value="invalid_strm">无效STRM</a-radio-button>
+            <a-radio-button value="missing_strm">缺失STRM</a-radio-button>
           </a-radio-group>
         </div>
 
         <div v-if="lastScanTime" class="scan-info">
           <a-alert type="info">
             <template #message>
-              <div>上次扫描: {{ lastScanTime }}</div>
+              <div>上次扫描：{{ formatTime(lastScanTime) }} ({{ getScanTypeName(lastScanType) }})</div>
               <div v-if="hasProblems">发现 {{ filteredProblems.length }} 个问题 (总共 {{ problems.length }} 个)</div>
               <div v-else>未发现问题</div>
             </template>
@@ -42,7 +54,7 @@
         </div>
 
         <div v-else-if="!hasProblems && !scanning" class="empty-state">
-          <a-result status="success" title="所有STRM文件状态良好">
+          <a-result status="success" title="所有检测的文件状态良好">
             <template #extra>
               <a-button type="primary" @click="startScan">重新扫描</a-button>
             </template>
@@ -82,8 +94,8 @@
                   <div class="problem-item">
                     <div class="problem-info">
                       <div class="problem-type">
-                        <a-tag :color="item.type === 'missing_strm' ? 'orange' : 'red'">
-                          {{ item.type === 'missing_strm' ? 'STRM文件缺失' : '网盘文件缺失' }}
+                        <a-tag :color="getTagColor(item.type)">
+                          {{ getProblemTypeName(item.type) }}
                         </a-tag>
                         <span class="discovery-time">发现时间: {{ formatTime(item.discoveryTime) }}</span>
                       </div>
@@ -95,7 +107,7 @@
                     <div class="problem-actions">
                       <a-space>
                         <a-button type="primary" @click="repairItem(item)">
-                          {{ item.type === 'missing_strm' ? '重新生成' : '清理STRM' }}
+                          {{ getRepairButtonText(item.type) }}
                         </a-button>
                         <a-button @click="ignoreItem(item)">
                           忽略
@@ -116,6 +128,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue';
 import { message } from 'ant-design-vue';
+import { DownOutlined } from '@ant-design/icons-vue';
 
 // 状态变量
 const loading = ref(false);
@@ -123,10 +136,54 @@ const scanning = ref(false);
 const problems = ref([]);
 const filterType = ref('all');
 const sortOrder = ref('time_desc');
-const lastScanTime = ref('');
+const lastScanTime = ref(null);
+const lastScanType = ref('all');
 const scanProgress = ref(0);
 const scanStatus = ref('');
 const ignoredItems = ref(new Set());
+const scanType = ref('all'); // 默认全面检测
+
+// 获取扫描类型名称
+const getScanTypeName = (type) => {
+  switch (type) {
+    case 'strm_validity': return 'STRM文件有效性检测';
+    case 'video_coverage': return '视频文件覆盖检测';
+    case 'all': return '全面检测';
+    default: return '全面检测';
+  }
+};
+
+// 获取问题类型名称
+const getProblemTypeName = (type) => {
+  switch (type) {
+    case 'invalid_strm': return 'STRM文件无效';
+    case 'missing_strm': return '缺失STRM文件';
+    default: return '未知问题';
+  }
+};
+
+// 获取标签颜色
+const getTagColor = (type) => {
+  switch (type) {
+    case 'invalid_strm': return 'red';
+    case 'missing_strm': return 'orange';
+    default: return 'blue';
+  }
+};
+
+// 获取修复按钮文本
+const getRepairButtonText = (type) => {
+  switch (type) {
+    case 'invalid_strm': return '清理无效STRM';
+    case 'missing_strm': return '生成缺失STRM';
+    default: return '修复';
+  }
+};
+
+// 处理扫描类型变更
+const handleScanTypeChange = (e) => {
+  scanType.value = e.key;
+};
 
 // 计算属性
 const hasProblems = computed(() => {
@@ -150,7 +207,9 @@ const filteredProblems = computed(() => {
 
 // 格式化时间显示
 const formatTime = (timestamp) => {
-  const date = new Date(timestamp);
+  if (!timestamp) return '未知';
+  
+  const date = new Date(timestamp * 1000);
   return date.toLocaleString('zh-CN', { 
     year: 'numeric', 
     month: '2-digit', 
@@ -186,11 +245,26 @@ const startScan = async () => {
   scanStatus.value = '正在初始化扫描...';
   
   try {
-    // 启动扫描
-    await scanStrmHealth();
+    // 请求后端开始扫描
+    const response = await fetch(`/api/health/start?type=${scanType.value}`, {
+      method: 'POST'
+    });
     
-    // 更新最后扫描时间
-    lastScanTime.value = new Date().toLocaleString('zh-CN');
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.detail || '扫描请求失败');
+    }
+    
+    // 轮询扫描状态
+    await pollScanStatus();
+    
+    // 获取扫描结果
+    await getHealthProblems();
+    
+    // 更新最后扫描时间和类型
+    lastScanTime.value = Math.floor(Date.now() / 1000);
+    lastScanType.value = scanType.value;
+    
     message.success('健康度扫描完成');
   } catch (error) {
     console.error('扫描失败:', error);
@@ -200,59 +274,48 @@ const startScan = async () => {
   }
 };
 
-// 扫描STRM文件健康状态
-const scanStrmHealth = async () => {
-  // 这里会是实际的API调用，现在使用模拟数据
-  return new Promise((resolve) => {
-    // 模拟进度更新
-    let progress = 0;
-    const interval = setInterval(() => {
-      progress += 5;
-      scanProgress.value = Math.min(progress, 99);
-      
-      if (progress <= 30) {
-        scanStatus.value = '正在扫描STRM文件...';
-      } else if (progress <= 60) {
-        scanStatus.value = '正在检查网盘文件...';
-      } else if (progress <= 90) {
-        scanStatus.value = '正在分析问题...';
-      } else {
-        scanStatus.value = '正在完成扫描...';
-      }
-      
-      if (progress >= 100) {
-        clearInterval(interval);
+// 轮询扫描状态
+const pollScanStatus = async () => {
+  return new Promise((resolve, reject) => {
+    const checkInterval = setInterval(async () => {
+      try {
+        const response = await fetch('/api/health/status');
+        if (!response.ok) {
+          clearInterval(checkInterval);
+          reject(new Error('获取扫描状态失败'));
+          return;
+        }
         
-        // 模拟问题数据
-        problems.value = [
-          {
-            id: '1',
-            type: 'missing_strm',
-            path: 'data/动漫/完结动漫/没能成为魔法师的女孩子的故事 (2024)/Season 1 (2024)/没能成为魔法师的女孩子的故事 - S01E01 - 第 1 集 -  我想成为魔法师！.mkv',
-            details: 'STRM文件已被删除，但网盘中仍存在对应文件',
-            discoveryTime: Date.now() - 3600000
-          },
-          {
-            id: '2',
-            type: 'missing_strm',
-            path: 'data/动漫/完结动漫/没能成为魔法师的女孩子的故事 (2024)/Season 1 (2024)/没能成为魔法师的女孩子的故事 - S01E02 - 第 2 集 -  我说不定也能成为魔法师？.mkv',
-            details: 'STRM文件已被删除，但网盘中仍存在对应文件',
-            discoveryTime: Date.now() - 7200000
-          },
-          {
-            id: '3',
-            type: 'missing_source',
-            path: 'data/电影/流浪地球3 (2024)/流浪地球3.strm',
-            details: '网盘中找不到对应的源文件，STRM文件可能已失效',
-            discoveryTime: Date.now() - 86400000
-          }
-        ];
+        const data = await response.json();
+        scanProgress.value = data.progress;
+        scanStatus.value = data.status;
         
-        scanProgress.value = 100;
-        resolve();
+        if (!data.isScanning) {
+          clearInterval(checkInterval);
+          resolve();
+        }
+      } catch (error) {
+        clearInterval(checkInterval);
+        reject(error);
       }
-    }, 300);
+    }, 1000);
   });
+};
+
+// 获取健康问题列表
+const getHealthProblems = async () => {
+  try {
+    const response = await fetch('/api/health/problems');
+    if (!response.ok) {
+      throw new Error('获取问题列表失败');
+    }
+    
+    const data = await response.json();
+    problems.value = data.problems || [];
+  } catch (error) {
+    console.error('获取问题列表失败:', error);
+    message.error('获取问题列表失败: ' + error.message);
+  }
 };
 
 // 修复单个问题
@@ -260,16 +323,40 @@ const repairItem = async (item) => {
   loading.value = true;
   try {
     // 根据问题类型执行不同的修复操作
-    if (item.type === 'missing_strm') {
-      await regenerateStrmFile(item.path);
-      message.success('STRM文件已重新生成');
-    } else if (item.type === 'missing_source') {
-      await cleanupStrmFile(item.path);
-      message.success('已清理无效的STRM文件');
+    let endpoint, requestBody;
+    
+    if (item.type === 'invalid_strm') {
+      endpoint = '/api/health/repair/invalid_strm';
+    } else if (item.type === 'missing_strm') {
+      endpoint = '/api/health/repair/missing_strm';
+    } else {
+      throw new Error('未知的问题类型');
     }
+    
+    requestBody = {
+      paths: [item.path],
+      type: item.type
+    };
+    
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(requestBody)
+    });
+    
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.detail || '修复请求失败');
+    }
+    
+    const result = await response.json();
     
     // 从问题列表中移除
     problems.value = problems.value.filter(p => p.id !== item.id);
+    
+    message.success(result.message || '问题已修复');
   } catch (error) {
     console.error('修复失败:', error);
     message.error('修复失败: ' + error.message);
@@ -291,20 +378,58 @@ const repairAll = async () => {
   loading.value = true;
   try {
     // 按问题类型分组批量处理
+    const invalidStrm = filteredProblems.value.filter(p => p.type === 'invalid_strm');
     const missingStrm = filteredProblems.value.filter(p => p.type === 'missing_strm');
-    const missingSource = filteredProblems.value.filter(p => p.type === 'missing_source');
     
-    if (missingStrm.length > 0) {
-      await regenerateStrmFiles(missingStrm.map(p => p.path));
+    let successCount = 0;
+    
+    if (invalidStrm.length > 0) {
+      const response = await fetch('/api/health/repair/invalid_strm', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          paths: invalidStrm.map(p => p.path),
+          type: 'invalid_strm'
+        })
+      });
+      
+      if (response.ok) {
+        const result = await response.json();
+        successCount += invalidStrm.length;
+        message.success(`成功清理 ${invalidStrm.length} 个无效的STRM文件`);
+      }
     }
     
-    if (missingSource.length > 0) {
-      await cleanupStrmFiles(missingSource.map(p => p.path));
+    if (missingStrm.length > 0) {
+      const response = await fetch('/api/health/repair/missing_strm', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          paths: missingStrm.map(p => p.path),
+          type: 'missing_strm'
+        })
+      });
+      
+      if (response.ok) {
+        const result = await response.json();
+        successCount += missingStrm.length;
+        message.success(`成功生成 ${missingStrm.length} 个缺失的STRM文件`);
+      }
     }
     
     // 清空问题列表
-    problems.value = [];
-    message.success('所有问题已修复');
+    if (successCount === filteredProblems.value.length) {
+      problems.value = problems.value.filter(p => ignoredItems.value.has(p.id));
+      message.success('所有问题已修复');
+    } else {
+      // 重新获取问题列表
+      await getHealthProblems();
+      message.warning(`修复了 ${successCount}/${filteredProblems.value.length} 个问题`);
+    }
   } catch (error) {
     console.error('批量修复失败:', error);
     message.error('批量修复失败: ' + error.message);
@@ -313,29 +438,38 @@ const repairAll = async () => {
   }
 };
 
-// 模拟API调用的函数
-const regenerateStrmFile = async (path) => {
-  console.log('重新生成STRM文件:', path);
-  return new Promise(resolve => setTimeout(resolve, 500));
-};
-
-const cleanupStrmFile = async (path) => {
-  console.log('清理无效STRM文件:', path);
-  return new Promise(resolve => setTimeout(resolve, 500));
-};
-
-const regenerateStrmFiles = async (paths) => {
-  console.log('批量重新生成STRM文件:', paths);
-  return new Promise(resolve => setTimeout(resolve, 1000));
-};
-
-const cleanupStrmFiles = async (paths) => {
-  console.log('批量清理无效STRM文件:', paths);
-  return new Promise(resolve => setTimeout(resolve, 1000));
-};
-
-onMounted(() => {
-  // 可以在这里添加初始化逻辑，比如检查是否有保存的扫描结果等
+onMounted(async () => {
+  // 加载当前扫描状态
+  try {
+    const response = await fetch('/api/health/status');
+    if (response.ok) {
+      const data = await response.json();
+      
+      // 如果有上次扫描结果，获取问题列表
+      if (data.lastScanTime) {
+        lastScanTime.value = data.lastScanTime;
+        await getHealthProblems();
+      }
+      
+      // 如果当前正在扫描，显示扫描进度
+      if (data.isScanning) {
+        scanning.value = true;
+        scanProgress.value = data.progress;
+        scanStatus.value = data.status;
+        
+        // 开始轮询扫描状态
+        pollScanStatus().then(() => {
+          scanning.value = false;
+          getHealthProblems();
+        }).catch(error => {
+          scanning.value = false;
+          console.error('轮询扫描状态失败:', error);
+        });
+      }
+    }
+  } catch (error) {
+    console.error('获取扫描状态失败:', error);
+  }
 });
 </script>
 
