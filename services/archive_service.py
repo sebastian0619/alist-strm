@@ -303,8 +303,25 @@ class ArchiveService:
         
         try:
             logger.info(f"开始处理目录: {directory}")
-            rel_path = directory.relative_to(self.settings.archive_source_root)
-            logger.debug(f"- 相对路径: {rel_path}")
+            
+            # 获取相对于源目录的路径
+            source_dir = Path(self.settings.archive_source_root)
+            try:
+                rel_path = directory.relative_to(source_dir)
+                logger.debug(f"- 相对路径: {rel_path}")
+            except ValueError:
+                # 如果不是source_dir的子目录，记录错误并尝试从绝对路径获取相对路径
+                logger.warning(f"目录 {directory} 不是源目录 {source_dir} 的子目录")
+                
+                # 尝试获取最合适的相对路径表示
+                rel_str = str(directory)
+                source_str = str(source_dir)
+                if rel_str.startswith(source_str):
+                    rel_path = Path(rel_str[len(source_str):].lstrip('/'))
+                    logger.info(f"- 计算的相对路径: {rel_path}")
+                else:
+                    rel_path = directory.name
+                    logger.warning(f"- 无法获取相对路径，使用目录名: {rel_path}")
             
             # 获取最后的文件夹名称
             folder_name = directory.name
@@ -315,7 +332,7 @@ class ArchiveService:
             
             if re.search(r'(?i)season\s*\d+|s\d+|第.+?季', folder_name):
                 parent_dir = directory.parent
-                if parent_dir.name and parent_dir != self.settings.archive_source_root:
+                if parent_dir.name and parent_dir != source_dir:
                     parent_dir_name = parent_dir.name
                     # 记录电视剧名称用于日志
                     logger.debug(f"- 电视剧名称: {parent_dir_name}")
@@ -411,40 +428,32 @@ class ArchiveService:
                 return result
             
             # 构建源和目标的相对路径
-            source_relative_path = directory.relative_to(self.settings.archive_source_root)
-            # 检查source_relative_path是否包含parent_dir_name和folder_name
-            relative_path = source_relative_path
+            # 首先，确保获取的是相对于source_root的路径
+            source_relative_path = rel_path  # 我们在上面已经计算过rel_path了
             
-            # 检查是否是季文件夹，如果是则处理路径
+            # 构建Alist路径时，使用正斜杠并移除开头的斜杠
+            source_alist_path = str(Path(self.settings.archive_source_alist) / source_relative_path).replace('\\', '/').lstrip("/")
+            dest_alist_path = str(Path(self.settings.archive_target_root) / source_relative_path).replace('\\', '/').lstrip("/")
+            
+            # 检查是否是季文件夹，如果是则记录额外信息
             if parent_dir_name and re.search(r'(?i)season\s*\d+|s\d+|第.+?季', folder_name):
-                # 如果是季文件夹，获取父目录和当前目录对应的alist路径
-                parent_relative_path = directory.parent.relative_to(self.settings.archive_source_root)
-                source_alist_path = str(Path(self.settings.archive_source_alist) / relative_path).replace('\\', '/').lstrip("/")
-                
-                # 目标路径使用原有的方式构建
-                dest_alist_path = str(Path(self.settings.archive_target_root) / relative_path).replace('\\', '/').lstrip("/")
-                
                 # 记录详细信息，方便调试
                 logger.debug(f"- 处理季目录路径:")
                 logger.debug(f"  - 父目录: {parent_dir_name}")
                 logger.debug(f"  - 季目录: {folder_name}")
                 logger.debug(f"  - 完整名称: {full_folder_name}")
                 logger.debug(f"  - 安全名称: {safe_folder_name}")
-            else:
-                # 非季文件夹，使用常规方式构建路径
-                source_alist_path = str(Path(self.settings.archive_source_alist) / relative_path).replace('\\', '/').lstrip("/")
-                dest_alist_path = str(Path(self.settings.archive_target_root) / relative_path).replace('\\', '/').lstrip("/")
-                
-                # 确认路径不包含非法字符（不包括斜杠）
-                safe_source_path = re.sub(r'[:\\*?\"<>|]', '_', source_alist_path)
-                safe_dest_path = re.sub(r'[:\\*?\"<>|]', '_', dest_alist_path)
-                
-                if safe_source_path != source_alist_path or safe_dest_path != dest_alist_path:
-                    logger.warning(f"路径包含特殊字符，将被替换（保留路径分隔符）:")
-                    logger.warning(f"  原始源路径: {source_alist_path}")
-                    logger.warning(f"  安全源路径: {safe_source_path}")
-                    source_alist_path = safe_source_path
-                    dest_alist_path = safe_dest_path
+            
+            # 确认路径不包含非法字符（不包括斜杠）
+            safe_source_path = re.sub(r'[:\\*?\"<>|]', '_', source_alist_path)
+            safe_dest_path = re.sub(r'[:\\*?\"<>|]', '_', dest_alist_path)
+            
+            if safe_source_path != source_alist_path or safe_dest_path != dest_alist_path:
+                logger.warning(f"路径包含特殊字符，将被替换（保留路径分隔符）:")
+                logger.warning(f"  原始源路径: {source_alist_path}")
+                logger.warning(f"  安全源路径: {safe_source_path}")
+                source_alist_path = safe_source_path
+                dest_alist_path = safe_dest_path
             
             logger.info(f"准备归档: {full_folder_name}")
             logger.debug(f"- 源Alist路径: {source_alist_path}")
@@ -896,8 +905,14 @@ class ArchiveService:
             logger.debug(f"- Alist源目录: {self.settings.archive_source_alist}")
             logger.debug(f"- 目标目录: {self.settings.archive_target_root}")
             
-            # 检查本地源目录
+            # 确保源目录是绝对路径
             source_dir = Path(self.settings.archive_source_root)
+            if not source_dir.is_absolute():
+                logger.warning(f"源目录不是绝对路径: {source_dir}")
+                # 尝试获取绝对路径
+                source_dir = source_dir.absolute()
+                logger.info(f"已转换为绝对路径: {source_dir}")
+                
             if not source_dir.exists():
                 error_msg = f"本地源目录不存在: {source_dir}"
                 logger.error(error_msg)
@@ -936,8 +951,17 @@ class ArchiveService:
                     logger.warning(f"媒体类型 '{media_type}' 未配置目录，跳过")
                     continue
                 
-                # 将媒体类型目录与源目录拼接
-                media_path = source_dir / media_dir
+                # 构建完整的媒体类型目录路径
+                media_path = None
+                if os.path.isabs(media_dir):
+                    # 如果是绝对路径，直接使用
+                    media_path = Path(media_dir)
+                    logger.info(f"媒体类型 '{media_type}' 使用绝对路径: {media_path}")
+                else:
+                    # 如果是相对路径，与源目录拼接
+                    media_path = source_dir / media_dir
+                    logger.info(f"媒体类型 '{media_type}' 使用相对路径，完整路径: {media_path}")
+                
                 if not media_path.exists():
                     logger.warning(f"媒体类型 '{media_type}' 的目录不存在: {media_path}")
                     continue
@@ -968,7 +992,6 @@ class ArchiveService:
                     if files:
                         # 记录详细信息，方便调试
                         logger.debug(f"\n处理目录: {sub_path}")
-                        logger.debug(f"- 相对路径: {sub_path.relative_to(source_dir)}")
                         logger.debug(f"- 包含文件数: {len(files)}")
                         
                         # 创建一个临时的处理上下文，包含媒体类型信息
@@ -976,7 +999,7 @@ class ArchiveService:
                         
                         # 处理目录
                         result = await self.process_directory(sub_path, test_mode)
-                        
+
                         # 清除临时上下文
                         self._current_media_type = None
                         
