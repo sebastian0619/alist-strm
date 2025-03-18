@@ -178,12 +178,30 @@ async def save_media_types(media_types: dict):
     """保存媒体类型配置"""
     try:
         logger.info(f"收到保存媒体类型请求: {json.dumps(media_types, ensure_ascii=False)}")
-        service_manager.archive_service.media_types = media_types
+        
+        # 验证并处理数据格式
+        processed_media_types = {}
+        for type_name, config in media_types.items():
+            # 确保creation_days和mtime_days是整数
+            creation_days = int(float(config["creation_days"]))
+            mtime_days = int(float(config["mtime_days"]))
+            
+            logger.info(f"处理媒体类型 '{type_name}': creation_days={creation_days}, mtime_days={mtime_days}")
+            
+            processed_media_types[type_name] = {
+                "dir": config["dir"],
+                "creation_days": creation_days,
+                "mtime_days": mtime_days
+            }
+        
+        # 保存处理后的数据
+        service_manager.archive_service.media_types = processed_media_types
         service_manager.archive_service.save_media_types()
+        
         logger.info("媒体类型配置保存成功")
         return {"success": True, "message": "保存成功"}
     except Exception as e:
-        logger.error(f"保存媒体类型配置失败: {str(e)}")
+        logger.error(f"保存媒体类型配置失败: {str(e)}", exc_info=True)
         return {"success": False, "message": str(e)}
 
 @router.get("/deletion-delay")

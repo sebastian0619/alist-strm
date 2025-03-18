@@ -737,16 +737,58 @@ class ArchiveService:
         
     @media_types.setter
     def media_types(self, value: Dict[str, Dict]):
-        self._media_types = value
-        # 当media_types被更新时，自动保存到文件
-        self.save_media_types()
-        # 更新阈值配置
-        self.thresholds = {
-            name: MediaThreshold(
-                info["creation_days"],
-                info["mtime_days"]
-            ) for name, info in self._media_types.items()
-        }
+        # 验证数据结构
+        processed_value = {}
+        try:
+            # 遍历并验证每个媒体类型
+            for name, info in value.items():
+                if not isinstance(info, dict):
+                    logger.warning(f"媒体类型'{name}'的配置不是字典类型，跳过")
+                    continue
+                    
+                # 确保必须的字段存在
+                if "dir" not in info or "creation_days" not in info or "mtime_days" not in info:
+                    logger.warning(f"媒体类型'{name}'缺少必要字段，使用默认值")
+                    dir_value = info.get("dir", "")
+                    creation_days = info.get("creation_days", 30)
+                    mtime_days = info.get("mtime_days", 7)
+                else:
+                    dir_value = info["dir"]
+                    # 确保是数值类型
+                    try:
+                        creation_days = int(float(info["creation_days"]))
+                        mtime_days = int(float(info["mtime_days"]))
+                    except (ValueError, TypeError):
+                        logger.warning(f"媒体类型'{name}'的天数值无效，使用默认值")
+                        creation_days = 30
+                        mtime_days = 7
+                
+                # 创建处理后的配置
+                processed_value[name] = {
+                    "dir": str(dir_value),
+                    "creation_days": creation_days,
+                    "mtime_days": mtime_days
+                }
+                
+            # 设置处理后的值
+            self._media_types = processed_value
+            
+            # 更新阈值配置
+            self.thresholds = {
+                name: MediaThreshold(
+                    info["creation_days"],
+                    info["mtime_days"]
+                ) for name, info in self._media_types.items()
+            }
+            
+            # 记录更新信息
+            logger.info(f"已更新媒体类型配置，共{len(self._media_types)}个类型")
+            
+            # 自动保存到文件
+            self.save_media_types()
+        except Exception as e:
+            logger.error(f"设置媒体类型配置失败: {str(e)}", exc_info=True)
+            raise
 
     async def process_file(self, source_path: Path) -> Dict:
         """处理单个文件的归档

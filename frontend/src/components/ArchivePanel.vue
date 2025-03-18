@@ -180,36 +180,40 @@
                       </a-space>
                     </template>
                     
-                    <a-form-item label="目录名称">
+                    <div class="settings-item mt-2">
+                      <div class="label">目录</div>
                       <a-input
                         v-model:value="element.config.dir"
                         placeholder="请输入目录名称，支持多级目录，如: 电影 或 电影/外语"
                         @change="() => handleMediaTypeChange(element.name)"
                       />
-                    </a-form-item>
+                    </div>
                     
-                    <a-form-item label="阈值设置">
+                    <div class="settings-item mt-2">
+                      <div class="label">阈值设置</div>
                       <a-input-group compact>
                         <a-form-item label="创建时间" style="margin-bottom: 0">
-                          <a-input-number
-                            v-model:value="element.config.creation_days"
-                            :min="0"
-                            addon-after="天"
+                          <a-input
+                            v-model:value="element.config.creation_days" 
+                            type="number"
+                            min="0"
                             style="width: 120px"
+                            addon-after="天"
                             @change="() => handleMediaTypeChange(element.name)"
                           />
                         </a-form-item>
                         <a-form-item label="修改时间" style="margin-bottom: 0; margin-left: 8px">
-                          <a-input-number
+                          <a-input
                             v-model:value="element.config.mtime_days"
-                            :min="0"
-                            addon-after="天"
+                            type="number"
+                            min="0"
                             style="width: 120px"
+                            addon-after="天"
                             @change="() => handleMediaTypeChange(element.name)"
                           />
                         </a-form-item>
                       </a-input-group>
-                    </a-form-item>
+                    </div>
 
                     <div class="save-tip" v-if="element.hasChanges" style="color: #ff4d4f; font-size: 12px; margin-top: 8px;">
                       * 配置已修改，请点击保存按钮保存到 archive.json
@@ -511,8 +515,24 @@ const saveMediaType = async (mediaType) => {
     // 构建媒体类型配置对象
     const mediaTypesData = {}
     mediaTypesList.value.forEach(type => {
-      mediaTypesData[type.name] = type.config
+      // 确保数值类型正确，避免字符串数值引起的问题
+      // 明确转换为数字类型，但保留用户输入的值，不进行四舍五入或格式化
+      const creation_days = type.name === mediaType.name 
+        ? Number(mediaType.config.creation_days)
+        : Number(type.config.creation_days)
+        
+      const mtime_days = type.name === mediaType.name 
+        ? Number(mediaType.config.mtime_days)
+        : Number(type.config.mtime_days)
+      
+      mediaTypesData[type.name] = {
+        dir: type.config.dir,
+        creation_days: creation_days,
+        mtime_days: mtime_days
+      }
     })
+
+    console.log('发送媒体类型数据:', JSON.stringify(mediaTypesData, null, 2))
 
     // 调用API保存到archive.json
     const response = await axios.post('/api/archive/media_types', mediaTypesData)
@@ -520,7 +540,9 @@ const saveMediaType = async (mediaType) => {
       throw new Error(response.data.message)
     }
     
-    // 更新状态
+    console.log('保存媒体类型响应:', response.data)
+    
+    // 更新状态而不改变值
     mediaType.hasChanges = false
     message.success(`媒体类型 "${mediaType.name}" 已保存到 archive.json`)
   } catch (error) {
