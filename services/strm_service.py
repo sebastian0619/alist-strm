@@ -405,12 +405,23 @@ class StrmService:
             
             # 如果是元数据文件且开启了下载元数据
             if self.settings.download_metadata and ext in metadata_extensions:
-                # 构建下载路径
+                # 构建下载路径 - 保留原始目录结构
                 rel_path = path.replace(self.settings.alist_scan_path, '').lstrip('/')
-                download_path = os.path.join(self.settings.output_dir, rel_path)
+                
+                # 确保元数据文件存放在正确的目录中，而不是与视频同名的目录中
+                download_dir = os.path.join(self.settings.output_dir, rel_path)
+                if os.path.splitext(download_dir)[1].lower():
+                    # 如果下载目录路径包含文件扩展名，说明是文件路径而非目录
+                    # 我们应该使用其父目录作为下载目录
+                    download_dir = os.path.dirname(download_dir)
+                
+                download_path = os.path.join(download_dir, filename)
+                
+                # 创建目录
+                os.makedirs(download_dir, exist_ok=True)
                 
                 # 构建下载URL
-                file_path = path
+                file_path = f"{path}/{filename}" if not path.endswith('/') else f"{path}{filename}"
                 if not file_path.startswith('/'):
                     file_path = '/' + file_path
                 download_url = f"{self.settings.alist_url}/d{quote(file_path)}"
@@ -432,18 +443,23 @@ class StrmService:
                 logger.debug(f"跳过小视频文件: {filename}")
                 return False
                 
-            # 构建相对路径
+            # 构建相对路径，确保使用正确的目录结构
             rel_path = path.replace(self.settings.alist_scan_path, '').lstrip('/')
             
-            # 构建输出路径，移除.mkv后缀
-            output_path = os.path.join(self.settings.output_dir, os.path.splitext(rel_path)[0])
-            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+            # 确保rel_path不包含文件名
+            if os.path.basename(rel_path) == filename:
+                rel_path = os.path.dirname(rel_path)
             
-            # 构建strm文件路径
-            strm_path = output_path + '.strm'
+            # 创建输出目录
+            output_dir = os.path.join(self.settings.output_dir, rel_path)
+            os.makedirs(output_dir, exist_ok=True)
+            
+            # 构建STRM文件名，使用原始视频文件名（移除扩展名，增加.strm扩展名）
+            base_name = os.path.splitext(filename)[0]
+            strm_path = os.path.join(output_dir, f"{base_name}.strm")
             
             # 构建strm文件内容
-            file_path = path
+            file_path = f"{path}/{filename}" if not path.endswith('/') else f"{path}{filename}"
             if not file_path.startswith('/'):
                 file_path = '/' + file_path
             strm_url = f"{self.settings.alist_url}/d{quote(file_path)}"

@@ -585,10 +585,12 @@ class ArchiveService:
             # 获取相对路径
             source_rel_path = source_directory.relative_to(self.settings.archive_source_root)
             
-            # 创建输出目录（与原始strm_service保持一致）
+            # 创建输出目录（与原始strm_service保持一致）- 确保保留目录结构
             output_base_dir = strm_service.settings.output_dir
             output_rel_dir = str(source_rel_path)
             output_dir = os.path.join(output_base_dir, output_rel_dir)
+            
+            # 确保输出目录存在
             os.makedirs(output_dir, exist_ok=True)
             
             # 统计处理文件数
@@ -615,8 +617,10 @@ class ArchiveService:
                 target_file_path = f"{target_alist_path}/{rel_file_path}"
                 logger.debug(f"原始目标文件路径: {target_file_path}")
                 
-                # 构建strm文件路径
+                # 从文件名中获取基本名称（不包含扩展名）
                 output_base_name = os.path.splitext(filename)[0]
+                
+                # 直接在当前目录下生成STRM文件，不创建额外的子目录
                 strm_path = os.path.join(output_dir, f"{output_base_name}.strm")
                 
                 # 构建strm文件内容 - 在此处进行URL编码路径
