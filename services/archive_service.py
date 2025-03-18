@@ -432,8 +432,26 @@ class ArchiveService:
             source_relative_path = rel_path  # 我们在上面已经计算过rel_path了
             
             # 构建Alist路径时，使用正斜杠并移除开头的斜杠
-            source_alist_path = str(Path(self.settings.archive_source_alist) / source_relative_path).replace('\\', '/').lstrip("/")
-            dest_alist_path = str(Path(self.settings.archive_target_root) / source_relative_path).replace('\\', '/').lstrip("/")
+            if self.settings.archive_source_alist.endswith('/'):
+                source_alist = self.settings.archive_source_alist.rstrip('/')
+            else:
+                source_alist = self.settings.archive_source_alist
+                
+            if self.settings.archive_target_root.endswith('/'):
+                target_root = self.settings.archive_target_root.rstrip('/')
+            else:
+                target_root = self.settings.archive_target_root
+                
+            # 确保相对路径不以斜杠开头
+            rel_path_str = str(source_relative_path).lstrip('/')
+            
+            # 正确构建完整的Alist路径
+            source_alist_path = f"{source_alist}/{rel_path_str}".replace('\\', '/').lstrip("/")
+            dest_alist_path = f"{target_root}/{rel_path_str}".replace('\\', '/').lstrip("/")
+            
+            logger.debug(f"- 相对路径用于Alist: {rel_path_str}")
+            logger.debug(f"- 完整源Alist路径: {source_alist_path}")
+            logger.debug(f"- 完整目标Alist路径: {dest_alist_path}")
             
             # 检查是否是季文件夹，如果是则记录额外信息
             if parent_dir_name and re.search(r'(?i)season\s*\d+|s\d+|第.+?季', folder_name):
@@ -766,16 +784,51 @@ class ArchiveService:
                 }
             
             # 构建目标路径，保持相对路径结构
-            relative_path = source_path.relative_to(self.settings.archive_source_root)
+            try:
+                relative_path = source_path.relative_to(self.settings.archive_source_root)
+            except ValueError:
+                # 如果不是source_dir的子目录，尝试从绝对路径获取相对路径
+                rel_str = str(source_path)
+                source_str = str(self.settings.archive_source_root)
+                if rel_str.startswith(source_str):
+                    relative_path = Path(rel_str[len(source_str):].lstrip('/'))
+                else:
+                    # 无法获取相对路径时，返回错误
+                    return {
+                        "success": False,
+                        "message": f"❌ {source_path} 不在源目录 {self.settings.archive_source_root} 中",
+                        "size": 0
+                    }
+            
+            # 处理相对路径，确保不以斜杠开头
+            rel_path_str = str(relative_path).lstrip('/')
+            
+            # 构建dest_path用于显示和验证
             dest_path = Path(self.settings.archive_target_root) / relative_path
             
-            # 构建Alist路径
-            source_alist_path = str(source_path).replace(str(self.settings.archive_source_root), "").lstrip("/")
-            dest_alist_path = str(dest_path).replace(str(self.settings.archive_target_root), "").lstrip("/")
+            # 准备Alist路径部分
+            if self.settings.archive_source_alist.endswith('/'):
+                source_alist = self.settings.archive_source_alist.rstrip('/')
+            else:
+                source_alist = self.settings.archive_source_alist
+                
+            if self.settings.archive_target_root.endswith('/'):
+                target_root = self.settings.archive_target_root.rstrip('/')
+            else:
+                target_root = self.settings.archive_target_root
+            
+            # 构建Alist路径（保持与process_directory一致）
+            source_alist_path = f"{source_alist}/{rel_path_str}".replace('\\', '/').lstrip("/")
+            dest_alist_path = f"{target_root}/{rel_path_str}".replace('\\', '/').lstrip("/")
+            
+            logger.debug(f"- 源文件路径: {source_path}")
+            logger.debug(f"- 目标文件路径: {dest_path}")
+            logger.debug(f"- 源Alist路径: {source_alist_path}")
+            logger.debug(f"- 目标Alist路径: {dest_alist_path}")
             
             # 使用Alist API复制文件
             copy_result = await self.alist_client.copy_file(source_alist_path, dest_alist_path)
-            
+
             # 检查复制结果
             if not copy_result["success"]:
                 return {
@@ -804,7 +857,11 @@ class ArchiveService:
             # 验证复制后的文件
             if not self.verify_files(source_path, dest_path):
                 # 如果验证失败，删除目标文件
-                await self.alist_client.delete(dest_alist_path)
+                try:
+                    await self.alist_client.delete(dest_alist_path)
+                except Exception as e:
+                    logger.error(f"删除失败的目标文件时出错: {e}")
+                    
                 return {
                     "success": False,
                     "message": f"❌ {source_path} 复制验证失败",
@@ -953,14 +1010,16 @@ class ArchiveService:
                 
                 # 构建完整的媒体类型目录路径
                 media_path = None
-                if os.path.isabs(media_dir):
-                    # 如果是绝对路径，直接使用
-                    media_path = Path(media_dir)
-                    logger.info(f"媒体类型 '{media_type}' 使用绝对路径: {media_path}")
-                else:
-                    # 如果是相对路径，与源目录拼接
-                    media_path = source_dir / media_dir
-                    logger.info(f"媒体类型 '{media_type}' 使用相对路径，完整路径: {media_path}")
+                # 删除绝对路径的判断，将所有路径都视为相对路径
+                # 即使以/开头的路径也被视为相对路径
+                if media_dir.startswith('/'):
+                    # 移除开头的斜杠，以便与source_dir正确拼接
+                    media_dir = media_dir.lstrip('/')
+                    logger.info(f"媒体类型 '{media_type}' 路径以/开头，已处理为相对路径: {media_dir}")
+                
+                # 与源目录拼接
+                media_path = source_dir / media_dir
+                logger.info(f"媒体类型 '{media_type}' 最终路径: {media_path}")
                 
                 if not media_path.exists():
                     logger.warning(f"媒体类型 '{media_type}' 的目录不存在: {media_path}")
