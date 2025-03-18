@@ -23,6 +23,7 @@ class ArchiveService:
         self.settings = Settings()
         self._stop_flag = False
         self._is_running = False
+        self._current_media_type = None  # 当前处理的媒体类型
         
         # 添加日志历史记录列表
         self.logger_history = []
@@ -154,87 +155,6 @@ class ArchiveService:
         except Exception as e:
             logger.error(f"获取创建时间失败 {path}: {e}")
             return time.time()
-    
-    def get_media_type(self, path: Path) -> str:
-        """根据路径判断媒体类型，优先匹配更具体的路径
-        
-        例如：
-        - 路径为 "/video/动漫/动画电影/xxx"
-        - 如果同时配置了 "动漫/动画电影" 和 "动漫"
-        - 会优先匹配 "动漫/动画电影" 类型
-        
-        匹配规则：
-        1. 将路径转换为相对路径（相对于source_root）
-        2. 根据路径的第一级目录快速筛选可能匹配的媒体类型
-        3. 然后对可能匹配的类型进行精确匹配
-        4. 优先返回匹配层级最深的类型
-        """
-        path_str = str(path)
-        
-        # 转换路径分隔符为统一格式
-        normalized_path = path_str.replace('\\', '/').rstrip('/')
-        source_root = str(self.settings.archive_source_root).replace('\\', '/').rstrip('/')
-        
-        # 获取相对路径
-        if normalized_path.startswith(source_root):
-            relative_path = normalized_path[len(source_root):].lstrip('/')
-        else:
-            relative_path = normalized_path
-            
-        logger.debug(f"检查路径: {relative_path}")
-            
-        # 将路径分割成部分
-        path_parts = relative_path.split('/')
-        if not path_parts:
-            logger.debug("路径为空，无法匹配")
-            return ""
-        
-        # 获取第一级目录，用于快速筛选
-        first_dir = path_parts[0] if path_parts else ""
-        
-        # 使用最长匹配原则，先尝试匹配最具体的路径
-        matched_type = ""
-        max_match_length = 0
-        
-        # 创建可能匹配的媒体类型列表
-        potential_matches = []
-        
-        # 预筛选可能匹配的媒体类型
-        for media_type, info in self.media_types.items():
-            if "dir" not in info:
-                continue
-                
-            dir_path = info['dir'].replace('\\', '/').strip('/')
-            dir_parts = dir_path.split('/')
-            
-            # 如果配置的目录第一部分与路径的第一部分匹配，则加入候选列表
-            if dir_parts and dir_parts[0] == first_dir:
-                potential_matches.append((media_type, info, dir_parts))
-        
-        logger.debug(f"预筛选出 {len(potential_matches)} 个可能匹配的媒体类型")
-        
-        # 对候选列表进行精确匹配
-        for media_type, info, dir_parts in potential_matches:
-            dir_path = info['dir'].replace('\\', '/').strip('/')
-            
-            # 检查目录是否匹配
-            # 1. 配置的目录部分必须完全匹配路径的开始部分
-            # 2. 配置的目录层级必须小于等于实际路径的层级
-            if (len(dir_parts) <= len(path_parts) and 
-                all(dp == pp for dp, pp in zip(dir_parts, path_parts))):
-                
-                # 找到匹配，但使用最长匹配原则
-                if len(dir_parts) > max_match_length:
-                    max_match_length = len(dir_parts)
-                    matched_type = media_type
-                    logger.debug(f"找到更优匹配: {media_type}, 匹配长度: {len(dir_parts)}")
-        
-        if matched_type:
-            logger.debug(f"最终匹配: {matched_type}")
-            return matched_type
-        else:        
-            logger.debug("没有找到匹配的媒体类型")
-            return ""
     
     def calculate_file_hash(self, file_path: Path) -> Optional[str]:
         """计算文件的MD5哈希值"""
@@ -407,23 +327,24 @@ class ArchiveService:
             if safe_folder_name != full_folder_name:
                 logger.debug(f"- 处理后的安全名称: {safe_folder_name}")
             
-            # 检查目录中的文件修改时间
-            recent_files = []
-            # 获取媒体类型
-            media_type = self.get_media_type(directory)
+            # 使用外部设置的媒体类型，而不是尝试匹配
+            media_type = getattr(self, '_current_media_type', None)
             if not media_type:
                 result["message"] = (
                     f"[跳过] {full_folder_name}\n"
-                    f"原因: 未匹配到媒体类型"
+                    f"原因: 未指定媒体类型"
                 )
-                logger.debug(f"目录 {directory} 未匹配到媒体类型")
+                logger.debug(f"目录 {directory} 未指定媒体类型")
                 return result
             
-            logger.info(f"匹配到媒体类型: {media_type}")
+            logger.info(f"使用媒体类型: {media_type}")
             
             # 获取阈值配置
             threshold = self.thresholds[media_type]
             logger.debug(f"阈值设置: 创建时间 {threshold.creation_days} 天, 修改时间 {threshold.mtime_days} 天")
+            
+            # 初始化记录最近文件的列表
+            recent_files = []
             
             # 扫描文件
             logger.debug("开始扫描文件时间...")
@@ -811,12 +732,12 @@ class ArchiveService:
             # 获取文件大小
             file_size = source_path.stat().st_size
             
-            # 获取媒体类型
-            media_type = self.get_media_type(source_path)
+            # 使用当前媒体类型
+            media_type = getattr(self, '_current_media_type', None)
             if not media_type:
                 return {
                     "success": False,
-                    "message": f"❌ {source_path} 未匹配到媒体类型",
+                    "message": f"❌ {source_path} 未指定媒体类型",
                     "size": 0
                 }
             
@@ -962,7 +883,7 @@ class ArchiveService:
             total_processed = 0
             total_size = 0
             success_results = []
-            all_results = []  # 新增：保存所有处理结果
+            all_results = []  # 保存所有处理结果
             
             # 在开始归档时发送Telegram通知
             start_msg = "🔍 开始归档测试..." if test_mode else "🚀 开始归档处理..."
@@ -1004,32 +925,69 @@ class ArchiveService:
                     "results": []
                 }
             
-            # 要处理的目标目录
-            target_dir = Path(self.settings.archive_source_root)
-            
-            # 遍历目标目录下的所有子目录
-            for root, dirs, files in os.walk(target_dir):
+            # 直接处理配置的媒体类型目录
+            for media_type, config in self.media_types.items():
                 if self._stop_flag:
                     break
-                    
-                root_path = Path(root)
-                # 只处理包含文件的目录（叶子目录）
-                if files and not any(d.startswith('.') for d in root_path.parts):
-                    # 仅对包含文件的目录记录详细日志
-                    if len(files) > 0:
-                        logger.debug(f"\n处理目录: {root_path}")
-                        logger.debug(f"- 相对路径: {root_path.relative_to(source_dir)}")
-                        logger.debug(f"- 包含文件数: {len(files)}")
-                    
-                    result = await self.process_directory(root_path, test_mode)
-                    if result["success"]:
-                        total_processed += result["moved_files"]
-                        total_size += result["total_size"]
-                        if "[归档]" in result["message"]:
-                            success_results.append(result["message"])
                 
-                    # 无论是否成功，都添加到所有结果中
-                    all_results.append(result)
+                # 获取该媒体类型的目录配置
+                media_dir = config.get('dir', '')
+                if not media_dir:
+                    logger.warning(f"媒体类型 '{media_type}' 未配置目录，跳过")
+                    continue
+                
+                # 将媒体类型目录与源目录拼接
+                media_path = source_dir / media_dir
+                if not media_path.exists():
+                    logger.warning(f"媒体类型 '{media_type}' 的目录不存在: {media_path}")
+                    continue
+                
+                logger.info(f"开始处理媒体类型 '{media_type}' 的目录: {media_path}")
+                
+                # 设置该媒体类型的阈值
+                threshold = self.thresholds.get(media_type)
+                if not threshold:
+                    logger.warning(f"媒体类型 '{media_type}' 没有对应的阈值配置，使用默认值")
+                    threshold = MediaThreshold(30, 7)  # 默认值
+                
+                logger.debug(f"- 阈值设置: 创建时间 {threshold.creation_days} 天, 修改时间 {threshold.mtime_days} 天")
+                
+                # 遍历当前媒体类型目录下的所有子目录
+                for sub_path in media_path.glob("**/*"):
+                    if self._stop_flag:
+                        break
+                    
+                    # 只处理目录
+                    if not sub_path.is_dir():
+                        continue
+                    
+                    # 获取该目录下的所有文件（非递归）
+                    files = [f for f in sub_path.iterdir() if f.is_file()]
+                    
+                    # 如果目录包含文件
+                    if files:
+                        # 记录详细信息，方便调试
+                        logger.debug(f"\n处理目录: {sub_path}")
+                        logger.debug(f"- 相对路径: {sub_path.relative_to(source_dir)}")
+                        logger.debug(f"- 包含文件数: {len(files)}")
+                        
+                        # 创建一个临时的处理上下文，包含媒体类型信息
+                        self._current_media_type = media_type
+                        
+                        # 处理目录
+                        result = await self.process_directory(sub_path, test_mode)
+                        
+                        # 清除临时上下文
+                        self._current_media_type = None
+                        
+                        if result["success"]:
+                            total_processed += result["moved_files"]
+                            total_size += result["total_size"]
+                            if "[归档]" in result["message"]:
+                                success_results.append(result["message"])
+                        
+                        # 无论是否成功，都添加到所有结果中
+                        all_results.append(result)
                     
                     # 让出控制权
                     await asyncio.sleep(0)
