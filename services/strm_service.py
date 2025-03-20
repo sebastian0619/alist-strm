@@ -421,7 +421,12 @@ class StrmService:
                 os.makedirs(download_dir, exist_ok=True)
                 
                 # 构建下载URL
-                file_path = f"{path}/{filename}" if not path.endswith('/') else f"{path}{filename}"
+                # 检查path是否已经包含文件名，避免重复
+                if os.path.basename(path) == filename:
+                    file_path = path  # path已经包含文件名，直接使用
+                else:
+                    file_path = f"{path}/{filename}" if not path.endswith('/') else f"{path}{filename}"
+                
                 if not file_path.startswith('/'):
                     file_path = '/' + file_path
                 download_url = f"{self.settings.alist_url}/d{quote(file_path)}"
@@ -459,7 +464,12 @@ class StrmService:
             strm_path = os.path.join(output_dir, f"{base_name}.strm")
             
             # 构建strm文件内容
-            file_path = f"{path}/{filename}" if not path.endswith('/') else f"{path}{filename}"
+            # 检查path是否已经包含文件名，避免重复
+            if os.path.basename(path) == filename:
+                file_path = path  # path已经包含文件名，直接使用
+            else:
+                file_path = f"{path}/{filename}" if not path.endswith('/') else f"{path}{filename}"
+                
             if not file_path.startswith('/'):
                 file_path = '/' + file_path
             strm_url = f"{self.settings.alist_url}/d{quote(file_path)}"

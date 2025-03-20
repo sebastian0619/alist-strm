@@ -4,6 +4,7 @@ from services.copy_service import CopyService
 from services.telegram_service import TelegramService
 from services.archive_service import ArchiveService
 from services.strm_monitor_service import StrmMonitorService
+from services.strm_health_service import StrmHealthService
 from loguru import logger
 import asyncio
 from config import Settings
@@ -26,18 +27,21 @@ class ServiceManager:
             self.telegram_service = None
             self.archive_service = None
             self.monitor_service = None
+            self.health_service = None
             self.initialized = True
     
     def init_services(self):
         """初始化所有服务实例"""
         if not any([self.scheduler_service, self.strm_service, self.copy_service, 
-                   self.telegram_service, self.archive_service, self.monitor_service]):
+                   self.telegram_service, self.archive_service, self.monitor_service,
+                   self.health_service]):
             self.scheduler_service = SchedulerService()
             self.copy_service = CopyService()
             self.strm_service = StrmService()
             self.telegram_service = TelegramService()
             self.archive_service = ArchiveService()
             self.monitor_service = StrmMonitorService(self.strm_service)
+            self.health_service = StrmHealthService()
     
     async def initialize(self):
         """初始化所有服务"""
@@ -214,4 +218,5 @@ strm_service = service_manager.strm_service
 copy_service = service_manager.copy_service
 tg_service = service_manager.telegram_service
 archive_service = service_manager.archive_service
-monitor_service = service_manager.monitor_service 
+monitor_service = service_manager.monitor_service
+health_service = service_manager.health_service 

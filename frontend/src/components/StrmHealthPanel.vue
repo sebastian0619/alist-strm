@@ -1,476 +1,503 @@
 <template>
   <div class="strm-health-panel">
-    <a-card title="STRM健康度检测" :bordered="false">
-      <a-spin :spinning="loading">
-        <div class="action-bar">
-          <a-space>
-            <a-dropdown>
-              <template #overlay>
-                <a-menu @click="handleScanTypeChange">
-                  <a-menu-item key="strm_validity">STRM文件有效性检测</a-menu-item>
-                  <a-menu-item key="video_coverage">视频文件覆盖检测</a-menu-item>
-                  <a-menu-item key="all">全面检测 (两种模式)</a-menu-item>
-                </a-menu>
-              </template>
-              <a-button type="primary">
-                {{ getScanTypeName(scanType) }} <down-outlined />
-              </a-button>
-            </a-dropdown>
-            <a-button type="primary" @click="startScan" :loading="scanning" :disabled="scanning">
-              开始扫描
-            </a-button>
-            <a-button @click="repairAll" :disabled="!hasProblems || scanning" type="primary" danger>
-              全部修复
-            </a-button>
-          </a-space>
-          
-          <a-radio-group v-model:value="filterType" button-style="solid" :disabled="scanning">
-            <a-radio-button value="all">全部</a-radio-button>
-            <a-radio-button value="invalid_strm">无效STRM</a-radio-button>
-            <a-radio-button value="missing_strm">缺失STRM</a-radio-button>
-          </a-radio-group>
-        </div>
-
-        <div v-if="lastScanTime" class="scan-info">
-          <a-alert type="info">
+    <a-card class="health-card" :bordered="false">
+      <!-- 扫描状态展示 -->
+      <div class="scan-header">
+        <div class="scan-title">
+          <h2>STRM健康检测</h2>
+          <a-alert v-if="lastScanTime" :type="isScanning ? 'warning' : 'info'" class="scan-status-alert">
             <template #message>
-              <div>上次扫描：{{ formatTime(lastScanTime) }} ({{ getScanTypeName(lastScanType) }})</div>
-              <div v-if="hasProblems">发现 {{ filteredProblems.length }} 个问题 (总共 {{ problems.length }} 个)</div>
-              <div v-else>未发现问题</div>
+              <span>{{ getLastScanMessage() }}</span>
             </template>
           </a-alert>
         </div>
-
-        <div v-if="scanning" class="scan-progress">
-          <a-progress :percent="scanProgress" status="active" />
-          <div class="scan-status">{{ scanStatus }}</div>
+        <div class="scan-controls">
+          <a-form layout="inline">
+            <a-form-item label="扫描类型">
+              <a-select
+                v-model:value="scanType"
+                style="width: 180px"
+                :disabled="isScanning"
+              >
+                <a-select-option value="all">全面检测</a-select-option>
+                <a-select-option value="strm_validity">STRM文件有效性检测</a-select-option>
+                <a-select-option value="video_coverage">视频文件覆盖检测</a-select-option>
+              </a-select>
+            </a-form-item>
+            <a-form-item label="扫描模式">
+              <a-select
+                v-model:value="scanMode"
+                style="width: 150px"
+                :disabled="isScanning"
+              >
+                <a-select-option value="full">完整扫描</a-select-option>
+                <a-select-option value="incremental">增量扫描</a-select-option>
+                <a-select-option value="problems_only">仅检查问题</a-select-option>
+              </a-select>
+            </a-form-item>
+            <a-form-item>
+              <a-button
+                type="primary"
+                :disabled="isScanning"
+                @click="startScan"
+              >
+                开始检测
+              </a-button>
+            </a-form-item>
+          </a-form>
         </div>
+      </div>
 
-        <div v-if="!lastScanTime && !scanning" class="empty-state">
-          <a-empty description="尚未进行扫描" />
-          <div class="center-button">
-            <a-button type="primary" @click="startScan">开始健康度扫描</a-button>
+      <!-- 统计信息展示 -->
+      <div class="stats-section" v-if="stats">
+        <a-row :gutter="16">
+          <a-col :span="12">
+            <a-statistic title="STRM文件总数" :value="stats.totalStrmFiles" />
+          </a-col>
+          <a-col :span="12">
+            <a-statistic 
+              title="无效STRM文件" 
+              :value="stats.invalidStrmFiles" 
+              :valueStyle="{ color: stats.invalidStrmFiles > 0 ? '#cf1322' : '#3f8600' }"
+            />
+          </a-col>
+        </a-row>
+        <a-row :gutter="16" style="margin-top: 16px;">
+          <a-col :span="12">
+            <a-statistic title="视频文件总数" :value="stats.totalVideoFiles" />
+          </a-col>
+          <a-col :span="12">
+            <a-statistic 
+              title="缺失STRM文件"
+              :value="stats.missingStrmFiles"
+              :valueStyle="{ color: stats.missingStrmFiles > 0 ? '#f5a623' : '#3f8600' }"
+            />
+          </a-col>
+        </a-row>
+      </div>
+      
+      <!-- 进度展示 -->
+      <div v-if="isScanning" class="scan-progress">
+        <a-progress :percent="scanProgress" status="active" />
+        <p class="scan-status">{{ scanStatus }}</p>
+      </div>
+      
+      <!-- 问题列表 -->
+      <div class="problem-list" v-if="problems.length > 0">
+        <div class="list-header">
+          <h3>检测到的问题 ({{ problems.length }})</h3>
+          <div class="filter-controls">
+            <a-radio-group v-model:value="problemFilter" button-style="solid">
+              <a-radio-button value="all">全部</a-radio-button>
+              <a-radio-button value="invalid_strm">无效STRM</a-radio-button>
+              <a-radio-button value="missing_strm">缺失STRM</a-radio-button>
+            </a-radio-group>
           </div>
         </div>
-
-        <div v-else-if="!hasProblems && !scanning" class="empty-state">
-          <a-result status="success" title="所有检测的文件状态良好">
-            <template #extra>
-              <a-button type="primary" @click="startScan">重新扫描</a-button>
-            </template>
-          </a-result>
-        </div>
-
-        <div v-else-if="hasProblems && !scanning" class="problem-list">
-          <a-list
-            :data-source="filteredProblems"
-            :pagination="{
-              pageSize: 10,
-              showSizeChanger: true,
-              pageSizeOptions: ['10', '20', '50', '100']
-            }"
-          >
-            <template #header>
-              <div class="list-header">
-                <span>问题文件列表</span>
-                <a-select
-                  v-model:value="sortOrder"
-                  style="width: 200px"
-                  @change="handleSortChange"
-                >
-                  <a-select-option value="path_asc">路径 (升序)</a-select-option>
-                  <a-select-option value="path_desc">路径 (降序)</a-select-option>
-                  <a-select-option value="type_asc">问题类型 (升序)</a-select-option>
-                  <a-select-option value="type_desc">问题类型 (降序)</a-select-option>
-                  <a-select-option value="time_asc">发现时间 (最早)</a-select-option>
-                  <a-select-option value="time_desc">发现时间 (最近)</a-select-option>
-                </a-select>
-              </div>
-            </template>
-            
-            <template #renderItem="{ item }">
-              <a-list-item>
-                <a-card style="width: 100%">
-                  <div class="problem-item">
-                    <div class="problem-info">
-                      <div class="problem-type">
-                        <a-tag :color="getTagColor(item.type)">
-                          {{ getProblemTypeName(item.type) }}
-                        </a-tag>
-                        <span class="discovery-time">发现时间: {{ formatTime(item.discoveryTime) }}</span>
-                      </div>
-                      <div class="problem-path">{{ item.path }}</div>
-                      <div class="problem-details">
-                        {{ item.details }}
-                      </div>
-                    </div>
-                    <div class="problem-actions">
-                      <a-space>
-                        <a-button type="primary" @click="repairItem(item)">
-                          {{ getRepairButtonText(item.type) }}
-                        </a-button>
-                        <a-button @click="ignoreItem(item)">
-                          忽略
-                        </a-button>
-                      </a-space>
-                    </div>
+        
+        <a-list
+          class="problem-list-items"
+          :data-source="filteredProblems"
+          :pagination="{ pageSize: 10 }"
+        >
+          <template #renderItem="{ item }">
+            <a-list-item>
+              <a-card class="problem-card" :bodyStyle="{ padding: '12px' }">
+                <div class="problem-info">
+                  <a-tag :color="getTagColor(item.type)">{{ getProblemTypeName(item.type) }}</a-tag>
+                  <div class="problem-path">{{ item.path }}</div>
+                  <div class="problem-details">{{ item.details }}</div>
+                  <div class="problem-time">
+                    <span>发现时间: {{ formatTime(item.discoveryTime) }}</span>
+                    <span v-if="item.firstDetectedAt && item.firstDetectedAt !== item.discoveryTime">
+                      首次发现: {{ formatTime(item.firstDetectedAt) }}
+                    </span>
                   </div>
-                </a-card>
-              </a-list-item>
-            </template>
-          </a-list>
+                </div>
+                <div class="problem-actions">
+                  <a-button
+                    type="primary"
+                    @click="repairProblem(item)"
+                    :loading="repairing[item.id]"
+                  >
+                    {{ getRepairText(item.type) }}
+                  </a-button>
+                </div>
+              </a-card>
+            </a-list-item>
+          </template>
+        </a-list>
+        
+        <div class="batch-actions" v-if="filteredProblems.length > 0">
+          <a-button
+            type="primary"
+            @click="repairAllProblems"
+            :loading="repairingAll"
+            :disabled="isScanning"
+          >
+            批量{{ getRepairText(problemFilter === 'all' ? '' : problemFilter) }}
+          </a-button>
         </div>
-      </a-spin>
+      </div>
+      
+      <!-- 无问题状态 -->
+      <div v-else-if="!isScanning && hasScanned" class="no-problems">
+        <a-empty description="未检测到问题">
+          <template #description>
+            <span>太棒了！所有STRM文件都是有效的，并且所有视频文件都有对应的STRM文件。</span>
+          </template>
+        </a-empty>
+      </div>
+
+      <!-- 清空数据按钮 -->
+      <div class="advanced-actions" v-if="!isScanning">
+        <a-popconfirm
+          title="确定要清空健康检测数据吗？这将删除所有记录的问题和状态信息。"
+          @confirm="clearHealthData"
+        >
+          <a-button danger>清空健康数据</a-button>
+        </a-popconfirm>
+      </div>
     </a-card>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue';
-import { message } from 'ant-design-vue';
-import { DownOutlined } from '@ant-design/icons-vue';
+import { ref, computed, onMounted } from 'vue'
+import { message } from 'ant-design-vue'
 
-// 状态变量
-const loading = ref(false);
-const scanning = ref(false);
-const problems = ref([]);
-const filterType = ref('all');
-const sortOrder = ref('time_desc');
-const lastScanTime = ref(null);
-const lastScanType = ref('all');
-const scanProgress = ref(0);
-const scanStatus = ref('');
-const ignoredItems = ref(new Set());
-const scanType = ref('all'); // 默认全面检测
+// 扫描参数
+const scanType = ref('all')
+const scanMode = ref('full')
 
-// 获取扫描类型名称
-const getScanTypeName = (type) => {
-  switch (type) {
-    case 'strm_validity': return 'STRM文件有效性检测';
-    case 'video_coverage': return '视频文件覆盖检测';
-    case 'all': return '全面检测';
-    default: return '全面检测';
-  }
-};
+// 扫描状态
+const isScanning = ref(false)
+const scanProgress = ref(0)
+const scanStatus = ref('')
+const lastScanTime = ref(null)
+const lastScanTimeStr = ref('')
+const hasScanned = ref(false)
+const stats = ref(null)
 
-// 获取问题类型名称
-const getProblemTypeName = (type) => {
-  switch (type) {
-    case 'invalid_strm': return 'STRM文件无效';
-    case 'missing_strm': return '缺失STRM文件';
-    default: return '未知问题';
-  }
-};
+// 问题相关
+const problems = ref([])
+const problemFilter = ref('all')
+const repairing = ref({})
+const repairingAll = ref(false)
 
-// 获取标签颜色
-const getTagColor = (type) => {
-  switch (type) {
-    case 'invalid_strm': return 'red';
-    case 'missing_strm': return 'orange';
-    default: return 'blue';
-  }
-};
-
-// 获取修复按钮文本
-const getRepairButtonText = (type) => {
-  switch (type) {
-    case 'invalid_strm': return '清理无效STRM';
-    case 'missing_strm': return '生成缺失STRM';
-    default: return '修复';
-  }
-};
-
-// 处理扫描类型变更
-const handleScanTypeChange = (e) => {
-  scanType.value = e.key;
-};
-
-// 计算属性
-const hasProblems = computed(() => {
-  return problems.value.filter(p => !ignoredItems.value.has(p.id)).length > 0;
-});
-
+// 计算筛选后的问题列表
 const filteredProblems = computed(() => {
-  // 首先过滤掉已忽略的项目
-  let result = problems.value.filter(p => !ignoredItems.value.has(p.id));
-  
-  // 根据类型过滤
-  if (filterType.value !== 'all') {
-    result = result.filter(p => p.type === filterType.value);
+  if (problemFilter.value === 'all') {
+    return problems.value
   }
-  
-  // 根据排序选项排序
-  result = sortProblems(result, sortOrder.value);
-  
-  return result;
-});
+  return problems.value.filter(problem => problem.type === problemFilter.value)
+})
 
-// 格式化时间显示
-const formatTime = (timestamp) => {
-  if (!timestamp) return '未知';
-  
-  const date = new Date(timestamp * 1000);
-  return date.toLocaleString('zh-CN', { 
-    year: 'numeric', 
-    month: '2-digit', 
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit'
-  });
-};
+// 初始化：获取状态和问题列表
+onMounted(async () => {
+  await getStatus()
+  await getProblems()
+})
 
-// 排序问题列表
-const sortProblems = (items, order) => {
-  return [...items].sort((a, b) => {
-    if (order === 'path_asc') return a.path.localeCompare(b.path);
-    if (order === 'path_desc') return b.path.localeCompare(a.path);
-    if (order === 'type_asc') return a.type.localeCompare(b.type);
-    if (order === 'type_desc') return b.type.localeCompare(a.type);
-    if (order === 'time_asc') return a.discoveryTime - b.discoveryTime;
-    if (order === 'time_desc') return b.discoveryTime - a.discoveryTime;
-    return 0;
-  });
-};
+// 获取扫描状态
+const getStatus = async () => {
+  try {
+    const response = await fetch('/api/health/status')
+    const data = await response.json()
+    
+    isScanning.value = data.isScanning
+    scanProgress.value = data.progress
+    scanStatus.value = data.status
+    lastScanTime.value = data.lastScanTime
+    lastScanTimeStr.value = data.lastScanTimeStr
+    scanType.value = data.scanType || 'all'
+    scanMode.value = data.scanMode || 'full'
+    
+    // 更新统计信息
+    stats.value = data.stats || null
+    
+    if (data.lastScanTime) {
+      hasScanned.value = true
+    }
+    
+    // 如果正在扫描，每5秒更新一次状态
+    if (data.isScanning) {
+      setTimeout(getStatus, 2000)
+    }
+  } catch (error) {
+    console.error('获取扫描状态失败:', error)
+  }
+}
 
-// 处理排序方式变化
-const handleSortChange = (value) => {
-  sortOrder.value = value;
-};
+// 获取问题列表
+const getProblems = async () => {
+  try {
+    const response = await fetch(`/api/health/problems?type=${problemFilter.value === 'all' ? '' : problemFilter.value}`)
+    const data = await response.json()
+    
+    problems.value = data.problems || []
+    
+    // 如果获取了新的统计信息，更新它
+    if (data.stats) {
+      stats.value = data.stats
+    }
+  } catch (error) {
+    console.error('获取问题列表失败:', error)
+  }
+}
 
 // 开始扫描
 const startScan = async () => {
-  scanning.value = true;
-  scanProgress.value = 0;
-  scanStatus.value = '正在初始化扫描...';
-  
   try {
-    // 请求后端开始扫描
-    const response = await fetch(`/api/health/start?type=${scanType.value}`, {
-      method: 'POST'
-    });
+    isScanning.value = true
+    scanProgress.value = 0
+    scanStatus.value = '正在初始化扫描...'
     
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.detail || '扫描请求失败');
-    }
-    
-    // 轮询扫描状态
-    await pollScanStatus();
-    
-    // 获取扫描结果
-    await getHealthProblems();
-    
-    // 更新最后扫描时间和类型
-    lastScanTime.value = Math.floor(Date.now() / 1000);
-    lastScanType.value = scanType.value;
-    
-    message.success('健康度扫描完成');
-  } catch (error) {
-    console.error('扫描失败:', error);
-    message.error('扫描失败: ' + error.message);
-  } finally {
-    scanning.value = false;
-  }
-};
-
-// 轮询扫描状态
-const pollScanStatus = async () => {
-  return new Promise((resolve, reject) => {
-    const checkInterval = setInterval(async () => {
-      try {
-        const response = await fetch('/api/health/status');
-        if (!response.ok) {
-          clearInterval(checkInterval);
-          reject(new Error('获取扫描状态失败'));
-          return;
-        }
-        
-        const data = await response.json();
-        scanProgress.value = data.progress;
-        scanStatus.value = data.status;
-        
-        if (!data.isScanning) {
-          clearInterval(checkInterval);
-          resolve();
-        }
-      } catch (error) {
-        clearInterval(checkInterval);
-        reject(error);
-      }
-    }, 1000);
-  });
-};
-
-// 获取健康问题列表
-const getHealthProblems = async () => {
-  try {
-    const response = await fetch('/api/health/problems');
-    if (!response.ok) {
-      throw new Error('获取问题列表失败');
-    }
-    
-    const data = await response.json();
-    problems.value = data.problems || [];
-  } catch (error) {
-    console.error('获取问题列表失败:', error);
-    message.error('获取问题列表失败: ' + error.message);
-  }
-};
-
-// 修复单个问题
-const repairItem = async (item) => {
-  loading.value = true;
-  try {
-    // 根据问题类型执行不同的修复操作
-    let endpoint, requestBody;
-    
-    if (item.type === 'invalid_strm') {
-      endpoint = '/api/health/repair/invalid_strm';
-    } else if (item.type === 'missing_strm') {
-      endpoint = '/api/health/repair/missing_strm';
-    } else {
-      throw new Error('未知的问题类型');
-    }
-    
-    requestBody = {
-      paths: [item.path],
-      type: item.type
-    };
-    
-    const response = await fetch(endpoint, {
+    const response = await fetch('/api/health/start', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify(requestBody)
-    });
+      body: JSON.stringify({
+        type: scanType.value,
+        mode: scanMode.value
+      })
+    })
     
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.detail || '修复请求失败');
+    const data = await response.json()
+    
+    if (data.status === 'scanning') {
+      message.success('已开始健康扫描')
+      getStatus()
+      
+      // 定时检查扫描是否完成
+      checkScanCompleted()
+    } else {
+      message.error('启动扫描失败')
+      isScanning.value = false
     }
-    
-    const result = await response.json();
-    
-    // 从问题列表中移除
-    problems.value = problems.value.filter(p => p.id !== item.id);
-    
-    message.success(result.message || '问题已修复');
   } catch (error) {
-    console.error('修复失败:', error);
-    message.error('修复失败: ' + error.message);
-  } finally {
-    loading.value = false;
+    console.error('启动扫描失败:', error)
+    message.error('启动扫描失败: ' + error.message)
+    isScanning.value = false
   }
-};
+}
 
-// 忽略单个问题
-const ignoreItem = (item) => {
-  ignoredItems.value.add(item.id);
-  message.info('已忽略此问题');
-};
+// 定时检查扫描是否完成
+const checkScanCompleted = () => {
+  setTimeout(async () => {
+    if (isScanning.value) {
+      await getStatus()
+      if (isScanning.value) {
+        checkScanCompleted()
+      } else {
+        // 扫描完成后，获取问题列表
+        await getProblems()
+        message.success('扫描完成')
+      }
+    }
+  }, 2000)
+}
 
-// 修复所有问题
-const repairAll = async () => {
-  if (!hasProblems) return;
-  
-  loading.value = true;
+// 修复单个问题
+const repairProblem = async (problem) => {
   try {
-    // 按问题类型分组批量处理
-    const invalidStrm = filteredProblems.value.filter(p => p.type === 'invalid_strm');
-    const missingStrm = filteredProblems.value.filter(p => p.type === 'missing_strm');
+    repairing.value[problem.id] = true
     
-    let successCount = 0;
+    const endpoint = problem.type === 'invalid_strm' ? 'repair/invalid_strm' : 'repair/missing_strm'
     
-    if (invalidStrm.length > 0) {
-      const response = await fetch('/api/health/repair/invalid_strm', {
+    const response = await fetch(`/api/health/${endpoint}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        paths: [problem.path],
+        type: problem.type
+      })
+    })
+    
+    const data = await response.json()
+    
+    if (data.success) {
+      message.success(data.message)
+      
+      // 从列表中移除已修复的问题
+      problems.value = problems.value.filter(p => p.id !== problem.id)
+      
+      // 获取最新状态和统计信息
+      await getStatus()
+    } else {
+      message.error(data.message || '修复失败')
+    }
+  } catch (error) {
+    console.error('修复问题失败:', error)
+    message.error('修复失败: ' + error.message)
+  } finally {
+    repairing.value[problem.id] = false
+  }
+}
+
+// 批量修复问题
+const repairAllProblems = async () => {
+  if (filteredProblems.value.length === 0) return
+  
+  try {
+    repairingAll.value = true
+    
+    // 按类型分组问题
+    const invalidStrm = filteredProblems.value.filter(p => p.type === 'invalid_strm').map(p => p.path)
+    const missingStrm = filteredProblems.value.filter(p => p.type === 'missing_strm').map(p => p.path)
+    
+    let hasErrors = false
+    
+    // 修复无效STRM文件
+    if (invalidStrm.length > 0 && (problemFilter.value === 'all' || problemFilter.value === 'invalid_strm')) {
+      const invalidResponse = await fetch('/api/health/repair/invalid_strm', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          paths: invalidStrm.map(p => p.path),
+          paths: invalidStrm,
           type: 'invalid_strm'
         })
-      });
+      })
       
-      if (response.ok) {
-        const result = await response.json();
-        successCount += invalidStrm.length;
-        message.success(`成功清理 ${invalidStrm.length} 个无效的STRM文件`);
+      const invalidData = await invalidResponse.json()
+      
+      if (invalidData.success) {
+        message.success(invalidData.message)
+      } else {
+        message.error(invalidData.message || '修复无效STRM文件失败')
+        hasErrors = true
       }
     }
     
-    if (missingStrm.length > 0) {
-      const response = await fetch('/api/health/repair/missing_strm', {
+    // 修复缺失STRM文件
+    if (missingStrm.length > 0 && (problemFilter.value === 'all' || problemFilter.value === 'missing_strm')) {
+      const missingResponse = await fetch('/api/health/repair/missing_strm', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          paths: missingStrm.map(p => p.path),
+          paths: missingStrm,
           type: 'missing_strm'
         })
-      });
+      })
       
-      if (response.ok) {
-        const result = await response.json();
-        successCount += missingStrm.length;
-        message.success(`成功生成 ${missingStrm.length} 个缺失的STRM文件`);
+      const missingData = await missingResponse.json()
+      
+      if (missingData.success) {
+        message.success(missingData.message)
+      } else {
+        message.error(missingData.message || '修复缺失STRM文件失败')
+        hasErrors = true
       }
     }
     
-    // 清空问题列表
-    if (successCount === filteredProblems.value.length) {
-      problems.value = problems.value.filter(p => ignoredItems.value.has(p.id));
-      message.success('所有问题已修复');
-    } else {
-      // 重新获取问题列表
-      await getHealthProblems();
-      message.warning(`修复了 ${successCount}/${filteredProblems.value.length} 个问题`);
+    if (!hasErrors) {
+      message.success('所有问题已成功修复')
     }
+    
+    // 重新获取问题列表和状态
+    await getProblems()
+    await getStatus()
+    
   } catch (error) {
-    console.error('批量修复失败:', error);
-    message.error('批量修复失败: ' + error.message);
+    console.error('批量修复问题失败:', error)
+    message.error('批量修复失败: ' + error.message)
   } finally {
-    loading.value = false;
+    repairingAll.value = false
   }
-};
+}
 
-onMounted(async () => {
-  // 加载当前扫描状态
+// 清空健康数据
+const clearHealthData = async () => {
   try {
-    const response = await fetch('/api/health/status');
-    if (response.ok) {
-      const data = await response.json();
-      
-      // 如果有上次扫描结果，获取问题列表
-      if (data.lastScanTime) {
-        lastScanTime.value = data.lastScanTime;
-        await getHealthProblems();
-      }
-      
-      // 如果当前正在扫描，显示扫描进度
-      if (data.isScanning) {
-        scanning.value = true;
-        scanProgress.value = data.progress;
-        scanStatus.value = data.status;
-        
-        // 开始轮询扫描状态
-        pollScanStatus().then(() => {
-          scanning.value = false;
-          getHealthProblems();
-        }).catch(error => {
-          scanning.value = false;
-          console.error('轮询扫描状态失败:', error);
-        });
-      }
+    const response = await fetch('/api/health/clear_data', {
+      method: 'POST'
+    })
+    
+    const data = await response.json()
+    
+    if (data.success) {
+      message.success('健康数据已清空')
+      problems.value = []
+      await getStatus()
+    } else {
+      message.error(data.message || '清空数据失败')
     }
   } catch (error) {
-    console.error('获取扫描状态失败:', error);
+    console.error('清空健康数据失败:', error)
+    message.error('清空数据失败: ' + error.message)
   }
-});
+}
+
+// 格式化时间戳
+const formatTime = (timestamp) => {
+  if (!timestamp) return ''
+  const date = new Date(timestamp * 1000)
+  return date.toLocaleString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit'
+  })
+}
+
+// 获取最后扫描时间消息
+const getLastScanMessage = () => {
+  if (isScanning.value) {
+    return `正在进行${getScanTypeName(scanType.value)}，模式：${getScanModeName(scanMode.value)}`
+  }
+  
+  if (!lastScanTime.value) {
+    return '尚未进行过健康检测'
+  }
+  
+  return `上次${getScanTypeName(scanType.value)}：${lastScanTimeStr.value}`
+}
+
+// 获取扫描类型名称
+const getScanTypeName = (type) => {
+  const types = {
+    'all': '全面检测',
+    'strm_validity': 'STRM文件有效性检测',
+    'video_coverage': '视频文件覆盖检测'
+  }
+  return types[type] || '未知检测'
+}
+
+// 获取扫描模式名称
+const getScanModeName = (mode) => {
+  const modes = {
+    'full': '完整扫描',
+    'incremental': '增量扫描',
+    'problems_only': '仅检查问题'
+  }
+  return modes[mode] || '未知模式'
+}
+
+// 获取问题类型名称
+const getProblemTypeName = (type) => {
+  return type === 'invalid_strm' ? '无效STRM' : '缺失STRM'
+}
+
+// 获取标签颜色
+const getTagColor = (type) => {
+  return type === 'invalid_strm' ? 'red' : 'orange'
+}
+
+// 获取修复按钮文本
+const getRepairText = (type) => {
+  if (type === 'invalid_strm') return '清理无效STRM'
+  if (type === 'missing_strm') return '生成STRM'
+  return '修复所有问题'
+}
 </script>
 
 <style scoped>
@@ -478,33 +505,47 @@ onMounted(async () => {
   padding: 20px;
 }
 
-.action-bar {
+.health-card {
+  min-height: 500px;
+}
+
+.scan-header {
   display: flex;
   justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+
+.scan-title {
+  flex: 1;
+  margin-right: 20px;
   margin-bottom: 20px;
 }
 
-.scan-info {
-  margin-bottom: 20px;
+.scan-status-alert {
+  margin-top: 10px;
+}
+
+.scan-controls {
+  display: flex;
+  align-items: flex-start;
 }
 
 .scan-progress {
-  margin: 30px 0;
+  margin: 20px 0;
 }
 
 .scan-status {
-  text-align: center;
-  margin-top: 10px;
-  color: rgba(0, 0, 0, 0.65);
+  margin-top: 8px;
+  color: #666;
 }
 
-.empty-state {
-  padding: 40px 0;
-  text-align: center;
-}
-
-.center-button {
-  margin-top: 20px;
+.stats-section {
+  margin-bottom: 24px;
+  padding: 16px;
+  background-color: #f9f9f9;
+  border-radius: 4px;
 }
 
 .problem-list {
@@ -515,57 +556,80 @@ onMounted(async () => {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  margin-bottom: 16px;
 }
 
-.problem-item {
+.filter-controls {
+  margin-left: auto;
+}
+
+.problem-card {
+  width: 100%;
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
+  align-items: center;
 }
 
 .problem-info {
   flex: 1;
 }
 
-.problem-type {
-  display: flex;
-  align-items: center;
-  margin-bottom: 8px;
-}
-
-.discovery-time {
-  margin-left: 10px;
-  font-size: 12px;
-  color: rgba(0, 0, 0, 0.45);
-}
-
 .problem-path {
   font-weight: bold;
-  margin-bottom: 8px;
+  margin: 8px 0;
   word-break: break-all;
 }
 
 .problem-details {
-  color: rgba(0, 0, 0, 0.65);
+  color: #666;
+  margin-bottom: 8px;
+}
+
+.problem-time {
+  font-size: 12px;
+  color: #999;
+  display: flex;
+  flex-direction: column;
 }
 
 .problem-actions {
   margin-left: 16px;
 }
 
+.no-problems {
+  margin: 40px 0;
+  text-align: center;
+}
+
+.batch-actions {
+  margin-top: 20px;
+  text-align: right;
+}
+
+.advanced-actions {
+  margin-top: 30px;
+  border-top: 1px solid #f0f0f0;
+  padding-top: 20px;
+  text-align: right;
+}
+
 @media (max-width: 768px) {
-  .action-bar {
+  .scan-header {
     flex-direction: column;
-    gap: 16px;
   }
   
-  .problem-item {
+  .scan-title, .scan-controls {
+    width: 100%;
+  }
+  
+  .problem-card {
     flex-direction: column;
+    align-items: flex-start;
   }
   
   .problem-actions {
     margin-left: 0;
-    margin-top: 16px;
+    margin-top: 12px;
     align-self: flex-end;
   }
 }

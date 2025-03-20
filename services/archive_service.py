@@ -614,7 +614,15 @@ class ArchiveService:
                 rel_file_path = str(file_info["relative_path"]).replace('\\', '/')
                 
                 # 构建完整的目标Alist路径（不编码）
-                target_file_path = f"{target_alist_path}/{rel_file_path}"
+                # 检查路径中是否已包含文件名，避免重复
+                filename = os.path.basename(rel_file_path)
+                target_path_dir = os.path.dirname(target_alist_path)
+                if os.path.basename(target_alist_path) == filename:
+                    # 目标路径已包含文件名，不需要再添加
+                    target_file_path = target_alist_path
+                else:
+                    target_file_path = f"{target_alist_path}/{rel_file_path}"
+                
                 logger.debug(f"原始目标文件路径: {target_file_path}")
                 
                 # 从文件名中获取基本名称（不包含扩展名）
