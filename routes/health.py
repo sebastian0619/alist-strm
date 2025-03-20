@@ -10,6 +10,7 @@ import re
 import httpx
 from datetime import datetime
 from services.service_manager import service_manager
+from urllib.parse import unquote, quote
 
 router = APIRouter(prefix="/api/health", tags=["health"])
 logger = logging.getLogger(__name__)
@@ -493,17 +494,20 @@ async def extract_target_path_from_file(strm_file):
         if len(parts) < 2:
             return None
         
-        path = parts[1]  # 直接获取/d/后面的路径
+        # 提取路径但不对其进行解码
+        # 注意：我们保留编码状态，因为健康检测在其他地方需要这个编码版本
+        # 解码会在check_alist_file_exists函数中进行
+        encoded_path = parts[1]
         
-        # 处理可能存在的文件名重复问题
-        filename = os.path.basename(path)
-        parent_dir = os.path.dirname(path)
+        # 处理可能存在的文件名重复问题（在编码状态下）
+        filename = os.path.basename(encoded_path)
+        parent_dir = os.path.dirname(encoded_path)
         if os.path.basename(parent_dir) == filename:
             # 路径中有重复的文件名，使用父路径
-            path = parent_dir
-            logger.debug(f"从STRM文件中提取路径时检测到重复的文件名，使用修正后的路径: {path}")
+            encoded_path = parent_dir
+            logger.debug(f"从STRM文件中提取路径时检测到重复的文件名，使用修正后的路径: {encoded_path}")
         
-        return path
+        return encoded_path
     except Exception as e:
         logger.error(f"从STRM文件提取目标路径失败: {str(e)}, 文件: {strm_file}")
         return None
@@ -517,9 +521,18 @@ def build_strm_path(video_path):
     """从视频文件路径构建STRM文件路径"""
     output_dir = service_manager.strm_service.settings.output_dir
     
+    # 确保我们处理的是解码后的路径
+    # 注意：此函数可能接收已编码或未编码的路径，需处理两种情况
+    try:
+        # 尝试解码，如果已是解码状态，不会有变化
+        decoded_path = unquote(video_path)
+    except Exception:
+        # 解码失败，保持原样
+        decoded_path = video_path
+    
     # 处理可能存在的文件名重复问题
-    filename = os.path.basename(video_path)
-    parent_dir = os.path.dirname(video_path)
+    filename = os.path.basename(decoded_path)
+    parent_dir = os.path.dirname(decoded_path)
     if os.path.basename(parent_dir) == filename:
         # 路径中有重复的文件名，使用父路径
         rel_path = os.path.dirname(parent_dir)
@@ -534,23 +547,24 @@ def build_strm_path(video_path):
 async def check_alist_file_exists(path):
     """检查Alist中的文件是否存在"""
     try:
+        # 先进行URL解码，确保我们使用的是原始路径而非URL编码后的路径
+        decoded_path = unquote(path)
+        
         # 处理可能存在的文件名重复问题
-        filename = os.path.basename(path)
-        parent_dir = os.path.dirname(path)
+        filename = os.path.basename(decoded_path)
+        parent_dir = os.path.dirname(decoded_path)
         if os.path.basename(parent_dir) == filename:
             # 路径中有重复的文件名，使用父路径
-            path = parent_dir
-            logger.debug(f"检测到路径中有重复的文件名，使用修正后的路径: {path}")
+            decoded_path = parent_dir
+            logger.debug(f"检测到路径中有重复的文件名，使用修正后的路径: {decoded_path}")
         
         # 使用Alist API检查文件是否存在
-        # 不需要额外处理/d前缀，因为path已经是从URL中提取的纯路径
-        
-        # 使用Alist API查询文件信息
+        # 使用解码后的路径进行查询
         alist_url = service_manager.strm_service.settings.alist_url
         alist_token = service_manager.strm_service.settings.alist_token
         
         # 记录当前检查的路径，便于调试
-        logger.debug(f"检查Alist文件是否存在: {path}")
+        logger.debug(f"检查Alist文件是否存在: {decoded_path} (原始编码路径: {path})")
         
         # 使用httpx发送请求
         async with httpx.AsyncClient() as client:
@@ -561,7 +575,7 @@ async def check_alist_file_exists(path):
             
             response = await client.post(
                 f"{alist_url}/api/fs/get", 
-                json={"path": path},
+                json={"path": decoded_path},
                 headers=headers,
                 timeout=10.0
             )
@@ -596,19 +610,19 @@ async def scan_alist_videos(path):
                 # 检查是否是视频文件
                 file_name = file.get("name", "")
                 if is_video_file(file_name):
-                    # 获取文件路径
-                    file_path = file.get("path")
+                    # 获取文件路径 - 这里得到的是未编码的原始路径
+                    original_path = file.get("path")
                     
                     # 处理可能存在的文件名重复问题
-                    filename = os.path.basename(file_path)
-                    parent_dir = os.path.dirname(file_path)
+                    filename = os.path.basename(original_path)
+                    parent_dir = os.path.dirname(original_path)
                     if os.path.basename(parent_dir) == filename:
                         # 路径中有重复的文件名，使用父路径
-                        file_path = parent_dir
-                        logger.debug(f"扫描视频文件时检测到重复的文件名，使用修正后的路径: {file_path}")
+                        original_path = parent_dir
+                        logger.debug(f"扫描视频文件时检测到重复的文件名，使用修正后的路径: {original_path}")
                     
-                    # 保存不带/d前缀的路径
-                    video_files.append(file_path)
+                    # 保存原始路径（未编码）
+                    video_files.append(original_path)
                     
     except Exception as e:
         logger.error(f"扫描Alist视频文件时出错: {str(e)}, 路径: {path}")
@@ -749,20 +763,24 @@ async def repair_missing_strm(request: RepairRequest):
                 alist_url = service_manager.strm_service.settings.alist_url
                 
                 # 确保video_path不包含重复的文件名
-                filename = os.path.basename(video_path)
-                if os.path.basename(os.path.dirname(video_path)) == filename:
+                # 先解码视频路径，确保处理的是原始路径
+                decoded_path = unquote(video_path)
+                filename = os.path.basename(decoded_path)
+                if os.path.basename(os.path.dirname(decoded_path)) == filename:
                     # 路径结尾有重复的文件名，移除最后一个
-                    video_path = os.path.dirname(video_path)
+                    decoded_path = os.path.dirname(decoded_path)
                 
-                video_url = f"{alist_url}/d/{video_path}"
+                # 需要重新编码路径用于URL
+                encoded_path = quote(decoded_path)
+                video_url = f"{alist_url}/d/{encoded_path}"
                 
                 # 获取文件名和扩展名
-                filename = os.path.basename(video_path)
+                filename = os.path.basename(decoded_path)
                 name, _ = os.path.splitext(filename)
                 
                 # 计算输出路径 - 需要保持目录结构
                 output_dir = service_manager.strm_service.settings.output_dir
-                rel_path = os.path.dirname(video_path)
+                rel_path = os.path.dirname(decoded_path)
                 
                 # 创建输出目录
                 full_output_dir = os.path.join(output_dir, rel_path.lstrip('/'))
@@ -780,7 +798,7 @@ async def repair_missing_strm(request: RepairRequest):
                 success_count += 1
                 
                 # 更新健康状态数据
-                service_manager.health_service.add_strm_file(strm_path, video_path)
+                service_manager.health_service.add_strm_file(strm_path, decoded_path)
                 
             except Exception as e:
                 logger.error(f"为视频生成STRM文件失败: {video_path}, 错误: {str(e)}")
