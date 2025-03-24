@@ -242,6 +242,12 @@ class ArchiveService:
                             path.unlink()
                         logger.info(f"已删除延迟文件: {path}")
                         self._pending_deletions.remove(item)
+                        
+                        # 发送删除通知
+                        service_manager = self._get_service_manager()
+                        notification_msg = f"🗑️ 已删除延迟文件:\n{path}"
+                        await service_manager.telegram_service.send_message(notification_msg)
+                        
                     except Exception as e:
                         logger.error(f"删除文件失败 {path}: {e}")
                 
@@ -256,14 +262,41 @@ class ArchiveService:
                 await asyncio.sleep(3600)  # 每小时检查一次
 
     def _add_to_pending_deletion(self, path: Path):
-        """添加文件到待删除队列"""
-        self._pending_deletions.append({
-            "path": path,
-            "delete_time": time.time() + self._deletion_delay
-        })
-        # 保存待删除列表到JSON文件
-        self._save_pending_deletions()
-        logger.info(f"已添加到延迟删除队列: {path}, 将在 {self._deletion_delay/86400:.1f} 天后删除")
+        """将文件或目录添加到待删除列表
+        
+        Args:
+            path: 要删除的文件或目录路径
+        """
+        try:
+            # 检查文件是否已经在待删除列表中
+            for item in self._pending_deletions:
+                if str(item["path"]) == str(path):
+                    logger.info(f"文件已在待删除列表中: {path}")
+                    return
+            
+            # 计算删除时间（当前时间 + 延迟时间）
+            delete_time = time.time() + self._deletion_delay
+            
+            # 添加到待删除列表
+            self._pending_deletions.append({
+                "path": path,
+                "delete_time": delete_time
+            })
+            
+            # 保存到文件
+            self._save_pending_deletions()
+            
+            # 记录添加信息
+            logger.info(f"已将文件添加到待删除列表: {path}")
+            
+            # 发送通知
+            service_manager = self._get_service_manager()
+            delete_time_str = datetime.fromtimestamp(delete_time).strftime("%Y-%m-%d %H:%M:%S")
+            notification_msg = f"📝 文件已加入待删除列表:\n{path}\n计划删除时间: {delete_time_str}"
+            asyncio.create_task(service_manager.telegram_service.send_message(notification_msg))
+            
+        except Exception as e:
+            logger.error(f"添加文件到待删除列表失败: {e}")
 
     def _should_skip_directory(self, path: Path) -> bool:
         """检查是否应该跳过某个目录"""
@@ -1209,6 +1242,12 @@ class ArchiveService:
                             path.unlink()
                         logger.info(f"已删除延迟文件: {path}")
                         self._pending_deletions.remove(item)
+                        
+                        # 发送删除通知
+                        service_manager = self._get_service_manager()
+                        notification_msg = f"🗑️ 已删除延迟文件:\n{path}"
+                        await service_manager.telegram_service.send_message(notification_msg)
+                        
                     except Exception as e:
                         logger.error(f"删除文件失败 {path}: {e}")
                 
