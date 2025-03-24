@@ -222,15 +222,33 @@ class ArchiveService:
             try:
                 current_time = time.time()
                 items_to_delete = []
+                items_to_remove = []  # 记录需要从列表中移除的项目
                 
                 # 确保使用最新列表
                 if len(self._pending_deletions) > 0:
                     logger.info(f"检查待删除文件列表，共 {len(self._pending_deletions)} 个项目")
                 
-                # 识别需要删除的项目
+                # 检查每个项目
                 for item in self._pending_deletions:
+                    path = item["path"]
+                    
+                    # 如果文件已经不存在，直接从列表中移除
+                    if not path.exists():
+                        items_to_remove.append(item)
+                        logger.info(f"文件已不存在，将从待删除列表中移除: {path}")
+                        continue
+                    
+                    # 如果已到删除时间，添加到待删除列表
                     if current_time >= item["delete_time"]:
                         items_to_delete.append(item)
+                
+                # 处理需要从列表中移除的项目（文件不存在的情况）
+                for item in items_to_remove:
+                    self._pending_deletions.remove(item)
+                    # 发送通知
+                    service_manager = self._get_service_manager()
+                    notification_msg = f"📝 从待删除列表移除不存在的文件:\n{item['path']}"
+                    await service_manager.telegram_service.send_message(notification_msg)
                 
                 # 执行删除操作
                 for item in items_to_delete:
@@ -250,16 +268,20 @@ class ArchiveService:
                         
                     except Exception as e:
                         logger.error(f"删除文件失败 {path}: {e}")
+                        # 如果文件不存在，也从列表中移除
+                        if not path.exists():
+                            self._pending_deletions.remove(item)
+                            logger.info(f"文件不存在，已从待删除列表中移除: {path}")
                 
-                # 如果有删除操作，保存更新后的列表
-                if items_to_delete:
+                # 如果有任何更改，保存更新后的列表
+                if items_to_delete or items_to_remove:
                     self._save_pending_deletions()
-                    logger.info(f"已删除 {len(items_to_delete)} 个过期文件，剩余 {len(self._pending_deletions)} 个待删除项目")
+                    logger.info(f"已删除 {len(items_to_delete)} 个过期文件，移除 {len(items_to_remove)} 个不存在的记录，剩余 {len(self._pending_deletions)} 个待删除项目")
                     
             except Exception as e:
                 logger.error(f"检查待删除文件时出错: {e}")
             finally:
-                await asyncio.sleep(3600)  # 每小时检查一次
+                await asyncio.sleep(60)  # 每分钟检查一次，确保及时处理
 
     def _add_to_pending_deletion(self, path: Path):
         """将文件或目录添加到待删除列表
@@ -1222,15 +1244,33 @@ class ArchiveService:
             try:
                 current_time = time.time()
                 items_to_delete = []
+                items_to_remove = []  # 记录需要从列表中移除的项目
                 
                 # 确保使用最新列表
                 if len(self._pending_deletions) > 0:
                     logger.info(f"检查待删除文件列表，共 {len(self._pending_deletions)} 个项目")
                 
-                # 识别需要删除的项目
+                # 检查每个项目
                 for item in self._pending_deletions:
+                    path = item["path"]
+                    
+                    # 如果文件已经不存在，直接从列表中移除
+                    if not path.exists():
+                        items_to_remove.append(item)
+                        logger.info(f"文件已不存在，将从待删除列表中移除: {path}")
+                        continue
+                    
+                    # 如果已到删除时间，添加到待删除列表
                     if current_time >= item["delete_time"]:
                         items_to_delete.append(item)
+                
+                # 处理需要从列表中移除的项目（文件不存在的情况）
+                for item in items_to_remove:
+                    self._pending_deletions.remove(item)
+                    # 发送通知
+                    service_manager = self._get_service_manager()
+                    notification_msg = f"📝 从待删除列表移除不存在的文件:\n{item['path']}"
+                    await service_manager.telegram_service.send_message(notification_msg)
                 
                 # 执行删除操作
                 for item in items_to_delete:
@@ -1250,13 +1290,17 @@ class ArchiveService:
                         
                     except Exception as e:
                         logger.error(f"删除文件失败 {path}: {e}")
+                        # 如果文件不存在，也从列表中移除
+                        if not path.exists():
+                            self._pending_deletions.remove(item)
+                            logger.info(f"文件不存在，已从待删除列表中移除: {path}")
                 
-                # 如果有删除操作，保存更新后的列表
-                if items_to_delete:
+                # 如果有任何更改，保存更新后的列表
+                if items_to_delete or items_to_remove:
                     self._save_pending_deletions()
-                    logger.info(f"已删除 {len(items_to_delete)} 个过期文件，剩余 {len(self._pending_deletions)} 个待删除项目")
+                    logger.info(f"已删除 {len(items_to_delete)} 个过期文件，移除 {len(items_to_remove)} 个不存在的记录，剩余 {len(self._pending_deletions)} 个待删除项目")
                     
             except Exception as e:
                 logger.error(f"检查待删除文件时出错: {e}")
             finally:
-                await asyncio.sleep(3600)  # 每小时检查一次 
+                await asyncio.sleep(60)  # 每分钟检查一次，确保及时处理 
