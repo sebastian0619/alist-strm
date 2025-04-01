@@ -141,17 +141,62 @@ class EmbyService:
             strm_root = strm_root[:-1]
         if emby_root.endswith('/'):
             emby_root = emby_root[:-1]
+            
+        # 标准化路径（确保开头的斜杠一致）
+        normalized_strm_path = '/' + strm_path.lstrip('/')
+        normalized_strm_root = '/' + strm_root.lstrip('/')
         
-        # 如果STRM路径以STRM根路径开头，替换为Emby根路径
-        if strm_path.startswith(strm_root):
-            relative_path = strm_path[len(strm_root):].lstrip('/')
+        # 检查路径是否匹配
+        if normalized_strm_path.startswith(normalized_strm_root):
+            # 提取相对路径
+            relative_path = normalized_strm_path[len(normalized_strm_root):].lstrip('/')
             emby_path = f"{emby_root}/{relative_path}"
             logger.debug(f"路径转换: {strm_path} -> {emby_path}")
             return emby_path
         
-        # 如果不能转换，返回原路径
-        logger.warning(f"无法转换路径: {strm_path}，STRM根路径: {strm_root}")
-        return strm_path
+        # 检查不带前导斜杠的情况
+        strm_root_no_slash = strm_root.lstrip('/')
+        if strm_path.startswith(strm_root_no_slash):
+            # 提取相对路径
+            relative_path = strm_path[len(strm_root_no_slash):].lstrip('/')
+            emby_path = f"{emby_root}/{relative_path}"
+            logger.debug(f"无斜杠路径转换: {strm_path} -> {emby_path}")
+            return emby_path
+            
+        # 如果以上都不匹配，尝试直接查找非路径部分
+        try:
+            # 获取最有可能的相对路径
+            normalized_path = strm_path.lstrip('/')
+            normalized_root = strm_root.lstrip('/')
+            
+            # 检查路径中是否包含根路径的最后一部分
+            root_parts = normalized_root.split('/')
+            if root_parts and root_parts[-1] in normalized_path:
+                # 查找根目录的最后一部分在路径中的位置
+                pos = normalized_path.find(root_parts[-1])
+                if pos >= 0:
+                    # 找到根目录的最后一部分后的路径
+                    end_pos = pos + len(root_parts[-1])
+                    relative_path = normalized_path[end_pos:].lstrip('/')
+                    emby_path = f"{emby_root}/{relative_path}"
+                    logger.debug(f"部分匹配路径转换: {strm_path} -> {emby_path}")
+                    return emby_path
+        except Exception as e:
+            logger.warning(f"尝试部分匹配路径时出错: {str(e)}")
+        
+        # 如果不能转换，返回原路径并记录警告
+        logger.warning(f"无法转换路径: {strm_path}，STRM根路径: {strm_root}, Emby根路径: {emby_root}")
+        
+        # 最后尝试直接使用Emby根路径加相对路径
+        try:
+            # 假设strm_path是相对于STRM根目录的路径，直接拼接
+            relative_path = strm_path.lstrip('/')
+            emby_path = f"{emby_root}/{relative_path}"
+            logger.info(f"回退方案 - 路径转换: {strm_path} -> {emby_path}")
+            return emby_path
+        except Exception as e:
+            logger.error(f"回退路径转换失败: {str(e)}")
+            return strm_path
     
     def parse_media_info_from_path(self, path: str) -> Dict[str, Any]:
         """从路径解析媒体信息"""
@@ -202,13 +247,19 @@ class EmbyService:
     async def query_item_by_path(self, path: str) -> Optional[Dict]:
         """通过路径查询Emby中的媒体项"""
         try:
+            # 确保emby_url是合法的URL
+            if not self.emby_url or not self.emby_url.startswith(('http://', 'https://')):
+                logger.error(f"无效的Emby API URL: {self.emby_url}")
+                return None
+            
             # 构建API URL
-            encoded_path = httpx.get(path).url
             url = f"{self.emby_url}/Items"
             params = {
                 "Path": path,
                 "api_key": self.api_key
             }
+            
+            logger.debug(f"查询Emby项目: URL={url}, Path={path}")
             
             # 发送请求
             async with httpx.AsyncClient() as client:
@@ -217,9 +268,12 @@ class EmbyService:
                 if response.status_code == 200:
                     data = response.json()
                     if data.get("Items") and len(data["Items"]) > 0:
+                        logger.info(f"找到Emby项目: {path} -> {data['Items'][0].get('Name', '未知')}")
                         return data["Items"][0]
+                    else:
+                        logger.debug(f"未找到Emby项目: {path}")
                 else:
-                    logger.error(f"查询路径失败: {path}, 状态码: {response.status_code}")
+                    logger.error(f"查询路径失败: {path}, 状态码: {response.status_code}, 响应: {response.text[:200]}")
             
             return None
         except Exception as e:
@@ -229,6 +283,11 @@ class EmbyService:
     async def search_items_by_info(self, media_info: Dict[str, Any]) -> List[Dict]:
         """通过媒体信息搜索Emby中的项目"""
         try:
+            # 确保emby_url是合法的URL
+            if not self.emby_url or not self.emby_url.startswith(('http://', 'https://')):
+                logger.error(f"无效的Emby API URL: {self.emby_url}")
+                return []
+            
             # 构建API URL和参数
             url = f"{self.emby_url}/Items"
             params = {"api_key": self.api_key}
@@ -246,7 +305,10 @@ class EmbyService:
                 if media_info.get("year"):
                     params["Years"] = str(media_info["year"])
             else:
+                logger.debug(f"媒体信息不完整或类型不支持: {media_info}")
                 return []
+            
+            logger.debug(f"搜索Emby项目: URL={url}, 参数={params}")
             
             # 发送请求
             async with httpx.AsyncClient() as client:
@@ -254,9 +316,12 @@ class EmbyService:
                 
                 if response.status_code == 200:
                     data = response.json()
-                    return data.get("Items", [])
+                    items = data.get("Items", [])
+                    if items:
+                        logger.info(f"搜索到 {len(items)} 个匹配项: {media_info.get('title', '')}")
+                    return items
                 else:
-                    logger.error(f"搜索媒体失败, 状态码: {response.status_code}")
+                    logger.error(f"搜索媒体失败, 状态码: {response.status_code}, 响应: {response.text[:200]}")
             
             return []
         except Exception as e:
@@ -312,36 +377,47 @@ class EmbyService:
     
     async def find_emby_item(self, strm_path: str) -> Optional[Dict]:
         """查找Emby中对应于STRM文件的媒体项"""
-        # 策略1: 直接路径查询
-        emby_path = self.convert_to_emby_path(strm_path)
-        item = await self.query_item_by_path(emby_path)
-        if item:
-            logger.info(f"通过路径找到Emby项目: {strm_path} -> {item.get('Id')}")
-            return item
-        
-        # 策略2: 解析文件名进行搜索
-        media_info = self.parse_media_info_from_path(strm_path)
-        if media_info and media_info["type"]:
-            items = await self.search_items_by_info(media_info)
-            if items:
-                best_match = self.find_best_match(items, strm_path)
-                if best_match:
-                    logger.info(f"通过内容搜索找到Emby项目: {strm_path} -> {best_match.get('Id')}")
-                    return best_match
-        
-        # 策略3: 尝试搜索父目录
-        parent_path = os.path.dirname(emby_path)
-        parent_item = await self.query_item_by_path(parent_path)
-        if parent_item:
-            logger.info(f"找到父目录项目: {parent_path} -> {parent_item.get('Id')}")
-            return parent_item
-        
-        logger.warning(f"无法找到Emby项目: {strm_path}")
-        return None
+        try:
+            # 策略1: 直接路径查询
+            emby_path = self.convert_to_emby_path(strm_path)
+            if emby_path:
+                item = await self.query_item_by_path(emby_path)
+                if item:
+                    logger.info(f"通过路径找到Emby项目: {strm_path} -> {item.get('Id')}")
+                    return item
+            
+            # 策略2: 解析文件名进行搜索
+            media_info = self.parse_media_info_from_path(strm_path)
+            if media_info and media_info["type"]:
+                items = await self.search_items_by_info(media_info)
+                if items:
+                    best_match = self.find_best_match(items, strm_path)
+                    if best_match:
+                        logger.info(f"通过内容搜索找到Emby项目: {strm_path} -> {best_match.get('Id')}")
+                        return best_match
+            
+            # 策略3: 尝试搜索父目录
+            parent_path = os.path.dirname(emby_path) if emby_path else None
+            if parent_path:
+                parent_item = await self.query_item_by_path(parent_path)
+                if parent_item:
+                    logger.info(f"找到父目录项目: {parent_path} -> {parent_item.get('Id')}")
+                    return parent_item
+            
+            logger.warning(f"无法找到Emby项目: {strm_path}")
+            return None
+        except Exception as e:
+            logger.error(f"查找Emby项目过程中出错: {str(e)}, strm文件: {strm_path}")
+            return None
     
     async def refresh_emby_item(self, item_id: str) -> bool:
         """刷新Emby中的媒体项"""
         try:
+            # 确保emby_url是合法的URL
+            if not self.emby_url or not self.emby_url.startswith(('http://', 'https://')):
+                logger.error(f"无效的Emby API URL: {self.emby_url}")
+                return False
+            
             # 构建API URL
             url = f"{self.emby_url}/Items/{item_id}/Refresh"
             params = {
@@ -351,6 +427,8 @@ class EmbyService:
                 "ImageRefreshMode": "FullRefresh"
             }
             
+            logger.debug(f"刷新Emby项目: ID={item_id}")
+            
             # 发送请求
             async with httpx.AsyncClient() as client:
                 response = await client.post(url, params=params, timeout=30)
@@ -359,7 +437,7 @@ class EmbyService:
                     logger.info(f"成功刷新Emby项目: {item_id}")
                     return True
                 else:
-                    logger.error(f"刷新Emby项目失败: {item_id}, 状态码: {response.status_code}")
+                    logger.error(f"刷新Emby项目失败: {item_id}, 状态码: {response.status_code}, 响应: {response.text[:200]}")
             
             return False
         except Exception as e:
