@@ -650,6 +650,7 @@ class ArchiveService:
             
             # 统计处理文件数
             strm_count = 0
+            generated_strm_files = []
             
             # 遍历文件列表，为每个视频文件生成strm
             for file_info in files_info:
@@ -715,6 +716,18 @@ class ArchiveService:
                 
                 logger.info(f"已创建STRM文件: {strm_path}")
                 strm_count += 1
+                
+                # 将STRM文件添加到健康状态服务
+                service_manager.health_service.add_strm_file(strm_path, target_file_path)
+                
+                # 记录生成的STRM文件路径，用于后续添加到刷新队列
+                generated_strm_files.append(strm_path)
+            
+            # 将生成的STRM文件添加到Emby刷新队列
+            if generated_strm_files and hasattr(service_manager, 'emby_service') and service_manager.emby_service:
+                for strm_path in generated_strm_files:
+                    service_manager.emby_service.add_to_refresh_queue(strm_path)
+                logger.info(f"已将 {len(generated_strm_files)} 个STRM文件添加到Emby刷新队列")
             
             logger.info(f"成功生成 {strm_count} 个STRM文件，指向目标路径: {target_alist_path}")
             return strm_count > 0

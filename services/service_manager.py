@@ -5,6 +5,7 @@ from services.telegram_service import TelegramService
 from services.archive_service import ArchiveService
 from services.strm_monitor_service import StrmMonitorService
 from services.strm_health_service import StrmHealthService
+from services.emby_service import EmbyService
 from loguru import logger
 import asyncio
 from config import Settings
@@ -28,13 +29,14 @@ class ServiceManager:
             self.archive_service = None
             self.monitor_service = None
             self.health_service = None
+            self.emby_service = None
             self.initialized = True
     
     def init_services(self):
         """初始化所有服务实例"""
         if not any([self.scheduler_service, self.strm_service, self.copy_service, 
                    self.telegram_service, self.archive_service, self.monitor_service,
-                   self.health_service]):
+                   self.health_service, self.emby_service]):
             self.scheduler_service = SchedulerService()
             self.copy_service = CopyService()
             self.strm_service = StrmService()
@@ -42,6 +44,7 @@ class ServiceManager:
             self.archive_service = ArchiveService()
             self.monitor_service = StrmMonitorService(self.strm_service)
             self.health_service = StrmHealthService()
+            self.emby_service = EmbyService()
     
     async def initialize(self):
         """初始化所有服务"""
@@ -72,6 +75,9 @@ class ServiceManager:
             await self.telegram_service.initialize()
             logger.info("Telegram服务初始化完成")
             
+            # 初始化Emby服务
+            logger.info("Emby服务初始化完成")
+            
             logger.info("所有服务初始化完成")
         except Exception as e:
             logger.error(f"服务初始化失败: {str(e)}")
@@ -91,6 +97,10 @@ class ServiceManager:
             
             # 初始化归档服务
             await self.archive_service.initialize()
+            
+            # 启动Emby刷新任务
+            asyncio.create_task(self.emby_service.start_refresh_task())
+            logger.info("Emby刷新任务已启动")
             
             # 如果启用了定时任务，启动定时任务
             if self.settings.schedule_enabled:
@@ -203,6 +213,9 @@ class ServiceManager:
             if self.monitor_service:
                 await self.monitor_service.stop()
             
+            if self.emby_service:
+                self.emby_service.stop_refresh_task()
+            
             logger.info("所有服务已关闭")
         except Exception as e:
             logger.error(f"关闭服务时出错: {str(e)}")
@@ -219,4 +232,5 @@ copy_service = service_manager.copy_service
 tg_service = service_manager.telegram_service
 archive_service = service_manager.archive_service
 monitor_service = service_manager.monitor_service
-health_service = service_manager.health_service 
+health_service = service_manager.health_service
+emby_service = service_manager.emby_service 

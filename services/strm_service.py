@@ -496,6 +496,15 @@ class StrmService:
                 f"STRM内容: {strm_url}"
             )
             
+            # 将STRM文件添加到健康状态服务
+            service_manager = self._get_service_manager()
+            service_manager.health_service.add_strm_file(strm_path, file_path)
+            
+            # 添加到Emby刷新队列
+            if hasattr(service_manager, 'emby_service') and service_manager.emby_service:
+                service_manager.emby_service.add_to_refresh_queue(strm_path)
+                logger.debug(f"已将STRM文件添加到Emby刷新队列: {strm_path}")
+            
             return True
             
         except Exception as e:
