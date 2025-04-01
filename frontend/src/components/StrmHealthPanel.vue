@@ -92,6 +92,14 @@
               <a-radio-button value="invalid_strm">无效STRM</a-radio-button>
               <a-radio-button value="missing_strm">缺失STRM</a-radio-button>
             </a-radio-group>
+            <a-button 
+              type="primary"
+              @click="getProblems"
+              :loading="loadingProblems"
+              style="margin-left: 16px"
+            >
+              刷新列表
+            </a-button>
           </div>
         </div>
         
@@ -142,7 +150,17 @@
       
       <!-- 无问题状态 -->
       <div v-else-if="!isScanning && hasScanned" class="no-problems">
-        <a-empty description="未检测到问题">
+        <div v-if="stats && (stats.invalidStrmFiles > 0 || stats.missingStrmFiles > 0)">
+          <a-alert type="warning" show-icon>
+            <template #message>
+              <span>统计显示有问题文件，但问题列表为空。请尝试刷新页面或重新扫描。</span>
+            </template>
+            <template #description>
+              <a-button type="primary" @click="getProblems">刷新问题列表</a-button>
+            </template>
+          </a-alert>
+        </div>
+        <a-empty v-else description="未检测到问题">
           <template #description>
             <span>太棒了！所有STRM文件都是有效的，并且所有视频文件都有对应的STRM文件。</span>
           </template>
@@ -285,6 +303,7 @@ const problems = ref([])
 const problemFilter = ref('all')
 const repairing = ref({})
 const repairingAll = ref(false)
+const loadingProblems = ref(false)
 
 // 计算筛选后的问题列表
 const filteredProblems = computed(() => {
@@ -334,17 +353,33 @@ const getStatus = async () => {
 // 获取问题列表
 const getProblems = async () => {
   try {
+    loadingProblems.value = true
     const response = await fetch(`/api/health/problems?type=${problemFilter.value === 'all' ? '' : problemFilter.value}`)
     const data = await response.json()
     
-    problems.value = data.problems || []
+    if (data.problems) {
+      problems.value = data.problems
+      console.log(`获取到 ${problems.value.length} 个健康问题`)
+    } else {
+      problems.value = []
+      console.log('未获取到健康问题')
+    }
     
     // 如果获取了新的统计信息，更新它
     if (data.stats) {
       stats.value = data.stats
     }
+    
+    // 如果统计信息显示有问题，但问题列表为空，尝试重新获取
+    if ((stats.value?.invalidStrmFiles > 0 || stats.value?.missingStrmFiles > 0) && problems.value.length === 0) {
+      console.warn('统计数据表明有问题，但问题列表为空，5秒后重试获取')
+      setTimeout(getProblems, 5000)
+    }
   } catch (error) {
     console.error('获取问题列表失败:', error)
+    message.error('获取问题列表失败，请刷新页面重试')
+  } finally {
+    loadingProblems.value = false
   }
 }
 

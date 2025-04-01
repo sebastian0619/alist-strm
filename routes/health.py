@@ -181,6 +181,8 @@ async def check_strm_validity(scan_mode: str):
         invalid_files = service_manager.health_service.get_all_invalid_strm_files()
         
         total_files = len(invalid_files)
+        logger.info(f"开始检查 {total_files} 个已知的无效STRM文件")
+        
         for idx, file_info in enumerate(invalid_files):
             # 更新进度
             _scan_progress = int((idx / total_files) * (50 if _scan_type == "all" else 100)) if total_files > 0 else (50 if _scan_type == "all" else 100)
@@ -220,11 +222,16 @@ async def check_strm_validity(scan_mode: str):
                     "status": "invalid",
                     "issueDetails": reason
                 })
+                
+        # 保存健康状态数据
+        service_manager.health_service.save_health_data()
     else:
         # 扫描所有STRM文件或增量扫描
         # 扫描所有STRM文件
         strm_files = await scan_strm_files(strm_dir)
         total_files = len(strm_files)
+        
+        logger.info(f"开始检查 {total_files} 个STRM文件的有效性")
         
         # 获取上次扫描时间
         last_scan_time = service_manager.health_service.get_last_full_scan_time()
@@ -270,6 +277,8 @@ async def check_strm_validity(scan_mode: str):
                     "issueDetails": reason,
                     "targetPath": target_path
                 })
+                
+                logger.info(f"发现无效STRM文件: {file_path}, 原因: {reason}")
             else:
                 # 文件有效，更新健康状态
                 service_manager.health_service.update_strm_status(str_strm_file, {
@@ -277,6 +286,11 @@ async def check_strm_validity(scan_mode: str):
                     "issueDetails": None,
                     "targetPath": target_path
                 })
+        
+        # 保存健康状态数据
+        service_manager.health_service.save_health_data()
+        
+        logger.info(f"完成STRM文件有效性检查，发现 {len(invalid_strm_files)} 个无效文件")
     
     return invalid_strm_files
 
@@ -674,38 +688,84 @@ async def get_health_problems(type: str = None):
     # 使用健康服务获取问题
     problems = []
     
-    if type == "invalid_strm" or type is None:
-        invalid_files = service_manager.health_service.get_all_invalid_strm_files()
-        for idx, file in enumerate(invalid_files):
-            problems.append({
-                "id": f"invalid_{idx}",
-                "type": "invalid_strm",
-                "path": file["path"],
-                "details": file.get("issueDetails", "STRM文件无效"),
-                "discoveryTime": file["lastCheckTime"],
-                "firstDetectedAt": file.get("firstDetectedAt", file["lastCheckTime"])
-            })
-    
-    if type == "missing_strm" or type is None:
-        missing_files = service_manager.health_service.get_all_missing_strm_files()
-        for idx, file in enumerate(missing_files):
-            problems.append({
-                "id": f"missing_{idx}",
-                "type": "missing_strm",
-                "path": file["path"],
-                "details": "网盘中的视频文件没有对应的STRM文件",
-                "discoveryTime": file["lastCheckTime"],
-                "firstDetectedAt": file.get("firstDetectedAt", file["lastCheckTime"])
-            })
-    
-    # 获取统计信息
-    stats = service_manager.health_service.get_stats()
-    
-    return {
-        "problems": problems,
-        "scanTime": stats.get("lastFullScanTime", 0),
-        "stats": stats
-    }
+    try:
+        if type == "invalid_strm" or type is None:
+            invalid_files = service_manager.health_service.get_all_invalid_strm_files()
+            logger.info(f"获取到 {len(invalid_files)} 个无效STRM文件")
+            for idx, file in enumerate(invalid_files):
+                problems.append({
+                    "id": f"invalid_{idx}",
+                    "type": "invalid_strm",
+                    "path": file["path"],
+                    "details": file.get("issueDetails", "STRM文件无效"),
+                    "discoveryTime": file["lastCheckTime"],
+                    "firstDetectedAt": file.get("firstDetectedAt", file["lastCheckTime"])
+                })
+        
+        if type == "missing_strm" or type is None:
+            missing_files = service_manager.health_service.get_all_missing_strm_files()
+            logger.info(f"获取到 {len(missing_files)} 个缺失STRM文件")
+            for idx, file in enumerate(missing_files):
+                problems.append({
+                    "id": f"missing_{idx}",
+                    "type": "missing_strm",
+                    "path": file["path"],
+                    "details": "网盘中的视频文件没有对应的STRM文件",
+                    "discoveryTime": file["lastCheckTime"],
+                    "firstDetectedAt": file.get("firstDetectedAt", file["lastCheckTime"])
+                })
+        
+        # 获取统计信息
+        stats = service_manager.health_service.get_stats()
+        
+        logger.info(f"返回 {len(problems)} 个健康问题，统计: {stats}")
+        
+        # 确保返回的问题列表不为空，与统计数据一致
+        if (stats.get("invalidStrmFiles", 0) > 0 or stats.get("missingStrmFiles", 0) > 0) and len(problems) == 0:
+            logger.warning(f"统计显示有问题文件，但问题列表为空。强制重新扫描...")
+            
+            # 尝试重新读取数据
+            service_manager.health_service.load_health_data()
+            
+            # 重新获取问题列表
+            if type == "invalid_strm" or type is None:
+                invalid_files = service_manager.health_service.get_all_invalid_strm_files()
+                for idx, file in enumerate(invalid_files):
+                    problems.append({
+                        "id": f"invalid_{idx}",
+                        "type": "invalid_strm",
+                        "path": file["path"],
+                        "details": file.get("issueDetails", "STRM文件无效"),
+                        "discoveryTime": file["lastCheckTime"],
+                        "firstDetectedAt": file.get("firstDetectedAt", file["lastCheckTime"])
+                    })
+            
+            if type == "missing_strm" or type is None:
+                missing_files = service_manager.health_service.get_all_missing_strm_files()
+                for idx, file in enumerate(missing_files):
+                    problems.append({
+                        "id": f"missing_{idx}",
+                        "type": "missing_strm",
+                        "path": file["path"],
+                        "details": "网盘中的视频文件没有对应的STRM文件",
+                        "discoveryTime": file["lastCheckTime"],
+                        "firstDetectedAt": file.get("firstDetectedAt", file["lastCheckTime"])
+                    })
+            
+            logger.info(f"重新读取后返回 {len(problems)} 个健康问题")
+        
+        return {
+            "problems": problems,
+            "scanTime": stats.get("lastFullScanTime", 0),
+            "stats": stats
+        }
+    except Exception as e:
+        logger.error(f"获取健康问题列表失败: {str(e)}", exc_info=True)
+        return {
+            "problems": [],
+            "scanTime": 0,
+            "stats": service_manager.health_service.get_stats()
+        }
 
 @router.post("/repair/invalid_strm")
 async def repair_invalid_strm(request: RepairRequest):
