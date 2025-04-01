@@ -319,6 +319,74 @@
         </a-tooltip>
       </a-form-item>
 
+      <!-- Emby配置 -->
+      <a-divider>Emby 刷库配置</a-divider>
+      <a-form-item label="启用Emby刷库">
+        <a-switch
+          v-model:checked="config.emby_enabled"
+          :checked-children="'开启'"
+          :un-checked-children="'关闭'"
+        />
+        <a-tooltip>
+          <template #title>
+            是否启用Emby元数据刷新功能，生成STRM文件后会自动刷新对应的媒体库项目
+          </template>
+          <info-circle-outlined style="margin-left: 8px" />
+        </a-tooltip>
+      </a-form-item>
+
+      <a-form-item label="Emby API地址" v-if="config.emby_enabled">
+        <a-input
+          v-model:value="config.emby_api_url"
+          placeholder="http://localhost:8096/emby"
+        />
+        <a-tooltip>
+          <template #title>
+            Emby服务器的API地址，例如: http://localhost:8096/emby
+          </template>
+          <info-circle-outlined style="margin-left: 8px" />
+        </a-tooltip>
+      </a-form-item>
+
+      <a-form-item label="API密钥" v-if="config.emby_enabled">
+        <a-input-password
+          v-model:value="config.emby_api_key"
+          placeholder="请输入Emby API密钥"
+        />
+        <a-tooltip>
+          <template #title>
+            从Emby管理面板中获取的API密钥
+          </template>
+          <info-circle-outlined style="margin-left: 8px" />
+        </a-tooltip>
+      </a-form-item>
+
+      <a-form-item label="STRM文件根路径" v-if="config.emby_enabled">
+        <a-input
+          v-model:value="config.strm_root_path"
+          placeholder="/path/to/strm/files"
+        />
+        <a-tooltip>
+          <template #title>
+            STRM文件的根路径，系统生成的STRM文件存放位置
+          </template>
+          <info-circle-outlined style="margin-left: 8px" />
+        </a-tooltip>
+      </a-form-item>
+
+      <a-form-item label="Emby媒体库根路径" v-if="config.emby_enabled">
+        <a-input
+          v-model:value="config.emby_root_path"
+          placeholder="/path/to/emby/media"
+        />
+        <a-tooltip>
+          <template #title>
+            Emby媒体库中的对应路径，用于路径映射
+          </template>
+          <info-circle-outlined style="margin-left: 8px" />
+        </a-tooltip>
+      </a-form-item>
+
       <!-- 按钮组 -->
       <div class="button-group">
         <a-button 

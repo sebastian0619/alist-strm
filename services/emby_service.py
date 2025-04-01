@@ -7,6 +7,7 @@ import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple
+from config import Settings
 
 # 设置日志
 logger = logging.getLogger(__name__)
@@ -50,15 +51,18 @@ class EmbyService:
     
     def __init__(self):
         """初始化Emby服务"""
-        # 从环境变量读取配置
-        self.emby_url = os.environ.get("EMBY_API_URL", "")
-        self.api_key = os.environ.get("EMBY_API_KEY", "")
-        self.strm_root_path = os.environ.get("STRM_ROOT_PATH", "")
-        self.emby_root_path = os.environ.get("EMBY_ROOT_PATH", "")
+        # 从配置获取设置
+        self.settings = Settings()
+        self.emby_url = self.settings.emby_api_url
+        self.api_key = self.settings.emby_api_key
+        self.strm_root_path = self.settings.strm_root_path
+        self.emby_root_path = self.settings.emby_root_path
+        self.emby_enabled = self.settings.emby_enabled
         
         # 验证必要的配置
         if not self.emby_url or not self.api_key:
             logger.warning("Emby配置不完整，服务将不可用")
+            self.emby_enabled = False
         
         # 刷新队列
         self.refresh_queue: List[EmbyRefreshItem] = []
@@ -104,6 +108,11 @@ class EmbyService:
     
     def add_to_refresh_queue(self, strm_path: str):
         """添加STRM文件到刷新队列"""
+        # 如果Emby功能未开启，不添加到队列
+        if not self.emby_enabled:
+            logger.debug(f"Emby刷库功能未启用，不添加到刷新队列: {strm_path}")
+            return
+            
         # 检查是否已在队列中
         for item in self.refresh_queue:
             if item.strm_path == strm_path and item.status in ["pending", "processing"]:
@@ -358,6 +367,10 @@ class EmbyService:
     
     async def process_refresh_queue(self):
         """处理刷新队列，刷新到期的项目"""
+        # 如果Emby功能未启用，不处理队列
+        if not self.emby_enabled:
+            return
+            
         if self._is_processing:
             logger.debug("刷新任务已在运行中")
             return
@@ -449,6 +462,11 @@ class EmbyService:
     
     async def start_refresh_task(self):
         """启动定期刷新任务"""
+        # 如果Emby功能未启用，不启动任务
+        if not self.emby_enabled:
+            logger.info("Emby刷库功能未启用，不启动刷新任务")
+            return
+            
         logger.info("启动Emby刷新任务")
         self._stop_flag = False
         

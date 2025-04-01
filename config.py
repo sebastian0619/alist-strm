@@ -123,6 +123,13 @@ class Settings(BaseSettings):
         alias="ARCHIVE_MEDIA_TYPES"
     )
     
+    # Emby配置
+    emby_enabled: bool = Field(default=False, alias="EMBY_ENABLED")  # 是否启用Emby刷库
+    emby_api_url: str = Field(default="http://localhost:8096/emby", alias="EMBY_API_URL", description="Emby API地址")
+    emby_api_key: str = Field(default="", alias="EMBY_API_KEY", description="Emby API密钥")
+    strm_root_path: str = Field(default="", alias="STRM_ROOT_PATH", description="STRM文件根路径")
+    emby_root_path: str = Field(default="", alias="EMBY_ROOT_PATH", description="Emby媒体库根路径")
+    
     # 下载元数据文件配置
     download_metadata: bool = Field(default=False, alias="DOWNLOAD_METADATA")
     
@@ -156,7 +163,7 @@ class Settings(BaseSettings):
         bool_fields = ['run_after_startup', 'slow_mode', 'encode', 
                       'is_down_sub', 'is_down_meta', 'refresh', 'tg_enabled',
                       'schedule_enabled', 'remove_empty_dirs', 'archive_enabled',
-                      'archive_auto_strm', 'archive_delete_source']
+                      'archive_auto_strm', 'archive_delete_source', 'emby_enabled']
         for field in bool_fields:
             if field in values and isinstance(values[field], str):
                 values[field] = str(values[field]).lower() in ('true', '1', 'yes', 'on', 't')
