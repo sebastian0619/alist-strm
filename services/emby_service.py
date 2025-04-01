@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple
 from config import Settings
+import importlib
 
 # 设置日志
 logger = logging.getLogger(__name__)
@@ -379,6 +380,30 @@ class EmbyService:
             self._is_processing = True
             current_time = time.time()
             processed_items = []
+            success_count = 0
+            failed_count = 0
+            refreshed_items = []  # 记录成功刷新的项目
+            
+            # 获取需要处理的项目数量
+            pending_items = [item for item in self.refresh_queue 
+                            if item.timestamp <= current_time 
+                            and (item.status not in ["success", "failed"] 
+                                 or (item.status == "failed" and item.retry_count < self.max_retries))]
+            
+            if not pending_items:
+                self._is_processing = False
+                return
+                
+            # 发送开始处理的通知
+            service_manager = self._get_service_manager()
+            if pending_items:
+                start_msg = f"🔄 开始刷新Emby媒体库，共有 {len(pending_items)} 个项目待处理"
+                logger.info(start_msg)
+                try:
+                    if service_manager.telegram_service:
+                        await service_manager.telegram_service.send_message(start_msg)
+                except Exception as e:
+                    logger.error(f"发送通知失败: {str(e)}")
             
             for item in self.refresh_queue:
                 if self._stop_flag:
@@ -399,18 +424,24 @@ class EmbyService:
                         if emby_item:
                             # 找到项目，刷新元数据
                             item_id = emby_item.get("Id")
+                            item_name = emby_item.get("Name", "未知项目")
                             item.item_id = item_id
+                            
+                            logger.info(f"开始刷新Emby项目: {item_name} (ID: {item_id})")
                             
                             success = await self.refresh_emby_item(item_id)
                             
                             if success:
                                 item.status = "success"
-                                logger.info(f"成功刷新项目: {item.strm_path} -> {item_id}")
+                                success_count += 1
+                                refreshed_items.append(f"✅ {item_name}")
+                                logger.info(f"成功刷新项目: {item.strm_path} -> {item_id} ({item_name})")
                             else:
                                 # 刷新失败，安排重试
                                 item.status = "failed"
                                 item.last_error = "刷新API调用失败"
                                 item.retry_count += 1
+                                failed_count += 1
                                 
                                 if item.retry_count < self.max_retries:
                                     delay = self.retry_delays[min(item.retry_count, len(self.retry_delays) - 1)]
@@ -421,6 +452,7 @@ class EmbyService:
                             item.status = "failed"
                             item.last_error = "未找到Emby项目"
                             item.retry_count += 1
+                            failed_count += 1
                             
                             if item.retry_count < self.max_retries:
                                 delay = self.retry_delays[min(item.retry_count, len(self.retry_delays) - 1)]
@@ -432,6 +464,7 @@ class EmbyService:
                         item.status = "failed"
                         item.last_error = str(e)
                         item.retry_count += 1
+                        failed_count += 1
                         
                         if item.retry_count < self.max_retries:
                             delay = self.retry_delays[min(item.retry_count, len(self.retry_delays) - 1)]
@@ -444,7 +477,23 @@ class EmbyService:
             # 保存队列
             if processed_items:
                 self._save_refresh_queue()
-                logger.info(f"已处理 {len(processed_items)} 个刷新项目")
+                logger.info(f"已处理 {len(processed_items)} 个刷新项目，成功: {success_count}，失败: {failed_count}")
+                
+                # 发送处理结果通知
+                if service_manager.telegram_service:
+                    summary_msg = f"📊 Emby刷库完成\n成功: {success_count} 个\n失败: {failed_count} 个"
+                    
+                    # 如果成功刷新了项目，添加到通知
+                    if refreshed_items:
+                        # 如果项目太多，只显示前10个
+                        if len(refreshed_items) > 10:
+                            refreshed_info = "\n".join(refreshed_items[:10]) + f"\n...等共 {len(refreshed_items)} 个项目"
+                        else:
+                            refreshed_info = "\n".join(refreshed_items)
+                        
+                        summary_msg += f"\n\n刷新的项目:\n{refreshed_info}"
+                    
+                    await service_manager.telegram_service.send_message(summary_msg)
             
             # 清理成功且已完成的项目
             if len(self.refresh_queue) > 1000:  # 如果队列太长，清理已完成的项目
@@ -478,3 +527,8 @@ class EmbyService:
         """停止刷新任务"""
         logger.info("停止Emby刷新任务")
         self._stop_flag = True 
+
+    def _get_service_manager(self):
+        """动态获取service_manager以避免循环依赖"""
+        module = importlib.import_module('services.service_manager')
+        return module.service_manager 

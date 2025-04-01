@@ -340,6 +340,14 @@
           v-model:value="config.emby_api_url"
           placeholder="http://localhost:8096/emby"
         />
+        <a-button 
+          type="link" 
+          :loading="testingEmby"
+          @click="testEmbyConnection"
+          style="margin-left: 8px"
+        >
+          测试连接
+        </a-button>
         <a-tooltip>
           <template #title>
             Emby服务器的API地址，例如: http://localhost:8096/emby
@@ -445,6 +453,7 @@ export default {
     const error = ref('')
     const scanning = ref(false)
     const testingConnection = ref(false)
+    const testingEmby = ref(false)
     const clearingCache = ref(false)
     
     // 加载配置
@@ -631,6 +640,40 @@ export default {
       }
     }
     
+    // 测试Emby连接
+    const testEmbyConnection = async () => {
+      testingEmby.value = true
+      try {
+        // 验证是否配置了必要参数
+        if (!config.value.emby_api_url || !config.value.emby_api_key) {
+          throw new Error('请先填写Emby API地址和API密钥')
+        }
+        
+        const response = await fetch('/api/config/test_emby', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            url: config.value.emby_api_url,
+            api_key: config.value.emby_api_key
+          })
+        })
+        
+        const data = await response.json()
+        
+        if (data.success) {
+          message.success(data.message)
+        } else {
+          throw new Error(data.message)
+        }
+      } catch (e) {
+        message.error('Emby连接测试失败: ' + e.message)
+      } finally {
+        testingEmby.value = false
+      }
+    }
+    
     // 组件挂载时加载配置
     onMounted(() => {
       loadConfig()
@@ -650,15 +693,17 @@ export default {
       error,
       scanning,
       testingConnection,
+      testingEmby,
+      clearingCache,
       loadConfig,
       saveConfig,
       hasChanges,
       testConnection,
-      getCronDescription,
+      testEmbyConnection,
       startScan,
       stopScan,
-      clearCache,
-      clearingCache
+      getCronDescription,
+      clearCache
     }
   }
 }

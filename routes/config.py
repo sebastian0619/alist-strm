@@ -5,7 +5,7 @@ import os
 import json
 from config import Settings
 from services.config_service import ConfigService
-from services.service_manager import scheduler_service, archive_service
+from services.service_manager import scheduler_service, archive_service, emby_service
 
 router = APIRouter()
 settings = Settings()
@@ -92,4 +92,51 @@ async def save_archive_types(media_types: MediaTypesConfig):
         archive_service.media_types = media_types.root
         return {"status": "success", "message": "媒体类型配置已保存"}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e)) 
+        raise HTTPException(status_code=500, detail=str(e))
+
+class EmbyTestConfig(BaseModel):
+    url: str
+    api_key: str
+
+@router.post("/api/config/test_emby")
+async def test_emby_connection(config: EmbyTestConfig):
+    """测试Emby连接"""
+    try:
+        # 使用提供的配置临时替换emby_service的配置
+        original_url = emby_service.emby_url
+        original_key = emby_service.api_key
+        
+        try:
+            # 临时设置
+            emby_service.emby_url = config.url
+            emby_service.api_key = config.api_key
+            
+            # 尝试获取系统信息作为测试
+            import httpx
+            url = f"{config.url}/System/Info"
+            
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    url, 
+                    params={"api_key": config.api_key},
+                    timeout=10
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    return {
+                        "success": True, 
+                        "message": f"连接成功! Emby服务器版本: {data.get('Version', '未知')}"
+                    }
+                else:
+                    return {
+                        "success": False, 
+                        "message": f"连接失败，HTTP状态码: {response.status_code}"
+                    }
+        finally:
+            # 恢复原始配置
+            emby_service.emby_url = original_url
+            emby_service.api_key = original_key
+    
+    except Exception as e:
+        return {"success": False, "message": f"测试失败: {str(e)}"} 

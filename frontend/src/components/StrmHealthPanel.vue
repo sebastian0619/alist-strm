@@ -158,13 +158,114 @@
           <a-button danger>清空健康数据</a-button>
         </a-popconfirm>
       </div>
+
+      <!-- Emby刷新队列状态 -->
+      <a-card v-if="embyStatus.enabled" title="Emby刷新队列" style="margin-top: 20px;" :loading="embyLoading">
+        <a-statistic-countdown 
+          v-if="nextRefreshTime"
+          title="下次检查时间" 
+          :value="nextRefreshTime" 
+          format="HH:mm:ss" 
+          style="margin-bottom: 16px"
+        />
+        
+        <a-row :gutter="16">
+          <a-col :span="6">
+            <a-statistic
+              title="总队列数"
+              :value="embyStatus.queue_stats?.total || 0"
+            />
+          </a-col>
+          <a-col :span="6">
+            <a-statistic
+              title="待处理"
+              :value="embyStatus.queue_stats?.pending || 0"
+              :value-style="{ color: '#1890ff' }"
+            />
+          </a-col>
+          <a-col :span="6">
+            <a-statistic
+              title="成功"
+              :value="embyStatus.queue_stats?.success || 0"
+              :value-style="{ color: '#3f8600' }"
+            />
+          </a-col>
+          <a-col :span="6">
+            <a-statistic
+              title="失败"
+              :value="embyStatus.queue_stats?.failed || 0"
+              :value-style="embyStatus.queue_stats?.failed > 0 ? { color: '#cf1322' } : {}"
+            />
+          </a-col>
+        </a-row>
+        
+        <a-divider />
+        
+        <!-- 最近成功刷新项目 -->
+        <div v-if="embyStatus.recent_success && embyStatus.recent_success.length > 0">
+          <h4>最近成功刷新项目</h4>
+          <a-list
+            size="small"
+            :data-source="embyStatus.recent_success"
+          >
+            <template #renderItem="{ item }">
+              <a-list-item>
+                <a-space>
+                  <check-circle-outlined style="color: #52c41a" />
+                  <span>{{ item.name }}</span>
+                </a-space>
+                <span>{{ item.refresh_time }}</span>
+              </a-list-item>
+            </template>
+          </a-list>
+        </div>
+        
+        <!-- 最近失败刷新项目 -->
+        <div v-if="embyStatus.recent_failed && embyStatus.recent_failed.length > 0" style="margin-top: 16px;">
+          <h4>最近失败刷新项目</h4>
+          <a-list
+            size="small"
+            :data-source="embyStatus.recent_failed"
+          >
+            <template #renderItem="{ item }">
+              <a-list-item>
+                <a-space>
+                  <warning-outlined style="color: #fa8c16" />
+                  <span>{{ item.path.split('/').pop() }}</span>
+                  <span style="color: #cf1322;">{{ item.error }}</span>
+                </a-space>
+                <span>下次尝试: {{ item.next_retry }}</span>
+              </a-list-item>
+            </template>
+          </a-list>
+        </div>
+        
+        <a-divider />
+        
+        <div style="display: flex; justify-content: center;">
+          <a-button 
+            type="primary" 
+            @click="refreshEmbyStatus" 
+            :loading="embyLoading"
+          >
+            刷新状态
+          </a-button>
+        </div>
+      </a-card>
     </a-card>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { message } from 'ant-design-vue'
+import { 
+  CheckCircleOutlined, 
+  CloseCircleOutlined,
+  ExclamationCircleOutlined,
+  WarningOutlined,
+  QuestionCircleOutlined
+} from '@ant-design/icons-vue'
 
 // 扫描参数
 const scanType = ref('all')
@@ -197,6 +298,7 @@ const filteredProblems = computed(() => {
 onMounted(async () => {
   await getStatus()
   await getProblems()
+  await refreshEmbyStatus()
 })
 
 // 获取扫描状态
@@ -498,6 +600,76 @@ const getRepairText = (type) => {
   if (type === 'missing_strm') return '生成STRM'
   return '修复所有问题'
 }
+
+// Emby刷新队列相关
+const embyStatus = ref({})
+const embyLoading = ref(false)
+const nextRefreshTime = ref(null)
+const refreshTimer = ref(null)
+
+// 获取Emby刷新状态
+const refreshEmbyStatus = async () => {
+  embyLoading.value = true
+  try {
+    const response = await fetch('/api/health/emby/refresh/status')
+    if (response.ok) {
+      const data = await response.json()
+      embyStatus.value = data
+      
+      // 设置下次刷新时间（60秒后）
+      nextRefreshTime.value = Date.now() + 60000
+      
+      // 设置定时器，60秒后自动刷新
+      if (refreshTimer.value) {
+        clearTimeout(refreshTimer.value)
+      }
+      refreshTimer.value = setTimeout(() => {
+        refreshEmbyStatus()
+      }, 60000)
+    } else {
+      message.error('获取Emby刷新状态失败')
+    }
+  } catch (e) {
+    console.error('获取Emby刷新状态失败:', e)
+    message.error('获取Emby刷新状态失败: ' + e.message)
+  } finally {
+    embyLoading.value = false
+  }
+}
+
+// 强制刷新STRM文件
+const forceRefreshEmbyItem = async (path) => {
+  try {
+    const response = await fetch(`/api/health/emby/refresh/force?path=${encodeURIComponent(path)}`, {
+      method: 'POST'
+    })
+    
+    if (response.ok) {
+      const data = await response.json()
+      if (data.success) {
+        message.success(data.message)
+        // 刷新状态
+        setTimeout(() => {
+          refreshEmbyStatus()
+        }, 1000)
+      } else {
+        message.error(data.message)
+      }
+    } else {
+      message.error('强制刷新失败')
+    }
+  } catch (e) {
+    console.error('强制刷新失败:', e)
+    message.error('强制刷新失败: ' + e.message)
+  }
+}
+
+// 组件卸载时清理定时器
+onUnmounted(() => {
+  if (refreshTimer.value) {
+    clearTimeout(refreshTimer.value)
+  }
+})
 </script>
 
 <style scoped>

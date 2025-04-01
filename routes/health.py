@@ -11,6 +11,7 @@ import httpx
 from datetime import datetime
 from services.service_manager import service_manager
 from urllib.parse import unquote, quote
+import shutil
 
 router = APIRouter(prefix="/api/health", tags=["health"])
 logger = logging.getLogger(__name__)
@@ -30,8 +31,8 @@ class HealthScanResult(BaseModel):
     stats: Dict[str, Any] = {}
 
 class RepairRequest(BaseModel):
-    paths: List[str]
-    type: str
+    type: str  # 修复类型
+    paths: List[str]  # 需要修复的路径列表
 
 class ScanRequest(BaseModel):
     type: str = "all"
@@ -830,4 +831,110 @@ async def get_health_stats():
         return {"success": True, "data": stats}
     except Exception as e:
         logger.error(f"获取健康状态统计信息失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"获取失败: {str(e)}") 
+        raise HTTPException(status_code=500, detail=f"获取失败: {str(e)}")
+
+# 添加Emby刷新队列状态API
+
+@router.get("/emby/refresh/status")
+async def get_emby_refresh_status():
+    """获取Emby刷新队列状态"""
+    try:
+        # 检查服务是否开启
+        if not service_manager.emby_service.emby_enabled:
+            return {
+                "enabled": False,
+                "message": "Emby刷库功能未启用"
+            }
+            
+        # 获取刷新队列状态
+        queue = service_manager.emby_service.refresh_queue
+        
+        # 统计队列状态
+        total = len(queue)
+        pending = sum(1 for item in queue if item.status == "pending")
+        processing = sum(1 for item in queue if item.status == "processing")
+        success = sum(1 for item in queue if item.status == "success")
+        failed = sum(1 for item in queue if item.status == "failed")
+        
+        # 获取最近5个成功项目和5个失败项目
+        success_items = []
+        for item in queue:
+            if item.status == "success" and len(success_items) < 5:
+                emby_item = await service_manager.emby_service.find_emby_item(item.strm_path)
+                if emby_item:
+                    success_items.append({
+                        "path": item.strm_path,
+                        "name": emby_item.get("Name", "未知"),
+                        "refresh_time": datetime.fromtimestamp(item.timestamp).strftime("%Y-%m-%d %H:%M:%S")
+                    })
+        
+        failed_items = []
+        for item in queue:
+            if item.status == "failed" and len(failed_items) < 5:
+                failed_items.append({
+                    "path": item.strm_path,
+                    "error": item.last_error,
+                    "retry_count": item.retry_count,
+                    "next_retry": datetime.fromtimestamp(item.timestamp).strftime("%Y-%m-%d %H:%M:%S") if item.retry_count < service_manager.emby_service.max_retries else "不再重试"
+                })
+                
+        return {
+            "enabled": True,
+            "is_processing": service_manager.emby_service._is_processing,
+            "queue_stats": {
+                "total": total,
+                "pending": pending,
+                "processing": processing,
+                "success": success,
+                "failed": failed
+            },
+            "recent_success": success_items,
+            "recent_failed": failed_items
+        }
+    except Exception as e:
+        logger.error(f"获取Emby刷新队列状态失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"获取刷新队列状态失败: {str(e)}")
+        
+@router.post("/emby/refresh/force")
+async def force_refresh_emby_item(path: str = Query(..., description="STRM文件路径")):
+    """强制刷新指定的STRM文件对应的Emby项目"""
+    try:
+        # 检查服务是否开启
+        if not service_manager.emby_service.emby_enabled:
+            return {
+                "success": False,
+                "message": "Emby刷库功能未启用"
+            }
+            
+        # 添加到刷新队列，设置为立即刷新
+        item = next((item for item in service_manager.emby_service.refresh_queue if item.strm_path == path), None)
+        
+        if item:
+            # 如果已在队列中，更新时间戳为当前时间
+            item.timestamp = time.time()
+            item.status = "pending"
+            item.retry_count = 0
+            message = "已将项目移至队列前端，将立即刷新"
+        else:
+            # 如果不在队列中，添加到队列
+            service_manager.emby_service.add_to_refresh_queue(path)
+            # 修改时间戳为当前时间（立即刷新）
+            for queue_item in service_manager.emby_service.refresh_queue:
+                if queue_item.strm_path == path:
+                    queue_item.timestamp = time.time()
+                    break
+            message = "已添加到刷新队列，将立即刷新"
+            
+        # 保存队列
+        service_manager.emby_service._save_refresh_queue()
+            
+        return {
+            "success": True,
+            "message": message
+        }
+    except Exception as e:
+        logger.error(f"强制刷新Emby项目失败: {str(e)}")
+        return {
+            "success": False,
+            "message": f"强制刷新失败: {str(e)}"
+        } 
