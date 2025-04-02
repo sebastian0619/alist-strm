@@ -997,4 +997,101 @@ async def force_refresh_emby_item(path: str = Query(..., description="STRM文件
         return {
             "success": False,
             "message": f"强制刷新失败: {str(e)}"
+        }
+
+@router.post("/emby/test_search")
+async def test_emby_search(name: str = Query(...)):
+    """测试Emby搜索功能"""
+    try:
+        # 检查服务是否开启
+        if not service_manager.emby_service.emby_enabled:
+            return {
+                "success": False,
+                "message": "Emby刷库功能未启用"
+            }
+        
+        # 使用名称搜索
+        items = await service_manager.emby_service.search_by_name(name)
+        
+        # 提取结果
+        results = []
+        for item in items:
+            results.append({
+                "id": item.get("Id"),
+                "name": item.get("Name"),
+                "type": item.get("Type"),
+                "path": item.get("Path", ""),
+                "year": item.get("ProductionYear", None)
+            })
+        
+        # 默认值
+        media_type = "Unknown"
+        media_info = {}
+        
+        # 判断是电视剧还是电影
+        # 提取剧集信息
+        tv_match = re.search(r'^(.+?)\s+S(\d+)E(\d+)', name)
+        movie_match = re.search(r'^(.+?)(?:\s*\((\d{4})\))?$', name)
+        
+        if tv_match:
+            # 电视剧
+            media_type = "TV"
+            series_name = tv_match.group(1).strip()
+            season_num = int(tv_match.group(2))
+            episode_num = int(tv_match.group(3))
+            
+            # 尝试使用剧集信息查找
+            episode = await service_manager.emby_service.find_episode_by_info(
+                series_name, season_num, episode_num
+            )
+            
+            media_info = {
+                "series_name": series_name,
+                "season": season_num,
+                "episode": episode_num,
+                "episode_found": episode is not None,
+                "episode_id": episode.get("Id") if episode else None,
+                "episode_name": episode.get("Name") if episode else None
+            }
+        else:
+            # 假设是电影
+            media_type = "Movie"
+            movie_title = movie_match.group(1).strip() if movie_match else name
+            movie_year = int(movie_match.group(2)) if movie_match and movie_match.group(2) else None
+            
+            # 尝试查找电影
+            movie = None
+            for item in items:
+                if item.get("Type") == "Movie" and item.get("Name", "").lower() == movie_title.lower():
+                    if movie_year and item.get("ProductionYear") == movie_year:
+                        movie = item
+                        break
+            
+            # 如果没找到完全匹配的，取第一个电影类型
+            if not movie:
+                for item in items:
+                    if item.get("Type") == "Movie":
+                        movie = item
+                        break
+            
+            media_info = {
+                "title": movie_title,
+                "year": movie_year,
+                "movie_found": movie is not None,
+                "movie_id": movie.get("Id") if movie else None,
+                "movie_name": movie.get("Name") if movie else None,
+                "movie_year": movie.get("ProductionYear") if movie else None
+            }
+        
+        return {
+            "success": True,
+            "search_results": results,
+            "media_type": media_type,
+            "media_info": media_info
+        }
+    except Exception as e:
+        logger.error(f"测试Emby搜索失败: {str(e)}")
+        return {
+            "success": False,
+            "message": f"测试失败: {str(e)}"
         } 

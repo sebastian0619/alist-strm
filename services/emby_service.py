@@ -77,9 +77,9 @@ class EmbyService:
         self._is_processing = False
         self._stop_flag = False
         
-        # 刷新任务的配置
-        self.initial_delay = 600  # 初始延迟10分钟
-        self.retry_delays = [1800, 3600, 7200, 14400]  # 重试延迟：30分钟, 1小时, 2小时, 4小时
+        # 刷新任务的配置 - 增加延迟，给Emby更多时间扫描
+        self.initial_delay = 1800  # 30分钟
+        self.retry_delays = [3600, 7200, 14400, 28800]  # 1小时, 2小时, 4小时, 8小时
         self.max_retries = len(self.retry_delays)
     
     def _load_refresh_queue(self):
@@ -375,34 +375,243 @@ class EmbyService:
         
         return None
     
+    async def search_by_name(self, name: str) -> List[Dict]:
+        """通过名称搜索Emby媒体项目"""
+        try:
+            # 确保emby_url是合法的URL
+            if not self.emby_url or not self.emby_url.startswith(('http://', 'https://')):
+                logger.error(f"无效的Emby API URL: {self.emby_url}")
+                return []
+            
+            # 构建搜索API URL
+            url = f"{self.emby_url}/Items"
+            params = {
+                "api_key": self.api_key,
+                "SearchTerm": name,
+                "Recursive": "true",
+                "IncludeItemTypes": "Movie,Series,Episode",
+                "Limit": 10,
+                "Fields": "Path,ParentId"
+            }
+            
+            logger.info(f"通过名称搜索Emby项目: {name}")
+            
+            # 发送请求
+            async with httpx.AsyncClient() as client:
+                response = await client.get(url, params=params, timeout=30)
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    items = data.get("Items", [])
+                    
+                    if items:
+                        logger.info(f"搜索\"{name}\"找到 {len(items)} 个结果")
+                        for item in items:
+                            logger.info(f"  - {item.get('Type')}: {item.get('Name')} (ID: {item.get('Id')})")
+                    else:
+                        logger.warning(f"搜索\"{name}\"未找到任何结果")
+                    
+                    return items
+                else:
+                    logger.error(f"搜索失败，状态码: {response.status_code}")
+                    logger.error(f"响应: {response.text[:200]}")
+            
+            return []
+        except Exception as e:
+            logger.error(f"通过名称搜索失败: {str(e)}")
+            return []
+    
+    async def extract_media_name_from_strm(self, strm_path: str) -> Dict:
+        """从STRM文件名提取媒体信息，并根据路径判断媒体类型"""
+        try:
+            # 获取文件名和路径
+            filename = os.path.basename(strm_path)
+            name_without_ext = os.path.splitext(filename)[0]
+            full_path = str(strm_path).replace('\\', '/')
+            
+            # 根据路径判断媒体类型
+            media_type = "Unknown"
+            if "电影" in full_path:
+                media_type = "Movie"
+            elif any(keyword in full_path for keyword in ["电视剧", "动漫", "综艺"]):
+                media_type = "TV"
+            
+            # 解析媒体信息
+            media_info = {
+                "type": media_type,
+                "name": name_without_ext
+            }
+            
+            # 匹配电视剧格式: "洛基 - S02E05 - 第 5 集"
+            import re
+            tv_match = re.search(r'^(.+?) - S(\d+)E(\d+)(?:\s*-\s*(.+))?', name_without_ext)
+            
+            if tv_match:
+                series_name = tv_match.group(1).strip()
+                season_num = int(tv_match.group(2))
+                episode_num = int(tv_match.group(3))
+                
+                media_info = {
+                    "type": "Episode",
+                    "series_name": series_name,
+                    "season": season_num,
+                    "episode": episode_num
+                }
+                
+                if tv_match.group(4):
+                    media_info["episode_title"] = tv_match.group(4).strip()
+                
+                return media_info
+            
+            # 匹配电影格式，提取年份
+            movie_match = re.search(r'^(.+?)(?:\s*\((\d{4})\))?$', name_without_ext)
+            if movie_match and media_type == "Movie":
+                title = movie_match.group(1).strip()
+                media_info = {
+                    "type": "Movie",
+                    "title": title,
+                }
+                
+                # 提取年份（如果有）
+                if movie_match.group(2):
+                    media_info["year"] = int(movie_match.group(2))
+                
+                logger.info(f"识别为电影: {title} ({media_info.get('year', '未知年份')})")
+                return media_info
+            
+            logger.info(f"媒体类型识别结果: {media_type}, 名称: {name_without_ext}")
+            return media_info
+        except Exception as e:
+            logger.error(f"提取媒体名称出错: {str(e)}")
+            return {"type": "Unknown", "name": ""}
+    
+    async def find_episode_by_info(self, series_name: str, season_num: int, episode_num: int) -> Optional[Dict]:
+        """通过系列名称和集数查找剧集"""
+        try:
+            # 首先搜索系列
+            series_items = await self.search_by_name(series_name)
+            series_id = None
+            
+            # 找到匹配的系列
+            for item in series_items:
+                if item.get("Type") == "Series" and item.get("Name", "").lower() == series_name.lower():
+                    series_id = item.get("Id")
+                    logger.info(f"找到系列: {item.get('Name')} (ID: {series_id})")
+                    break
+            
+            if not series_id:
+                logger.warning(f"未找到系列: {series_name}")
+                return None
+            
+            # 查找该系列的季
+            url = f"{self.emby_url}/Shows/{series_id}/Seasons"
+            params = {"api_key": self.api_key}
+            
+            async with httpx.AsyncClient() as client:
+                response = await client.get(url, params=params, timeout=30)
+                
+                if response.status_code != 200:
+                    logger.error(f"获取季失败: {response.status_code}")
+                    return None
+                
+                seasons_data = response.json()
+                seasons = seasons_data.get("Items", [])
+                
+                # 找到对应的季
+                season_id = None
+                for season in seasons:
+                    if season.get("IndexNumber") == season_num:
+                        season_id = season.get("Id")
+                        logger.info(f"找到季: {season.get('Name')} (ID: {season_id})")
+                        break
+            
+            if not season_id:
+                logger.warning(f"未找到季: {series_name} S{season_num:02d}")
+                return None
+            
+            # 查找该季的集
+            url = f"{self.emby_url}/Shows/{series_id}/Episodes"
+            params = {
+                "api_key": self.api_key,
+                "SeasonId": season_id
+            }
+            
+            async with httpx.AsyncClient() as client:
+                response = await client.get(url, params=params, timeout=30)
+                
+                if response.status_code != 200:
+                    logger.error(f"获取剧集失败: {response.status_code}")
+                    return None
+                
+                episodes_data = response.json()
+                episodes = episodes_data.get("Items", [])
+                
+                # 找到对应的集
+                for episode in episodes:
+                    if episode.get("IndexNumber") == episode_num:
+                        logger.info(f"找到剧集: {episode.get('Name')} (ID: {episode.get('Id')})")
+                        return episode
+            
+            logger.warning(f"未找到剧集: {series_name} S{season_num:02d}E{episode_num:02d}")
+            return None
+        except Exception as e:
+            logger.error(f"查找剧集失败: {str(e)}")
+            return None
+    
     async def find_emby_item(self, strm_path: str) -> Optional[Dict]:
         """查找Emby中对应于STRM文件的媒体项"""
         try:
-            # 策略1: 直接路径查询
+            # 从STRM文件名提取媒体信息
+            media_info = await self.extract_media_name_from_strm(strm_path)
+            logger.info(f"从STRM提取的媒体信息: {media_info}")
+            
+            # 根据媒体类型使用不同的查找策略
+            if media_info.get("type") == "Episode":
+                # 查找剧集
+                episode = await self.find_episode_by_info(
+                    media_info.get("series_name", ""),
+                    media_info.get("season", 1),
+                    media_info.get("episode", 1)
+                )
+                
+                if episode:
+                    return episode
+            elif media_info.get("type") == "Movie":
+                # 查找电影
+                movie_title = media_info.get("title", "") or media_info.get("name", "")
+                movie_year = media_info.get("year")
+                
+                # 通过标题和年份搜索电影
+                movie_items = await self.search_by_name(movie_title)
+                
+                # 过滤匹配项
+                for item in movie_items:
+                    if item.get("Type") == "Movie" and item.get("Name", "").lower() == movie_title.lower():
+                        # 如果有年份，进一步匹配年份
+                        if movie_year and item.get("ProductionYear") == movie_year:
+                            logger.info(f"找到完全匹配的电影: {item.get('Name')} ({item.get('ProductionYear')})")
+                            return item
+                
+                # 如果没有完全匹配，返回第一个类型为Movie的结果
+                for item in movie_items:
+                    if item.get("Type") == "Movie":
+                        logger.info(f"找到最接近的电影: {item.get('Name')} ({item.get('ProductionYear', '未知')})")
+                        return item
+            else:
+                # 尝试直接搜索
+                items = await self.search_by_name(media_info.get("name", ""))
+                if items:
+                    # 返回第一个结果
+                    return items[0]
+            
+            # 旧的查找方法作为备选
             emby_path = self.convert_to_emby_path(strm_path)
             if emby_path:
+                logger.info(f"尝试通过路径查找: {emby_path}")
                 item = await self.query_item_by_path(emby_path)
                 if item:
                     logger.info(f"通过路径找到Emby项目: {strm_path} -> {item.get('Id')}")
                     return item
-            
-            # 策略2: 解析文件名进行搜索
-            media_info = self.parse_media_info_from_path(strm_path)
-            if media_info and media_info["type"]:
-                items = await self.search_items_by_info(media_info)
-                if items:
-                    best_match = self.find_best_match(items, strm_path)
-                    if best_match:
-                        logger.info(f"通过内容搜索找到Emby项目: {strm_path} -> {best_match.get('Id')}")
-                        return best_match
-            
-            # 策略3: 尝试搜索父目录
-            parent_path = os.path.dirname(emby_path) if emby_path else None
-            if parent_path:
-                parent_item = await self.query_item_by_path(parent_path)
-                if parent_item:
-                    logger.info(f"找到父目录项目: {parent_path} -> {parent_item.get('Id')}")
-                    return parent_item
             
             logger.warning(f"无法找到Emby项目: {strm_path}")
             return None

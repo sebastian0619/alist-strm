@@ -1,0 +1,73 @@
+# Lessons
+
+## User Specified Lessons
+
+- 有一个python venv在./venv目录
+- 在程序输出中包含有用的调试信息
+- 编辑文件前先阅读文件内容
+- 使用LLM执行灵活的文本理解任务，先在少量文件上测试，成功后并行处理
+
+## Cursor learned
+
+- 处理网站图片路径时，确保使用正确的相对路径并确保images目录存在
+- 处理搜索结果时，确保正确处理不同字符编码（UTF-8），特别是国际化查询
+- 在stderr添加调试信息，同时保持stdout输出整洁，以便更好地集成到管道中
+- 使用seaborn样式时，由于近期seaborn版本变更，使用'seaborn-v0_8'代替'seaborn'
+
+# Scratchpad
+
+## Emby刷新功能分析
+
+这个项目是一个Alist-strm工具，用于生成STRM流媒体文件，并支持Emby媒体库刷新功能。
+
+### 主要组件：
+- EmbyService: 负责与Emby API通信，刷新媒体元数据
+- StrmService: 生成STRM文件，并将其添加到Emby刷新队列
+
+### 工作流程：
+1. StrmService生成STRM文件后，调用EmbyService.add_to_refresh_queue()
+2. EmbyService维护一个刷新队列，定期处理到期的刷新项
+3. 刷新过程包括：查找Emby中的媒体项，然后调用刷新API
+
+### 当前实现的主要特点：
+- 延迟刷新：初始延迟30分钟，给Emby扫描器更多时间发现新文件
+- 自动重试机制：支持多次尝试查找和刷新，延迟时间逐渐增加（1小时、2小时、4小时、8小时）
+- 智能媒体项匹配：支持多种策略查找媒体项
+  - 路径匹配：将STRM路径转换为Emby媒体路径
+  - 名称搜索：根据文件名提取标题、季集等信息
+  - 层级查询：先找系列，再找季，然后找集
+- 队列管理：支持查看队列状态，强制刷新等操作
+- Telegram通知：报告刷新开始和完成状态
+
+### 已实现的API端点：
+1. `/api/health/emby/refresh/status` - 获取刷新队列状态
+2. `/api/health/emby/refresh/force` - 强制刷新指定文件
+3. `/api/health/emby/test_search` - 测试Emby搜索功能
+
+### 配置选项：
+- `emby_enabled`: 是否启用Emby刷库功能
+- `emby_api_url`: Emby API地址
+- `emby_api_key`: Emby API密钥
+- `strm_root_path`: STRM文件根路径
+- `emby_root_path`: Emby媒体库根路径
+
+### 测试计划
+现在我将测试Emby刷新功能，按以下步骤进行：
+
+[X] 分析代码库，了解Emby刷新功能的实现
+[X] 确认已有API端点功能
+[ ] 测试路径转换功能
+[ ] 测试媒体项搜索功能
+[ ] 测试刷新队列状态API
+[ ] 测试强制刷新功能
+
+### 可能的改进：
+1. 添加新的API端点，方便查看和管理刷新队列
+2. 优化媒体项匹配逻辑，提高匹配成功率
+3. 增加刷新历史记录功能
+4. 添加手动编辑媒体信息的功能
+5. 改进路径转换逻辑，处理更多特殊情况
+
+下一步任务：
+[ ] 检查当前Emby刷新功能是否存在问题
+[ ] 了解用户可能想要的新功能或改进 
