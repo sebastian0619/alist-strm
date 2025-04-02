@@ -252,7 +252,17 @@
                   <span>{{ item.path.split('/').pop() }}</span>
                   <span style="color: #cf1322;">{{ item.error }}</span>
                 </a-space>
-                <span>下次尝试: {{ item.next_retry }}</span>
+                <div style="display: flex; align-items: center;">
+                  <span style="margin-right: 16px;">下次尝试: {{ item.next_retry }}</span>
+                  <a-button 
+                    type="primary" 
+                    size="small"
+                    @click="forceRefreshEmbyItem(item.path)"
+                    :loading="refreshingItem === item.path"
+                  >
+                    立即刷新
+                  </a-button>
+                </div>
               </a-list-item>
             </template>
           </a-list>
@@ -260,13 +270,22 @@
         
         <a-divider />
         
-        <div style="display: flex; justify-content: center;">
+        <div style="display: flex; justify-content: center; gap: 16px;">
           <a-button 
             type="primary" 
             @click="refreshEmbyStatus" 
             :loading="embyLoading"
           >
             刷新状态
+          </a-button>
+          <a-button 
+            type="primary" 
+            @click="forceRefreshAllFailedItems" 
+            :loading="refreshingAllItems"
+            :disabled="!embyStatus.recent_failed || embyStatus.recent_failed.length === 0"
+            danger
+          >
+            重新刷新失败项
           </a-button>
         </div>
       </a-card>
@@ -641,6 +660,8 @@ const embyStatus = ref({})
 const embyLoading = ref(false)
 const nextRefreshTime = ref(null)
 const refreshTimer = ref(null)
+const refreshingAllItems = ref(false)
+const refreshingItem = ref(null)
 
 // 获取Emby刷新状态
 const refreshEmbyStatus = async () => {
@@ -675,6 +696,7 @@ const refreshEmbyStatus = async () => {
 // 强制刷新STRM文件
 const forceRefreshEmbyItem = async (path) => {
   try {
+    refreshingItem.value = path
     const response = await fetch(`/api/health/emby/refresh/force?path=${encodeURIComponent(path)}`, {
       method: 'POST'
     })
@@ -696,6 +718,50 @@ const forceRefreshEmbyItem = async (path) => {
   } catch (e) {
     console.error('强制刷新失败:', e)
     message.error('强制刷新失败: ' + e.message)
+  } finally {
+    refreshingItem.value = null
+  }
+}
+
+// 强制刷新所有失败项
+const forceRefreshAllFailedItems = async () => {
+  if (!embyStatus.value.recent_failed || embyStatus.value.recent_failed.length === 0) {
+    return
+  }
+  
+  try {
+    refreshingAllItems.value = true
+    
+    // 获取所有失败项的路径
+    const paths = embyStatus.value.recent_failed.map(item => item.path)
+    
+    // 使用批量API一次刷新所有项目
+    const response = await fetch('/api/health/emby/refresh/batch', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(paths)
+    })
+    
+    if (response.ok) {
+      const data = await response.json()
+      if (data.success) {
+        message.success(data.message)
+      } else {
+        message.error(data.message)
+      }
+    } else {
+      message.error('批量刷新失败')
+    }
+    
+    // 刷新状态
+    await refreshEmbyStatus()
+  } catch (e) {
+    console.error('重新刷新失败项失败:', e)
+    message.error('重新刷新失败: ' + e.message)
+  } finally {
+    refreshingAllItems.value = false
   }
 }
 

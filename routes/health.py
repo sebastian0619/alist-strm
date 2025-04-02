@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Body
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any, Literal
 from pathlib import Path
@@ -1094,4 +1094,71 @@ async def test_emby_search(name: str = Query(...)):
         return {
             "success": False,
             "message": f"测试失败: {str(e)}"
+        }
+
+@router.post("/emby/refresh/batch")
+async def batch_refresh_emby_items(paths: List[str] = Body(..., description="STRM文件路径列表")):
+    """批量刷新指定的STRM文件对应的Emby项目"""
+    try:
+        # 检查服务是否开启
+        if not service_manager.emby_service.emby_enabled:
+            return {
+                "success": False,
+                "message": "Emby刷库功能未启用"
+            }
+            
+        # 记录成功和失败的项目
+        success_count = 0
+        failed_paths = []
+            
+        for path in paths:
+            try:
+                # 添加到刷新队列，设置为立即刷新
+                item = next((item for item in service_manager.emby_service.refresh_queue if item.strm_path == path), None)
+                
+                if item:
+                    # 如果已在队列中，更新时间戳为当前时间
+                    item.timestamp = time.time()
+                    item.status = "pending"
+                    item.retry_count = 0
+                else:
+                    # 如果不在队列中，添加到队列
+                    service_manager.emby_service.add_to_refresh_queue(path)
+                    # 修改时间戳为当前时间（立即刷新）
+                    for queue_item in service_manager.emby_service.refresh_queue:
+                        if queue_item.strm_path == path:
+                            queue_item.timestamp = time.time()
+                            break
+                
+                success_count += 1
+            except Exception as e:
+                logger.error(f"添加项目到刷新队列失败: {path}, 错误: {str(e)}")
+                failed_paths.append(path)
+                
+        # 保存队列
+        service_manager.emby_service._save_refresh_queue()
+            
+        # 如果全部成功
+        if success_count == len(paths):
+            return {
+                "success": True,
+                "message": f"已添加 {success_count} 个项目到刷新队列，将立即刷新"
+            }
+        # 部分成功
+        elif success_count > 0:
+            return {
+                "success": True,
+                "message": f"已添加 {success_count}/{len(paths)} 个项目到刷新队列，有 {len(failed_paths)} 个项目添加失败"
+            }
+        # 全部失败
+        else:
+            return {
+                "success": False,
+                "message": f"添加刷新队列失败，所有 {len(paths)} 个项目均添加失败"
+            }
+    except Exception as e:
+        logger.error(f"批量刷新Emby项目失败: {str(e)}")
+        return {
+            "success": False,
+            "message": f"批量刷新失败: {str(e)}"
         } 
