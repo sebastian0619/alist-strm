@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple
 from config import Settings
 import importlib
+from urllib.parse import urlencode
 
 # 设置日志
 logger = logging.getLogger(__name__)
@@ -300,7 +301,13 @@ class EmbyService:
                 "api_key": self.api_key
             }
             
-            logger.debug(f"查询Emby项目: URL={url}, Path={path}")
+            # 构建完整URL用于调试（包含参数）
+            full_url = f"{url}?{urlencode(params)}"
+            # 隐藏API密钥用于日志显示
+            display_url = full_url.replace(self.api_key, "API_KEY_HIDDEN")
+            
+            logger.info(f"查询Emby项目: 完整URL={display_url}")
+            logger.info(f"查询参数: 路径='{path}'")
             
             # 发送请求
             async with httpx.AsyncClient() as client:
@@ -313,8 +320,10 @@ class EmbyService:
                         return data["Items"][0]
                     else:
                         logger.debug(f"未找到Emby项目: {path}")
+                        logger.info(f"查询路径无结果: '{path}'。原始响应: {data}")
                 else:
                     logger.error(f"查询路径失败: {path}, 状态码: {response.status_code}, 响应: {response.text[:200]}")
+                    logger.error(f"请求URL: {display_url}")
             
             return None
         except Exception as e:
@@ -435,7 +444,12 @@ class EmbyService:
                 "Fields": "Path,ParentId"
             }
             
-            logger.info(f"通过名称搜索Emby项目: URL={url}, 参数={params}")
+            # 构建完整URL用于调试（包含参数）
+            full_url = f"{url}?{urlencode(params)}"
+            # 隐藏API密钥用于日志显示
+            display_url = full_url.replace(self.api_key, "API_KEY_HIDDEN")
+            logger.info(f"通过名称搜索Emby项目: 完整URL={display_url}")
+            logger.info(f"搜索参数: 名称='{name}', 媒体类型=Movie,Series,Episode, 递归=true")
             
             # 发送请求
             async with httpx.AsyncClient() as client:
@@ -456,6 +470,7 @@ class EmbyService:
                 else:
                     logger.error(f"搜索失败，状态码: {response.status_code}")
                     logger.error(f"响应: {response.text[:500]}")
+                    logger.error(f"请求URL: {display_url}")
             
             return []
         except Exception as e:
@@ -568,13 +583,19 @@ class EmbyService:
             url = f"{self.emby_url}/Shows/{series_id}/Seasons"
             params = {"api_key": self.api_key}
             
-            logger.info(f"获取系列{series_id}的季列表")
+            # 构建完整URL用于调试（包含参数）
+            full_url = f"{url}?{urlencode(params)}"
+            # 隐藏API密钥用于日志显示
+            display_url = full_url.replace(self.api_key, "API_KEY_HIDDEN")
+            
+            logger.info(f"获取系列{series_id}的季列表: 完整URL={display_url}")
             
             async with httpx.AsyncClient() as client:
                 response = await client.get(url, params=params, timeout=30)
                 
                 if response.status_code != 200:
-                    logger.error(f"获取季失败: {response.status_code}")
+                    logger.error(f"获取季失败: 状态码={response.status_code}, 响应={response.text[:200]}")
+                    logger.error(f"请求URL: {display_url}")
                     return None
                 
                 seasons_data = response.json()
@@ -608,13 +629,19 @@ class EmbyService:
                 "SeasonId": season_id
             }
             
-            logger.info(f"获取季{season_id}的剧集列表")
+            # 构建完整URL用于调试（包含参数）
+            full_url = f"{url}?{urlencode(params)}"
+            # 隐藏API密钥用于日志显示
+            display_url = full_url.replace(self.api_key, "API_KEY_HIDDEN")
+            
+            logger.info(f"获取季{season_id}的剧集列表: 完整URL={display_url}")
             
             async with httpx.AsyncClient() as client:
                 response = await client.get(url, params=params, timeout=30)
                 
                 if response.status_code != 200:
-                    logger.error(f"获取剧集失败: {response.status_code}")
+                    logger.error(f"获取剧集失败: 状态码={response.status_code}, 响应={response.text[:200]}")
+                    logger.error(f"请求URL: {display_url}")
                     return None
                 
                 episodes_data = response.json()
@@ -672,12 +699,53 @@ class EmbyService:
                     logger.info(f"文件名中的系列名称可能不准确，改用目录名: {series_from_dir}")
                     series_name = series_from_dir
                     media_info["series_name"] = series_from_dir
+                
+                # 尝试中英文名称匹配 - 添加常见剧集的中英文映射
+                series_name_mapping = {
+                    "洛基": "Loki",
+                    "漫威洛基": "Loki",
+                    "绿箭侠": "Arrow",
+                    "闪电侠": "The Flash",
+                    "行尸走肉": "The Walking Dead",
+                    "权力的游戏": "Game of Thrones",
+                    "曼达洛人": "The Mandalorian",
+                    "猎魔人": "The Witcher",
+                    "黑镜": "Black Mirror",
+                    "纸牌屋": "House of Cards",
+                    "怪奇物语": "Stranger Things",
+                    "西部世界": "Westworld",
+                    "风骚律师": "Better Call Saul",
+                    "绝命毒师": "Breaking Bad",
+                }
+                
+                # 检查是否有中英文映射
+                english_name = series_name_mapping.get(series_name)
+                if english_name:
+                    logger.info(f"找到系列名称的中英文映射: {series_name} -> {english_name}")
+                    
+                    # 将英文名称添加为备选搜索关键词
+                    media_info["english_name"] = english_name
             
             # 根据媒体类型使用不同的查找策略
             if media_info.get("type") == "Episode":
                 # 查找剧集
                 if media_info.get("series_name"):
-                    logger.info(f"尝试查找系列: {media_info.get('series_name')}")
+                    # 优先使用英文名称搜索(如果存在)
+                    if media_info.get("english_name"):
+                        english_name = media_info.get("english_name")
+                        logger.info(f"尝试使用英文名称查找系列: {english_name}")
+                        episode = await self.find_episode_by_info(
+                            english_name,
+                            media_info.get("season", 1),
+                            media_info.get("episode", 1)
+                        )
+                        
+                        if episode:
+                            logger.info(f"使用英文名称成功找到剧集: {episode.get('Name')}")
+                            return episode
+                    
+                    # 如果英文名称搜索失败，尝试中文名称
+                    logger.info(f"尝试使用中文名称查找系列: {media_info.get('series_name')}")
                     episode = await self.find_episode_by_info(
                         media_info.get("series_name", ""),
                         media_info.get("season", 1),
@@ -690,6 +758,22 @@ class EmbyService:
                     else:
                         logger.warning(f"未找到剧集，尝试使用目录名称查找系列")
                         # 尝试使用目录名称
+                        series_from_dir = series_dir.split(" (")[0] if " (" in series_dir else series_dir
+                        
+                        # 检查目录名是否有中英文映射
+                        dir_english_name = series_name_mapping.get(series_from_dir)
+                        if dir_english_name:
+                            logger.info(f"尝试使用目录名的英文映射查找系列: {dir_english_name}")
+                            episode = await self.find_episode_by_info(
+                                dir_english_name,
+                                media_info.get("season", 1),
+                                media_info.get("episode", 1)
+                            )
+                            if episode:
+                                logger.info(f"使用目录名的英文映射成功找到剧集: {episode.get('Name')}")
+                                return episode
+                        
+                        # 如果英文名也失败，使用原始目录名
                         episode = await self.find_episode_by_info(
                             series_from_dir,
                             media_info.get("season", 1),
@@ -773,7 +857,13 @@ class EmbyService:
                 "ImageRefreshMode": "FullRefresh"
             }
             
-            logger.debug(f"刷新Emby项目: ID={item_id}")
+            # 构建完整URL用于调试（包含参数）
+            from urllib.parse import urlencode
+            full_url = f"{url}?{urlencode(params)}"
+            # 隐藏API密钥用于日志显示
+            display_url = full_url.replace(self.api_key, "API_KEY_HIDDEN")
+            
+            logger.info(f"刷新Emby项目: ID={item_id}, 完整URL={display_url}")
             
             # 发送请求
             async with httpx.AsyncClient() as client:
@@ -784,6 +874,7 @@ class EmbyService:
                     return True
                 else:
                     logger.error(f"刷新Emby项目失败: {item_id}, 状态码: {response.status_code}, 响应: {response.text[:200]}")
+                    logger.error(f"请求URL: {display_url}")
             
             return False
         except Exception as e:
