@@ -442,7 +442,7 @@ class EmbyService:
             # URL编码搜索名称
             from urllib.parse import quote
             encoded_name = quote(name)
-            logger.info(f"原始搜索名称: '{name}', URL编码后: '{encoded_name}'")
+            logger.info(f"【请求准备】原始搜索名称: '{name}', URL编码后: '{encoded_name}'")
             
             # 构建搜索API URL
             url = f"{self.emby_url}/Items"
@@ -455,38 +455,57 @@ class EmbyService:
                 "Fields": "Path,ParentId"
             }
             
-            # 构建完整URL用于调试（包含参数）
+            # 构建完整URL用于调试（包含参数，使用urlencode）
             from urllib.parse import urlencode
-            full_url = f"{url}?{urlencode(params, safe='')}"  # safe=''确保所有字符都会被编码
-            # 隐藏API密钥用于日志显示
-            display_url = full_url.replace(self.api_key, "API_KEY_HIDDEN")
-            logger.info(f"通过名称搜索Emby项目: 完整URL={display_url}")
-            logger.info(f"搜索参数: 名称='{name}', 媒体类型=Movie,Series,Episode, 递归=true")
+            params_no_api = {k: v for k, v in params.items() if k != "api_key"}
+            params_no_api["api_key"] = "API_KEY_HIDDEN"  # 隐藏API密钥
+            full_url_safe = f"{url}?{urlencode(params_no_api, safe='')}"
+            logger.info(f"【EMBY请求】发送请求: GET {full_url_safe}")
+            
+            # 记录详细的请求参数
+            for k, v in params_no_api.items():
+                logger.info(f"【请求参数】{k}: {v}")
+            
+            # 记录curl命令（方便复制粘贴测试）
+            curl_command = f"curl -X GET \"{url}?{urlencode(params, safe='')}\""
+            curl_safe = curl_command.replace(self.api_key, "API_KEY_HIDDEN")
+            logger.info(f"【调试命令】{curl_safe}")
             
             # 发送请求
             async with httpx.AsyncClient() as client:
+                logger.info(f"【网络请求】开始向Emby发送请求...")
                 response = await client.get(url, params=params, timeout=30)
+                logger.info(f"【网络请求】收到响应，状态码: {response.status_code}")
+                
+                # 记录实际发送的URL（从响应对象获取）
+                actual_url = str(response.url).replace(self.api_key, "API_KEY_HIDDEN")
+                logger.info(f"【实际请求URL】{actual_url}")
                 
                 if response.status_code == 200:
                     data = response.json()
                     items = data.get("Items", [])
                     
+                    # 记录原始响应数据
+                    logger.info(f"【响应数据】{data}")
+                    
                     if items:
-                        logger.info(f"搜索\"{name}\"找到 {len(items)} 个结果")
-                        for item in items:
-                            logger.info(f"  - {item.get('Type')}: {item.get('Name')} (ID: {item.get('Id')})")
+                        logger.info(f"【搜索结果】搜索\"{name}\"找到 {len(items)} 个结果")
+                        for idx, item in enumerate(items):
+                            logger.info(f"  [{idx+1}] {item.get('Type')}: {item.get('Name')} (ID: {item.get('Id')})")
                     else:
-                        logger.warning(f"搜索\"{name}\"未找到任何结果。原始响应: {data}")
+                        logger.warning(f"【搜索结果】搜索\"{name}\"未找到任何结果。原始响应: {data}")
                     
                     return items
                 else:
-                    logger.error(f"搜索失败，状态码: {response.status_code}")
-                    logger.error(f"响应: {response.text[:500]}")
-                    logger.error(f"请求URL: {display_url}")
+                    logger.error(f"【请求失败】搜索失败，状态码: {response.status_code}")
+                    logger.error(f"【错误响应】{response.text[:500]}")
+                    logger.error(f"【请求URL】{actual_url}")
             
             return []
         except Exception as e:
-            logger.error(f"通过名称搜索失败: {str(e)}")
+            logger.error(f"【异常】通过名称搜索失败: {str(e)}")
+            import traceback
+            logger.error(f"【异常详情】{traceback.format_exc()}")
             return []
     
     async def extract_media_name_from_strm(self, strm_path: str) -> Dict:
@@ -535,9 +554,27 @@ class EmbyService:
                 return media_info
             
             # 匹配电影格式，提取年份
-            movie_match = re.search(r'^(.+?)(?:\s*\((\d{4})\))?$', name_without_ext)
+            movie_match = re.search(r'^(.+?)(?:\s*\((\d{4})\))?', name_without_ext)
             if movie_match and (media_type == "Movie" or media_type == "Unknown"):
                 title = movie_match.group(1).strip()
+                
+                # 清理电影标题中的额外信息（如分辨率、音频编码等）
+                # 移除类似" - 1080p"," - 蓝光"," - HC"等后缀
+                title = re.sub(r'\s*-\s*\d+[pP].*$', '', title)
+                title = re.sub(r'\s*-\s*[^(]*$', '', title)
+                title = title.strip()
+                
+                # 从目录名中获取更干净的电影名称（通常不含分辨率等信息）
+                dir_name = os.path.basename(os.path.dirname(strm_path))
+                dir_title_match = re.search(r'^(.+?)(?:\s*\((\d{4})\))?', dir_name)
+                
+                if dir_title_match:
+                    dir_title = dir_title_match.group(1).strip()
+                    # 如果目录名看起来更简洁，使用目录名作为标题
+                    if len(dir_title) > 0 and len(dir_title) < len(title):
+                        logger.info(f"使用目录名作为电影标题: '{title}' -> '{dir_title}'")
+                        title = dir_title
+                
                 media_info = {
                     "type": "Movie",
                     "title": title,
@@ -546,6 +583,9 @@ class EmbyService:
                 # 提取年份（如果有）
                 if movie_match.group(2):
                     media_info["year"] = int(movie_match.group(2))
+                elif dir_title_match and dir_title_match.group(2):
+                    # 如果文件名中没有年份但目录名中有，使用目录名中的年份
+                    media_info["year"] = int(dir_title_match.group(2))
                 
                 logger.info(f"识别为电影: {title} ({media_info.get('year', '未知年份')})")
                 return media_info
@@ -771,6 +811,20 @@ class EmbyService:
                     if item.get("Type") == "Movie":
                         logger.info(f"找到最接近的电影: {item.get('Name')} ({item.get('ProductionYear', '未知')})")
                         return item
+                
+                # 尝试更简化的搜索（如果电影名称中包含冒号，尝试只搜索冒号前的部分）
+                if "：" in movie_title or ":" in movie_title:
+                    simple_title = re.split(r'[：:]', movie_title)[0].strip()
+                    if simple_title and len(simple_title) >= 2 and simple_title != movie_title:
+                        logger.info(f"尝试使用简化电影标题搜索: '{movie_title}' -> '{simple_title}'")
+                        simple_items = await self.search_by_name(simple_title)
+                        
+                        # 检查简化搜索结果
+                        if simple_items:
+                            for item in simple_items:
+                                if item.get("Type") == "Movie":
+                                    logger.info(f"使用简化标题找到电影: {item.get('Name')}")
+                                    return item
             else:
                 # 尝试直接搜索
                 search_name = media_info.get("name", "")
