@@ -136,22 +136,33 @@ class EmbyService:
         strm_root = self.strm_root_path.replace('\\', '/')
         emby_root = self.emby_root_path.replace('\\', '/')
         
+        logger.info(f"==== 路径转换详细日志 ====")
+        logger.info(f"转换路径: {strm_path}")
+        logger.info(f"STRM根路径: {strm_root}")
+        logger.info(f"Emby根路径: {emby_root}")
+        
         # 去除路径末尾的斜杠
         if strm_root.endswith('/'):
             strm_root = strm_root[:-1]
+            logger.info(f"去除末尾斜杠后的STRM根路径: {strm_root}")
+            
         if emby_root.endswith('/'):
             emby_root = emby_root[:-1]
+            logger.info(f"去除末尾斜杠后的Emby根路径: {emby_root}")
             
         # 标准化路径（确保开头的斜杠一致）
         normalized_strm_path = '/' + strm_path.lstrip('/')
         normalized_strm_root = '/' + strm_root.lstrip('/')
+        
+        logger.info(f"标准化后的STRM路径: {normalized_strm_path}")
+        logger.info(f"标准化后的STRM根路径: {normalized_strm_root}")
         
         # 检查路径是否匹配
         if normalized_strm_path.startswith(normalized_strm_root):
             # 提取相对路径
             relative_path = normalized_strm_path[len(normalized_strm_root):].lstrip('/')
             emby_path = f"{emby_root}/{relative_path}"
-            logger.debug(f"路径转换: {strm_path} -> {emby_path}")
+            logger.info(f"匹配成功 - 标准化路径匹配: {strm_path} -> {emby_path}")
             return emby_path
         
         # 检查不带前导斜杠的情况
@@ -160,7 +171,7 @@ class EmbyService:
             # 提取相对路径
             relative_path = strm_path[len(strm_root_no_slash):].lstrip('/')
             emby_path = f"{emby_root}/{relative_path}"
-            logger.debug(f"无斜杠路径转换: {strm_path} -> {emby_path}")
+            logger.info(f"匹配成功 - 无斜杠路径匹配: {strm_path} -> {emby_path}")
             return emby_path
             
         # 如果以上都不匹配，尝试直接查找非路径部分
@@ -169,17 +180,24 @@ class EmbyService:
             normalized_path = strm_path.lstrip('/')
             normalized_root = strm_root.lstrip('/')
             
+            logger.info(f"尝试部分匹配 - 标准化后的STRM路径(无斜杠): {normalized_path}")
+            logger.info(f"尝试部分匹配 - 标准化后的STRM根路径(无斜杠): {normalized_root}")
+            
             # 检查路径中是否包含根路径的最后一部分
             root_parts = normalized_root.split('/')
+            logger.info(f"根路径的组成部分: {root_parts}")
+            
             if root_parts and root_parts[-1] in normalized_path:
                 # 查找根目录的最后一部分在路径中的位置
                 pos = normalized_path.find(root_parts[-1])
+                logger.info(f"找到根目录最后部分 '{root_parts[-1]}' 在路径中的位置: {pos}")
+                
                 if pos >= 0:
                     # 找到根目录的最后一部分后的路径
                     end_pos = pos + len(root_parts[-1])
                     relative_path = normalized_path[end_pos:].lstrip('/')
                     emby_path = f"{emby_root}/{relative_path}"
-                    logger.debug(f"部分匹配路径转换: {strm_path} -> {emby_path}")
+                    logger.info(f"匹配成功 - 部分匹配路径转换: {strm_path} -> {emby_path}")
                     return emby_path
         except Exception as e:
             logger.warning(f"尝试部分匹配路径时出错: {str(e)}")
@@ -189,13 +207,36 @@ class EmbyService:
         
         # 最后尝试直接使用Emby根路径加相对路径
         try:
+            # 尝试提取相对路径的另一种方法
+            # 使用STRM路径的目录结构，从后往前匹配
+            strm_parts = normalized_path.split('/')
+            logger.info(f"尝试使用STRM路径的目录结构: {strm_parts}")
+            
+            # 提取电视剧/电影名称和季信息等
+            if len(strm_parts) >= 3:
+                # 假设格式为 [media_type]/[series_name]/[season]/[episode.strm]
+                file_name = strm_parts[-1]  # 文件名
+                season_dir = strm_parts[-2] if len(strm_parts) > 1 else ""
+                series_dir = strm_parts[-3] if len(strm_parts) > 2 else ""
+                media_type = strm_parts[-4] if len(strm_parts) > 3 else ""
+                
+                logger.info(f"尝试从路径结构提取: 媒体类型={media_type}, 系列={series_dir}, 季={season_dir}, 文件={file_name}")
+                
+                # 构建Emby根路径下的相对路径
+                if media_type and series_dir and (season_dir or file_name):
+                    relative_path = "/".join(filter(None, [media_type, series_dir, season_dir, file_name]))
+                    emby_path = f"{emby_root}/{relative_path}"
+                    logger.info(f"回退方案 - 使用路径结构构建: {strm_path} -> {emby_path}")
+                    return emby_path
+            
             # 假设strm_path是相对于STRM根目录的路径，直接拼接
             relative_path = strm_path.lstrip('/')
             emby_path = f"{emby_root}/{relative_path}"
-            logger.info(f"回退方案 - 路径转换: {strm_path} -> {emby_path}")
+            logger.info(f"回退方案 - 直接拼接路径: {strm_path} -> {emby_path}")
             return emby_path
         except Exception as e:
             logger.error(f"回退路径转换失败: {str(e)}")
+            logger.info(f"使用原始路径作为Emby路径: {strm_path}")
             return strm_path
     
     def parse_media_info_from_path(self, path: str) -> Dict[str, Any]:
@@ -394,7 +435,7 @@ class EmbyService:
                 "Fields": "Path,ParentId"
             }
             
-            logger.info(f"通过名称搜索Emby项目: {name}")
+            logger.info(f"通过名称搜索Emby项目: URL={url}, 参数={params}")
             
             # 发送请求
             async with httpx.AsyncClient() as client:
@@ -409,12 +450,12 @@ class EmbyService:
                         for item in items:
                             logger.info(f"  - {item.get('Type')}: {item.get('Name')} (ID: {item.get('Id')})")
                     else:
-                        logger.warning(f"搜索\"{name}\"未找到任何结果")
+                        logger.warning(f"搜索\"{name}\"未找到任何结果。原始响应: {data}")
                     
                     return items
                 else:
                     logger.error(f"搜索失败，状态码: {response.status_code}")
-                    logger.error(f"响应: {response.text[:200]}")
+                    logger.error(f"响应: {response.text[:500]}")
             
             return []
         except Exception as e:
@@ -491,16 +532,33 @@ class EmbyService:
     async def find_episode_by_info(self, series_name: str, season_num: int, episode_num: int) -> Optional[Dict]:
         """通过系列名称和集数查找剧集"""
         try:
+            # 详细记录搜索参数
+            logger.info(f"开始查找剧集: 系列={series_name}, 季={season_num}, 集={episode_num}")
+            
             # 首先搜索系列
             series_items = await self.search_by_name(series_name)
             series_id = None
             
+            # 详细记录搜索结果
+            if series_items:
+                logger.info(f"搜索系列'{series_name}'返回 {len(series_items)} 个结果")
+                for idx, item in enumerate(series_items):
+                    logger.info(f"  [{idx+1}] 类型: {item.get('Type')}, 名称: {item.get('Name')}, ID: {item.get('Id')}")
+            else:
+                logger.warning(f"搜索系列'{series_name}'没有结果")
+            
             # 找到匹配的系列
             for item in series_items:
-                if item.get("Type") == "Series" and item.get("Name", "").lower() == series_name.lower():
-                    series_id = item.get("Id")
-                    logger.info(f"找到系列: {item.get('Name')} (ID: {series_id})")
-                    break
+                if item.get("Type") == "Series":
+                    item_name = item.get("Name", "").lower()
+                    search_name = series_name.lower()
+                    logger.info(f"比较系列名称: '{item_name}' vs '{search_name}'")
+                    
+                    # 添加名称模糊匹配
+                    if item_name == search_name or search_name in item_name or item_name in search_name:
+                        series_id = item.get("Id")
+                        logger.info(f"找到匹配的系列: {item.get('Name')} (ID: {series_id})")
+                        break
             
             if not series_id:
                 logger.warning(f"未找到系列: {series_name}")
@@ -509,6 +567,8 @@ class EmbyService:
             # 查找该系列的季
             url = f"{self.emby_url}/Shows/{series_id}/Seasons"
             params = {"api_key": self.api_key}
+            
+            logger.info(f"获取系列{series_id}的季列表")
             
             async with httpx.AsyncClient() as client:
                 response = await client.get(url, params=params, timeout=30)
@@ -520,6 +580,11 @@ class EmbyService:
                 seasons_data = response.json()
                 seasons = seasons_data.get("Items", [])
                 
+                # 记录找到的季
+                logger.info(f"系列{series_id}有 {len(seasons)} 个季")
+                for s in seasons:
+                    logger.info(f"  - 季 {s.get('IndexNumber', '未知')}: {s.get('Name')} (ID: {s.get('Id')})")
+                
                 # 找到对应的季
                 season_id = None
                 for season in seasons:
@@ -529,8 +594,12 @@ class EmbyService:
                         break
             
             if not season_id:
-                logger.warning(f"未找到季: {series_name} S{season_num:02d}")
-                return None
+                logger.warning(f"未找到季: {series_name} S{season_num:02d}, 尝试强制使用第一个季")
+                if seasons:
+                    season_id = seasons[0].get("Id")
+                    logger.info(f"强制使用第一个季: {seasons[0].get('Name')} (ID: {season_id})")
+                else:
+                    return None
             
             # 查找该季的集
             url = f"{self.emby_url}/Shows/{series_id}/Episodes"
@@ -538,6 +607,8 @@ class EmbyService:
                 "api_key": self.api_key,
                 "SeasonId": season_id
             }
+            
+            logger.info(f"获取季{season_id}的剧集列表")
             
             async with httpx.AsyncClient() as client:
                 response = await client.get(url, params=params, timeout=30)
@@ -548,6 +619,11 @@ class EmbyService:
                 
                 episodes_data = response.json()
                 episodes = episodes_data.get("Items", [])
+                
+                # 记录找到的集
+                logger.info(f"季{season_id}有 {len(episodes)} 个剧集")
+                for ep in episodes:
+                    logger.info(f"  - 集 {ep.get('IndexNumber', '未知')}: {ep.get('Name')} (ID: {ep.get('Id')})")
                 
                 # 找到对应的集
                 for episode in episodes:
@@ -564,14 +640,44 @@ class EmbyService:
     async def find_emby_item(self, strm_path: str) -> Optional[Dict]:
         """查找Emby中对应于STRM文件的媒体项"""
         try:
+            # 记录原始STRM路径
+            logger.info(f"开始查找STRM对应的Emby项目: {strm_path}")
+            
             # 从STRM文件名提取媒体信息
             media_info = await self.extract_media_name_from_strm(strm_path)
             logger.info(f"从STRM提取的媒体信息: {media_info}")
             
+            # 提取STRM文件所在的目录路径，用于分析媒体类型
+            strm_dir = os.path.dirname(strm_path)
+            logger.info(f"STRM所在目录: {strm_dir}")
+            
+            # 提取季信息和系列名称
+            parent_dir = os.path.dirname(strm_dir)
+            season_dir = os.path.basename(strm_dir)
+            series_dir = os.path.basename(parent_dir)
+            
+            logger.info(f"目录层次结构: 系列目录={series_dir}, 季目录={season_dir}")
+            
+            # 改进剧集媒体信息，使用目录名和文件名
+            if media_info.get("type") == "Episode":
+                # 使用目录名可能更准确
+                series_from_dir = series_dir.split(" (")[0] if " (" in series_dir else series_dir
+                logger.info(f"从目录提取的系列名称: {series_from_dir}")
+                
+                series_name = media_info.get("series_name")
+                logger.info(f"使用系列名称: {series_name} (从文件名) vs {series_from_dir} (从目录)")
+                
+                # 检查从文件名提取的系列名称是否可能不准确
+                if len(series_name) < 4 and len(series_from_dir) > len(series_name):
+                    logger.info(f"文件名中的系列名称可能不准确，改用目录名: {series_from_dir}")
+                    series_name = series_from_dir
+                    media_info["series_name"] = series_from_dir
+            
             # 根据媒体类型使用不同的查找策略
-            if media_info.get("type") == "Episode" or media_info.get("type") == "TV":
+            if media_info.get("type") == "Episode":
                 # 查找剧集
                 if media_info.get("series_name"):
+                    logger.info(f"尝试查找系列: {media_info.get('series_name')}")
                     episode = await self.find_episode_by_info(
                         media_info.get("series_name", ""),
                         media_info.get("season", 1),
@@ -579,11 +685,24 @@ class EmbyService:
                     )
                     
                     if episode:
+                        logger.info(f"成功找到剧集: {episode.get('Name')}")
                         return episode
+                    else:
+                        logger.warning(f"未找到剧集，尝试使用目录名称查找系列")
+                        # 尝试使用目录名称
+                        episode = await self.find_episode_by_info(
+                            series_from_dir,
+                            media_info.get("season", 1),
+                            media_info.get("episode", 1)
+                        )
+                        if episode:
+                            logger.info(f"使用目录名成功找到剧集: {episode.get('Name')}")
+                            return episode
                 else:
                     # 没有具体的剧集信息，尝试搜索名称
                     tv_name = media_info.get("name", "")
                     if tv_name:
+                        logger.info(f"没有剧集信息，尝试直接搜索TV名称: {tv_name}")
                         tv_items = await self.search_by_name(tv_name)
                         for item in tv_items:
                             if item.get("Type") in ["Series", "Episode"]:
@@ -593,6 +712,8 @@ class EmbyService:
                 # 查找电影
                 movie_title = media_info.get("title", "") or media_info.get("name", "")
                 movie_year = media_info.get("year")
+                
+                logger.info(f"尝试查找电影: {movie_title} ({movie_year if movie_year else '未知年份'})")
                 
                 # 通过标题和年份搜索电影
                 movie_items = await self.search_by_name(movie_title)
@@ -612,15 +733,18 @@ class EmbyService:
                         return item
             else:
                 # 尝试直接搜索
-                items = await self.search_by_name(media_info.get("name", ""))
+                search_name = media_info.get("name", "")
+                logger.info(f"使用文件名直接搜索: {search_name}")
+                items = await self.search_by_name(search_name)
                 if items:
                     # 返回第一个结果
+                    logger.info(f"搜索到结果: {items[0].get('Name')} (类型: {items[0].get('Type')})")
                     return items[0]
             
             # 旧的查找方法作为备选
             emby_path = self.convert_to_emby_path(strm_path)
             if emby_path:
-                logger.info(f"尝试通过路径查找: {emby_path}")
+                logger.info(f"使用路径转换结果查找: {strm_path} -> {emby_path}")
                 item = await self.query_item_by_path(emby_path)
                 if item:
                     logger.info(f"通过路径找到Emby项目: {strm_path} -> {item.get('Id')}")
