@@ -436,6 +436,8 @@ class EmbyService:
             elif any(keyword in full_path for keyword in ["电视剧", "动漫", "综艺"]):
                 media_type = "TV"
             
+            logger.info(f"根据路径识别媒体类型: {media_type}, 路径: {full_path}")
+            
             # 解析媒体信息
             media_info = {
                 "type": media_type,
@@ -446,7 +448,7 @@ class EmbyService:
             import re
             tv_match = re.search(r'^(.+?) - S(\d+)E(\d+)(?:\s*-\s*(.+))?', name_without_ext)
             
-            if tv_match:
+            if tv_match and (media_type == "TV" or media_type == "Unknown"):
                 series_name = tv_match.group(1).strip()
                 season_num = int(tv_match.group(2))
                 episode_num = int(tv_match.group(3))
@@ -461,11 +463,12 @@ class EmbyService:
                 if tv_match.group(4):
                     media_info["episode_title"] = tv_match.group(4).strip()
                 
+                logger.info(f"识别为剧集: {series_name} S{season_num:02d}E{episode_num:02d}")
                 return media_info
             
             # 匹配电影格式，提取年份
             movie_match = re.search(r'^(.+?)(?:\s*\((\d{4})\))?$', name_without_ext)
-            if movie_match and media_type == "Movie":
+            if movie_match and (media_type == "Movie" or media_type == "Unknown"):
                 title = movie_match.group(1).strip()
                 media_info = {
                     "type": "Movie",
@@ -566,16 +569,26 @@ class EmbyService:
             logger.info(f"从STRM提取的媒体信息: {media_info}")
             
             # 根据媒体类型使用不同的查找策略
-            if media_info.get("type") == "Episode":
+            if media_info.get("type") == "Episode" or media_info.get("type") == "TV":
                 # 查找剧集
-                episode = await self.find_episode_by_info(
-                    media_info.get("series_name", ""),
-                    media_info.get("season", 1),
-                    media_info.get("episode", 1)
-                )
-                
-                if episode:
-                    return episode
+                if media_info.get("series_name"):
+                    episode = await self.find_episode_by_info(
+                        media_info.get("series_name", ""),
+                        media_info.get("season", 1),
+                        media_info.get("episode", 1)
+                    )
+                    
+                    if episode:
+                        return episode
+                else:
+                    # 没有具体的剧集信息，尝试搜索名称
+                    tv_name = media_info.get("name", "")
+                    if tv_name:
+                        tv_items = await self.search_by_name(tv_name)
+                        for item in tv_items:
+                            if item.get("Type") in ["Series", "Episode"]:
+                                logger.info(f"找到TV项目: {item.get('Name')}")
+                                return item
             elif media_info.get("type") == "Movie":
                 # 查找电影
                 movie_title = media_info.get("title", "") or media_info.get("name", "")

@@ -252,22 +252,22 @@ class ArchiveService:
                 
                 # 执行删除操作
                 for item in items_to_delete:
-                        path = item["path"]
-                        try:
-                            if path.is_dir():
-                                shutil.rmtree(str(path))
-                            else:
-                                path.unlink()
-                            logger.info(f"已删除延迟文件: {path}")
-                            self._pending_deletions.remove(item)
+                    path = item["path"]
+                    try:
+                        if path.is_dir():
+                            shutil.rmtree(str(path))
+                        else:
+                            path.unlink()
+                        logger.info(f"已删除延迟文件: {path}")
+                        self._pending_deletions.remove(item)
                         
                         # 发送删除通知
                         service_manager = self._get_service_manager()
                         notification_msg = f"🗑️ 已删除延迟文件:\n{path}"
                         await service_manager.telegram_service.send_message(notification_msg)
                         
-                        except Exception as e:
-                            logger.error(f"删除文件失败 {path}: {e}")
+                    except Exception as e:
+                        logger.error(f"删除文件失败 {path}: {e}")
                         # 如果文件不存在，也从列表中移除
                         if not path.exists():
                             self._pending_deletions.remove(item)
@@ -300,8 +300,8 @@ class ArchiveService:
             delete_time = time.time() + self._deletion_delay
             
             # 添加到待删除列表
-        self._pending_deletions.append({
-            "path": path,
+            self._pending_deletions.append({
+                "path": path,
                 "delete_time": delete_time
             })
             
@@ -312,10 +312,13 @@ class ArchiveService:
             logger.info(f"已将文件添加到待删除列表: {path}")
             
             # 发送通知
-            service_manager = self._get_service_manager()
-            delete_time_str = datetime.fromtimestamp(delete_time).strftime("%Y-%m-%d %H:%M:%S")
-            notification_msg = f"📝 文件已加入待删除列表:\n{path}\n计划删除时间: {delete_time_str}"
-            asyncio.create_task(service_manager.telegram_service.send_message(notification_msg))
+            try:
+                service_manager = self._get_service_manager()
+                delete_time_str = datetime.fromtimestamp(delete_time).strftime("%Y-%m-%d %H:%M:%S")
+                notification_msg = f"📝 文件已加入待删除列表:\n{path}\n计划删除时间: {delete_time_str}"
+                asyncio.create_task(service_manager.telegram_service.send_message(notification_msg))
+            except Exception as e:
+                logger.error(f"发送通知失败: {e}")
             
         except Exception as e:
             logger.error(f"添加文件到待删除列表失败: {e}")
@@ -599,19 +602,19 @@ class ArchiveService:
                     logger.error(f"生成STRM文件失败: {str(e)}")
                 
                 # 添加到删除队列
-                    if self.settings.archive_delete_source:
-                        self._add_to_pending_deletion(directory)
+                if self.settings.archive_delete_source:
+                    self._add_to_pending_deletion(directory)
                     logger.info(f"已将原目录添加到待删除队列: {directory}")
                 
-                        result["message"] = (
+                result["message"] = (
                     f"[归档] {full_folder_name}\n"
                     f"文件数: {len(files_info)}\n"
-                            f"总大小: {total_size / 1024 / 1024 / 1024:.2f} GB"
-                        )
-                    
-                    result["success"] = True
+                    f"总大小: {total_size / 1024 / 1024 / 1024:.2f} GB"
+                )
+                
+                result["success"] = True
                 return result
-                else:
+            else:
                 logger.error(f"Alist API复制目录失败: {copy_result['message']}")
                 result["message"] = f"[错误] {full_folder_name}\n复制失败\n源路径: {source_alist_path}\n目标路径: {dest_alist_path}\n详情: {copy_result['message']}"
             
@@ -801,14 +804,14 @@ class ArchiveService:
             # 设置处理后的值
             self._media_types = processed_value
             
-        # 更新阈值配置
-        self.thresholds = {
-            name: MediaThreshold(
-                info["creation_days"],
-                info["mtime_days"]
-            ) for name, info in self._media_types.items()
-        }
-            
+            # 更新阈值配置
+            self.thresholds = {
+                name: MediaThreshold(
+                    info["creation_days"],
+                    info["mtime_days"]
+                ) for name, info in self._media_types.items()
+            }
+                
             # 记录更新信息
             logger.info(f"已更新媒体类型配置，共{len(self._media_types)}个类型")
             
@@ -865,7 +868,7 @@ class ArchiveService:
             
             # 构建目标路径，保持相对路径结构
             try:
-            relative_path = source_path.relative_to(self.settings.archive_source_root)
+                relative_path = source_path.relative_to(self.settings.archive_source_root)
             except ValueError:
                 # 如果不是source_dir的子目录，尝试从绝对路径获取相对路径
                 rel_str = str(source_path)
@@ -921,16 +924,16 @@ class ArchiveService:
             if copy_result["file_exists"]:
                 logger.info(f"目标位置已存在文件: {copy_result['message']}")
                 # 如果配置了删除源文件
-                    if self.settings.archive_delete_source:
-                        self._add_to_pending_deletion(source_path)
-                        return {
-                            "success": True,
-                            "message": f"🗑️ {source_path} 已存在于目标位置，已加入延迟删除队列",
-                            "size": file_size
-                        }
+                if self.settings.archive_delete_source:
+                    self._add_to_pending_deletion(source_path)
                     return {
-                        "success": False,
-                        "message": f"⏭️ {source_path} 已存在于目标位置",
+                        "success": True,
+                        "message": f"🗑️ {source_path} 已存在于目标位置，已加入延迟删除队列",
+                        "size": file_size
+                    }
+                return {
+                    "success": False,
+                    "message": f"⏭️ {source_path} 已存在于目标位置",
                     "size": 0
                 }
             
@@ -938,7 +941,7 @@ class ArchiveService:
             if not self.verify_files(source_path, dest_path):
                 # 如果验证失败，删除目标文件
                 try:
-                await self.alist_client.delete(dest_alist_path)
+                    await self.alist_client.delete(dest_alist_path)
                 except Exception as e:
                     logger.error(f"删除失败的目标文件时出错: {e}")
                     
@@ -969,37 +972,7 @@ class ArchiveService:
                 "success": False,
                 "message": f"❌ {source_path} 处理失败: {str(e)}",
                 "size": 0
-            } 
-
-    async def _delete_file(self, path):
-        """立即删除指定的文件或目录
-        
-        Args:
-            path: 要删除的文件或目录路径（Path对象或字符串）
-            
-        Returns:
-            bool: 删除是否成功
-        """
-        try:
-            # 确保path是Path对象
-            if isinstance(path, str):
-                path = Path(path)
-                
-            if not path.exists():
-                logger.warning(f"要删除的文件或目录不存在: {path}")
-                return False
-                
-            # 执行删除操作
-            if path.is_dir():
-                shutil.rmtree(str(path))
-            else:
-                path.unlink()
-                
-            logger.info(f"已立即删除文件或目录: {path}")
-            return True
-        except Exception as e:
-            logger.error(f"删除文件或目录失败 {path}: {e}")
-            return False
+            }
 
     async def archive(self, test_mode: bool = False):
         """执行归档处理
@@ -1243,77 +1216,4 @@ class ArchiveService:
                 "results": []
             }
         finally:
-            self._is_running = False
-
-    async def _check_pending_deletions(self):
-        """定期检查待删除文件，删除超过延迟时间的文件"""
-        logger.info("待删除文件检查任务已启动")
-        
-        # 初始加载，确保有最新数据
-        self._pending_deletions = self._load_pending_deletions()
-        logger.info(f"初始化时待删除文件数量: {len(self._pending_deletions)}")
-        
-        while True:
-            try:
-                current_time = time.time()
-                items_to_delete = []
-                items_to_remove = []  # 记录需要从列表中移除的项目
-                
-                # 确保使用最新列表
-                if len(self._pending_deletions) > 0:
-                    logger.info(f"检查待删除文件列表，共 {len(self._pending_deletions)} 个项目")
-                
-                # 检查每个项目
-                for item in self._pending_deletions:
-                    path = item["path"]
-                    
-                    # 如果文件已经不存在，直接从列表中移除
-                    if not path.exists():
-                        items_to_remove.append(item)
-                        logger.info(f"文件已不存在，将从待删除列表中移除: {path}")
-                        continue
-                    
-                    # 如果已到删除时间，添加到待删除列表
-                    if current_time >= item["delete_time"]:
-                        items_to_delete.append(item)
-                
-                # 处理需要从列表中移除的项目（文件不存在的情况）
-                for item in items_to_remove:
-                    self._pending_deletions.remove(item)
-                    # 发送通知
-                    service_manager = self._get_service_manager()
-                    notification_msg = f"📝 从待删除列表移除不存在的文件:\n{item['path']}"
-                    await service_manager.telegram_service.send_message(notification_msg)
-                
-                # 执行删除操作
-                for item in items_to_delete:
-                    path = item["path"]
-                    try:
-                        if path.is_dir():
-                            shutil.rmtree(str(path))
-                        else:
-                            path.unlink()
-                        logger.info(f"已删除延迟文件: {path}")
-                        self._pending_deletions.remove(item)
-                        
-                        # 发送删除通知
-                        service_manager = self._get_service_manager()
-                        notification_msg = f"🗑️ 已删除延迟文件:\n{path}"
-                        await service_manager.telegram_service.send_message(notification_msg)
-                        
-                    except Exception as e:
-                        logger.error(f"删除文件失败 {path}: {e}")
-                        # 如果文件不存在，也从列表中移除
-                        if not path.exists():
-                            self._pending_deletions.remove(item)
-                            logger.info(f"文件不存在，已从待删除列表中移除: {path}")
-                
-                # 如果有任何更改，保存更新后的列表
-                if items_to_delete or items_to_remove:
-                    self._save_pending_deletions()
-                    logger.info(f"已删除 {len(items_to_delete)} 个过期文件，移除 {len(items_to_remove)} 个不存在的记录，剩余 {len(self._pending_deletions)} 个待删除项目")
-                    
-            except Exception as e:
-                logger.error(f"检查待删除文件时出错: {e}")
-            finally:
-                await asyncio.sleep(60)  # 每分钟检查一次，确保及时处理 
+            self._is_running = False 
