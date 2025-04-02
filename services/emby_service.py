@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple
 from config import Settings
 import importlib
-from urllib.parse import urlencode
+from urllib.parse import urlencode, quote
 
 # 设置日志
 logger = logging.getLogger(__name__)
@@ -294,15 +294,21 @@ class EmbyService:
                 logger.error(f"无效的Emby API URL: {self.emby_url}")
                 return None
             
+            # URL编码路径
+            from urllib.parse import quote
+            encoded_path = quote(path)
+            logger.info(f"原始路径: '{path}', URL编码后: '{encoded_path}'")
+            
             # 构建API URL
             url = f"{self.emby_url}/Items"
             params = {
-                "Path": path,
+                "Path": encoded_path,  # 使用编码后的路径
                 "api_key": self.api_key
             }
             
             # 构建完整URL用于调试（包含参数）
-            full_url = f"{url}?{urlencode(params)}"
+            from urllib.parse import urlencode
+            full_url = f"{url}?{urlencode(params, safe='')}"  # safe=''确保所有字符都会被编码
             # 隐藏API密钥用于日志显示
             display_url = full_url.replace(self.api_key, "API_KEY_HIDDEN")
             
@@ -433,11 +439,16 @@ class EmbyService:
                 logger.error(f"无效的Emby API URL: {self.emby_url}")
                 return []
             
+            # URL编码搜索名称
+            from urllib.parse import quote
+            encoded_name = quote(name)
+            logger.info(f"原始搜索名称: '{name}', URL编码后: '{encoded_name}'")
+            
             # 构建搜索API URL
             url = f"{self.emby_url}/Items"
             params = {
                 "api_key": self.api_key,
-                "SearchTerm": name,
+                "SearchTerm": encoded_name,  # 使用编码后的名称
                 "Recursive": "true",
                 "IncludeItemTypes": "Movie,Series,Episode",
                 "Limit": 10,
@@ -445,7 +456,8 @@ class EmbyService:
             }
             
             # 构建完整URL用于调试（包含参数）
-            full_url = f"{url}?{urlencode(params)}"
+            from urllib.parse import urlencode
+            full_url = f"{url}?{urlencode(params, safe='')}"  # safe=''确保所有字符都会被编码
             # 隐藏API密钥用于日志显示
             display_url = full_url.replace(self.api_key, "API_KEY_HIDDEN")
             logger.info(f"通过名称搜索Emby项目: 完整URL={display_url}")
@@ -699,53 +711,12 @@ class EmbyService:
                     logger.info(f"文件名中的系列名称可能不准确，改用目录名: {series_from_dir}")
                     series_name = series_from_dir
                     media_info["series_name"] = series_from_dir
-                
-                # 尝试中英文名称匹配 - 添加常见剧集的中英文映射
-                series_name_mapping = {
-                    "洛基": "Loki",
-                    "漫威洛基": "Loki",
-                    "绿箭侠": "Arrow",
-                    "闪电侠": "The Flash",
-                    "行尸走肉": "The Walking Dead",
-                    "权力的游戏": "Game of Thrones",
-                    "曼达洛人": "The Mandalorian",
-                    "猎魔人": "The Witcher",
-                    "黑镜": "Black Mirror",
-                    "纸牌屋": "House of Cards",
-                    "怪奇物语": "Stranger Things",
-                    "西部世界": "Westworld",
-                    "风骚律师": "Better Call Saul",
-                    "绝命毒师": "Breaking Bad",
-                }
-                
-                # 检查是否有中英文映射
-                english_name = series_name_mapping.get(series_name)
-                if english_name:
-                    logger.info(f"找到系列名称的中英文映射: {series_name} -> {english_name}")
-                    
-                    # 将英文名称添加为备选搜索关键词
-                    media_info["english_name"] = english_name
             
             # 根据媒体类型使用不同的查找策略
             if media_info.get("type") == "Episode":
                 # 查找剧集
                 if media_info.get("series_name"):
-                    # 优先使用英文名称搜索(如果存在)
-                    if media_info.get("english_name"):
-                        english_name = media_info.get("english_name")
-                        logger.info(f"尝试使用英文名称查找系列: {english_name}")
-                        episode = await self.find_episode_by_info(
-                            english_name,
-                            media_info.get("season", 1),
-                            media_info.get("episode", 1)
-                        )
-                        
-                        if episode:
-                            logger.info(f"使用英文名称成功找到剧集: {episode.get('Name')}")
-                            return episode
-                    
-                    # 如果英文名称搜索失败，尝试中文名称
-                    logger.info(f"尝试使用中文名称查找系列: {media_info.get('series_name')}")
+                    logger.info(f"尝试查找系列: {media_info.get('series_name')}")
                     episode = await self.find_episode_by_info(
                         media_info.get("series_name", ""),
                         media_info.get("season", 1),
@@ -759,21 +730,6 @@ class EmbyService:
                         logger.warning(f"未找到剧集，尝试使用目录名称查找系列")
                         # 尝试使用目录名称
                         series_from_dir = series_dir.split(" (")[0] if " (" in series_dir else series_dir
-                        
-                        # 检查目录名是否有中英文映射
-                        dir_english_name = series_name_mapping.get(series_from_dir)
-                        if dir_english_name:
-                            logger.info(f"尝试使用目录名的英文映射查找系列: {dir_english_name}")
-                            episode = await self.find_episode_by_info(
-                                dir_english_name,
-                                media_info.get("season", 1),
-                                media_info.get("episode", 1)
-                            )
-                            if episode:
-                                logger.info(f"使用目录名的英文映射成功找到剧集: {episode.get('Name')}")
-                                return episode
-                        
-                        # 如果英文名也失败，使用原始目录名
                         episode = await self.find_episode_by_info(
                             series_from_dir,
                             media_info.get("season", 1),
