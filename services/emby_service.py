@@ -1057,3 +1057,32 @@ class EmbyService:
         """动态获取service_manager以避免循环依赖"""
         module = importlib.import_module('services.service_manager')
         return module.service_manager 
+
+    def clear_refresh_queue(self):
+        """清空刷新队列"""
+        try:
+            # 记录当前队列大小
+            queue_size = len(self.refresh_queue)
+            logger.info(f"开始清空刷新队列，当前队列大小: {queue_size}")
+            
+            # 保留成功的项目，清除其他项目
+            self.refresh_queue = [item for item in self.refresh_queue if item.status == "success"]
+            
+            # 保存更新后的队列
+            self._save_refresh_queue()
+            
+            removed_count = queue_size - len(self.refresh_queue)
+            logger.info(f"已清空刷新队列，移除了 {removed_count} 个项目，保留 {len(self.refresh_queue)} 个成功项目")
+            
+            return {
+                "success": True,
+                "message": f"已清空刷新队列，移除了 {removed_count} 个项目",
+                "removed_count": removed_count,
+                "remaining_count": len(self.refresh_queue)
+            }
+        except Exception as e:
+            logger.error(f"清空刷新队列失败: {str(e)}")
+            return {
+                "success": False,
+                "message": f"清空刷新队列失败: {str(e)}"
+            } 

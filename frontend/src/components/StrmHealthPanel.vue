@@ -287,6 +287,17 @@
           >
             重新刷新失败项
           </a-button>
+          <a-popconfirm
+            title="确定要清空刷新队列吗？这将移除所有待处理和失败的项目。"
+            @confirm="clearEmbyQueue"
+          >
+            <a-button 
+              danger
+              :loading="clearingQueue"
+            >
+              清空刷新队列
+            </a-button>
+          </a-popconfirm>
         </div>
       </a-card>
     </a-card>
@@ -662,6 +673,7 @@ const nextRefreshTime = ref(null)
 const refreshTimer = ref(null)
 const refreshingAllItems = ref(false)
 const refreshingItem = ref(null)
+const clearingQueue = ref(false)
 
 // 获取Emby刷新状态
 const refreshEmbyStatus = async () => {
@@ -762,6 +774,34 @@ const forceRefreshAllFailedItems = async () => {
     message.error('重新刷新失败: ' + e.message)
   } finally {
     refreshingAllItems.value = false
+  }
+}
+
+// 清空刷新队列
+const clearEmbyQueue = async () => {
+  try {
+    clearingQueue.value = true
+    const response = await fetch('/api/health/emby/refresh/clear', {
+      method: 'POST'
+    })
+    
+    if (response.ok) {
+      const data = await response.json()
+      if (data.success) {
+        message.success(data.message)
+        // 刷新状态
+        await refreshEmbyStatus()
+      } else {
+        message.error(data.message)
+      }
+    } else {
+      message.error('清空刷新队列失败')
+    }
+  } catch (e) {
+    console.error('清空刷新队列失败:', e)
+    message.error('清空队列失败: ' + e.message)
+  } finally {
+    clearingQueue.value = false
   }
 }
 

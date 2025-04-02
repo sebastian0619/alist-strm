@@ -1161,4 +1161,32 @@ async def batch_refresh_emby_items(paths: List[str] = Body(..., description="STR
         return {
             "success": False,
             "message": f"批量刷新失败: {str(e)}"
+        }
+
+@router.post("/emby/refresh/clear")
+async def clear_emby_refresh_queue():
+    """清空Emby刷新队列"""
+    try:
+        # 检查服务是否开启
+        if not service_manager.emby_service.emby_enabled:
+            return {
+                "success": False,
+                "message": "Emby刷库功能未启用"
+            }
+            
+        # 清空刷新队列
+        result = service_manager.emby_service.clear_refresh_queue()
+        
+        # 将结果记录到日志
+        if result["success"]:
+            logger.info(f"成功清空Emby刷新队列: {result['message']}")
+        else:
+            logger.error(f"清空Emby刷新队列失败: {result['message']}")
+            
+        return result
+    except Exception as e:
+        logger.error(f"清空Emby刷新队列失败: {str(e)}")
+        return {
+            "success": False,
+            "message": f"清空刷新队列失败: {str(e)}"
         } 
