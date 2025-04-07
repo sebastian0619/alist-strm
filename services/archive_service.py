@@ -255,7 +255,7 @@ class ArchiveService:
                 for item in items_to_delete:
                     path = item["path"]
                     try:
-                        delete_success = self._delete_file(path)
+                        delete_success = await self._delete_file(path)
                         if delete_success:
                             logger.info(f"已删除延迟文件: {path}")
                             successful_deletions.append(item)  # 只有成功删除的才添加到此列表
@@ -328,7 +328,7 @@ class ArchiveService:
         except Exception as e:
             logger.error(f"添加文件到待删除列表失败: {e}")
 
-    def _delete_file(self, path: Path) -> bool:
+    async def _delete_file(self, path: Path) -> bool:
         """删除文件或目录
         
         Args:
@@ -346,6 +346,9 @@ class ArchiveService:
                 shutil.rmtree(str(path))
             else:
                 path.unlink()
+                
+            # 让出控制权
+            await asyncio.sleep(0)
                 
             logger.info(f"成功删除文件: {path}")
             return True
