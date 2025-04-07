@@ -723,17 +723,23 @@ class ArchiveService:
                 # 直接在当前目录下生成STRM文件，不创建额外的子目录
                 strm_path = os.path.join(output_dir, f"{output_base_name}.strm")
                 
-                # 构建strm文件内容 - 在此处进行URL编码路径
+                # 构建strm文件内容 - 根据全局编码设置决定是否进行URL编码
                 from urllib.parse import quote
                 if not target_file_path.startswith('/'):
-                    encoded_target_path = '/' + target_file_path
+                    path_for_url = '/' + target_file_path
                 else:
-                    encoded_target_path = target_file_path
-                    
-                # 仅在生成STRM文件URL时才编码路径
-                encoded_target_path = quote(encoded_target_path)
-                strm_url = f"{strm_service.settings.alist_url}/d{encoded_target_path}"
-                logger.debug(f"编码后的STRM URL: {strm_url}")
+                    path_for_url = target_file_path
+                
+                # 根据全局设置决定是否进行URL编码
+                if strm_service.settings.encode:
+                    # 进行URL编码，但保留路径分隔符
+                    encoded_path = quote(path_for_url)
+                    strm_url = f"{strm_service.settings.alist_url}/d{encoded_path}"
+                    logger.debug(f"已编码的STRM URL: {strm_url}")
+                else:
+                    # 不进行URL编码
+                    strm_url = f"{strm_service.settings.alist_url}/d{path_for_url}"
+                    logger.debug(f"未编码的STRM URL: {strm_url}")
                 
                 # 检查文件是否已存在且内容相同
                 if os.path.exists(strm_path):
