@@ -1166,27 +1166,39 @@ async def batch_refresh_emby_items(paths: List[str] = Body(..., description="STR
 @router.post("/emby/refresh/clear")
 async def clear_emby_refresh_queue():
     """清空Emby刷新队列"""
-    try:
-        # 检查服务是否开启
-        if not service_manager.emby_service.emby_enabled:
-            return {
-                "success": False,
-                "message": "Emby刷库功能未启用"
-            }
-            
-        # 清空刷新队列
-        result = service_manager.emby_service.clear_refresh_queue()
-        
-        # 将结果记录到日志
-        if result["success"]:
-            logger.info(f"成功清空Emby刷新队列: {result['message']}")
-        else:
-            logger.error(f"清空Emby刷新队列失败: {result['message']}")
-            
-        return result
-    except Exception as e:
-        logger.error(f"清空Emby刷新队列失败: {str(e)}")
-        return {
-            "success": False,
-            "message": f"清空刷新队列失败: {str(e)}"
-        } 
+    service_manager.emby_service.clear_refresh_queue()
+    return {"status": "success", "message": "Emby刷新队列已清空"}
+
+@router.post("/strm/delete")
+async def delete_strm_files(paths: List[str] = Body(..., description="要删除的STRM文件路径列表")):
+    """删除指定的STRM文件"""
+    deleted_files = []
+    failed_files = []
+    
+    for path in paths:
+        try:
+            # 确保路径存在且是一个文件
+            if os.path.isfile(path):
+                # 从健康状态数据中移除记录
+                service_manager.health_service.remove_strm_file(path)
+                
+                # 物理删除文件
+                os.remove(path)
+                deleted_files.append(path)
+                logger.info(f"成功删除STRM文件: {path}")
+            else:
+                failed_files.append({"path": path, "reason": "文件不存在或不是一个有效的文件"})
+                logger.warning(f"删除STRM文件失败: {path} - 文件不存在或不是一个有效的文件")
+        except Exception as e:
+            failed_files.append({"path": path, "reason": str(e)})
+            logger.error(f"删除STRM文件时出错: {path} - {str(e)}")
+    
+    # 保存健康状态数据
+    service_manager.health_service.save_health_data()
+    
+    return {
+        "status": "success" if not failed_files else "partial_success",
+        "deleted": deleted_files,
+        "failed": failed_files,
+        "message": f"成功删除 {len(deleted_files)} 个文件，失败 {len(failed_files)} 个文件"
+    } 
