@@ -251,32 +251,37 @@ class ArchiveService:
                     await service_manager.telegram_service.send_message(notification_msg)
                 
                 # 执行删除操作
+                successful_deletions = []  # 记录成功删除的项目，方便后续从队列移除
                 for item in items_to_delete:
                     path = item["path"]
                     try:
-                        if path.is_dir():
-                            shutil.rmtree(str(path))
+                        delete_success = self._delete_file(path)
+                        if delete_success:
+                            logger.info(f"已删除延迟文件: {path}")
+                            successful_deletions.append(item)  # 只有成功删除的才添加到此列表
+                            
+                            # 发送删除通知
+                            service_manager = self._get_service_manager()
+                            notification_msg = f"🗑️ 已删除延迟文件:\n{path}"
+                            await service_manager.telegram_service.send_message(notification_msg)
                         else:
-                            path.unlink()
-                        logger.info(f"已删除延迟文件: {path}")
-                        self._pending_deletions.remove(item)
-                        
-                        # 发送删除通知
-                        service_manager = self._get_service_manager()
-                        notification_msg = f"🗑️ 已删除延迟文件:\n{path}"
-                        await service_manager.telegram_service.send_message(notification_msg)
-                        
+                            logger.warning(f"删除文件失败，将保留在队列中稍后重试: {path}")
                     except Exception as e:
-                        logger.error(f"删除文件失败 {path}: {e}")
-                        # 如果文件不存在，也从列表中移除
+                        logger.error(f"删除文件时发生异常 {path}: {e}")
+                        # 如果文件不存在，从列表中移除
                         if not path.exists():
-                            self._pending_deletions.remove(item)
+                            successful_deletions.append(item)
                             logger.info(f"文件不存在，已从待删除列表中移除: {path}")
                 
+                # 从队列中移除成功删除的项目
+                for item in successful_deletions:
+                    if item in self._pending_deletions:
+                        self._pending_deletions.remove(item)
+                
                 # 如果有任何更改，保存更新后的列表
-                if items_to_delete or items_to_remove:
+                if successful_deletions or items_to_remove:
                     self._save_pending_deletions()
-                    logger.info(f"已删除 {len(items_to_delete)} 个过期文件，移除 {len(items_to_remove)} 个不存在的记录，剩余 {len(self._pending_deletions)} 个待删除项目")
+                    logger.info(f"已删除 {len(successful_deletions)} 个过期文件，移除 {len(items_to_remove)} 个不存在的记录，剩余 {len(self._pending_deletions)} 个待删除项目")
                     
             except Exception as e:
                 logger.error(f"检查待删除文件时出错: {e}")
@@ -322,6 +327,31 @@ class ArchiveService:
             
         except Exception as e:
             logger.error(f"添加文件到待删除列表失败: {e}")
+
+    def _delete_file(self, path: Path) -> bool:
+        """删除文件或目录
+        
+        Args:
+            path: 要删除的文件或目录路径
+            
+        Returns:
+            bool: 是否成功删除
+        """
+        try:
+            if not path.exists():
+                logger.info(f"文件不存在，无需删除: {path}")
+                return True
+                
+            if path.is_dir():
+                shutil.rmtree(str(path))
+            else:
+                path.unlink()
+                
+            logger.info(f"成功删除文件: {path}")
+            return True
+        except Exception as e:
+            logger.error(f"删除文件失败 {path}: {e}")
+            return False
 
     def _should_skip_directory(self, path: Path) -> bool:
         """检查是否应该跳过某个目录"""
