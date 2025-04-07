@@ -130,6 +130,18 @@
                   >
                     {{ getRepairText(item.type) }}
                   </a-button>
+                  
+                  <!-- 添加删除按钮，仅对无效STRM文件显示 -->
+                  <a-button
+                    v-if="item.type === 'invalid_strm'"
+                    type="primary"
+                    danger
+                    @click="deleteStrmFile(item)"
+                    :loading="deletingItem === item.id"
+                    style="margin-left: 8px"
+                  >
+                    删除STRM
+                  </a-button>
                 </div>
               </a-card>
             </a-list-item>
@@ -144,6 +156,19 @@
             :disabled="isScanning"
           >
             批量{{ getRepairText(problemFilter === 'all' ? '' : problemFilter) }}
+          </a-button>
+          
+          <!-- 添加删除按钮，仅当筛选为无效STRM文件时显示 -->
+          <a-button
+            v-if="problemFilter === 'invalid_strm'"
+            type="primary"
+            danger
+            @click="deleteAllInvalidStrmFiles"
+            :loading="deletingAll"
+            :disabled="isScanning"
+            style="margin-left: 16px"
+          >
+            批量删除无效STRM文件
           </a-button>
         </div>
       </div>
@@ -343,6 +368,10 @@ const filteredProblems = computed(() => {
   return problems.value.filter(problem => problem.type === problemFilter.value)
 })
 
+// 删除相关状态
+const deletingAll = ref(false)
+const deletingItem = ref(null)
+
 // 初始化：获取状态和问题列表
 onMounted(async () => {
   await getStatus()
@@ -507,10 +536,17 @@ const repairProblem = async (problem) => {
 
 // 批量修复问题
 const repairAllProblems = async () => {
-  if (filteredProblems.value.length === 0) return
+  // 如果没有问题，不执行任何操作
+  if (filteredProblems.value.length === 0) {
+    return
+  }
+  
+  // 设置批量修复状态
+  repairingAll.value = true
   
   try {
-    repairingAll.value = true
+    // 判断是否按类型筛选
+    const currentFilter = problemFilter.value
     
     // 按类型分组问题
     const invalidStrm = filteredProblems.value.filter(p => p.type === 'invalid_strm').map(p => p.path)
@@ -519,64 +555,119 @@ const repairAllProblems = async () => {
     let hasErrors = false
     
     // 修复无效STRM文件
-    if (invalidStrm.length > 0 && (problemFilter.value === 'all' || problemFilter.value === 'invalid_strm')) {
-      const invalidResponse = await fetch('/api/health/repair/invalid_strm', {
+    if (invalidStrm.length > 0 && (currentFilter === 'all' || currentFilter === 'invalid_strm')) {
+      const response = await fetch('/api/health/repair/invalid_strm', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          paths: invalidStrm,
-          type: 'invalid_strm'
-        })
+          type: 'invalid_strm',
+          paths: invalidStrm
+        }),
       })
       
-      const invalidData = await invalidResponse.json()
+      const data = await response.json()
       
-      if (invalidData.success) {
-        message.success(invalidData.message)
+      if (data.success) {
+        message.success(data.message || '成功修复无效STRM文件')
       } else {
-        message.error(invalidData.message || '修复无效STRM文件失败')
+        message.error(data.message || '修复无效STRM文件失败')
         hasErrors = true
       }
     }
     
     // 修复缺失STRM文件
-    if (missingStrm.length > 0 && (problemFilter.value === 'all' || problemFilter.value === 'missing_strm')) {
-      const missingResponse = await fetch('/api/health/repair/missing_strm', {
+    if (missingStrm.length > 0 && (currentFilter === 'all' || currentFilter === 'missing_strm')) {
+      const response = await fetch('/api/health/repair/missing_strm', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          paths: missingStrm,
-          type: 'missing_strm'
-        })
+          type: 'missing_strm',
+          paths: missingStrm
+        }),
       })
       
-      const missingData = await missingResponse.json()
+      const data = await response.json()
       
-      if (missingData.success) {
-        message.success(missingData.message)
+      if (data.success) {
+        message.success(data.message || '成功为缺失文件生成STRM')
       } else {
-        message.error(missingData.message || '修复缺失STRM文件失败')
+        message.error(data.message || '生成STRM文件失败')
         hasErrors = true
       }
     }
     
-    if (!hasErrors) {
+    if (!hasErrors && (invalidStrm.length > 0 || missingStrm.length > 0)) {
       message.success('所有问题已成功修复')
     }
     
     // 重新获取问题列表和状态
     await getProblems()
     await getStatus()
-    
   } catch (error) {
-    console.error('批量修复问题失败:', error)
-    message.error('批量修复失败: ' + error.message)
+    console.error('批量修复失败:', error)
+    message.error('批量修复失败: ' + (error.message || '未知错误'))
   } finally {
     repairingAll.value = false
+  }
+}
+
+// 批量删除无效STRM文件
+const deleteAllInvalidStrmFiles = async () => {
+  // 确认对话框
+  if (!window.confirm(`确定要删除所有 ${filteredProblems.value.length} 个无效的STRM文件吗？此操作不可撤销。`)) {
+    return
+  }
+  
+  // 设置批量删除状态
+  deletingAll.value = true
+  
+  try {
+    // 获取要删除的路径列表
+    const paths = filteredProblems.value
+      .filter(problem => problem.type === 'invalid_strm')
+      .map(problem => problem.path)
+    
+    if (paths.length === 0) {
+      message.info('没有无效的STRM文件需要删除')
+      deletingAll.value = false
+      return
+    }
+    
+    // 调用删除接口
+    const response = await fetch('/api/health/strm/delete', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(paths),
+    })
+    
+    const data = await response.json()
+    
+    if (data.status === 'success' || data.status === 'partial_success') {
+      message.success(data.message || `成功删除 ${data.deleted.length} 个无效STRM文件`)
+      
+      // 如果有失败的文件，显示详细信息
+      if (data.failed && data.failed.length > 0) {
+        console.error('部分文件删除失败:', data.failed)
+        message.warning(`有 ${data.failed.length} 个文件删除失败`)
+      }
+      
+      // 重新获取问题列表和状态
+      await getProblems()
+      await getStatus()
+    } else {
+      message.error(data.message || '删除文件失败')
+    }
+  } catch (error) {
+    console.error('批量删除文件失败:', error)
+    message.error('批量删除文件失败: ' + (error.message || '未知错误'))
+  } finally {
+    deletingAll.value = false
   }
 }
 
@@ -787,21 +878,60 @@ const clearEmbyQueue = async () => {
     
     if (response.ok) {
       const data = await response.json()
-      if (data.success) {
-        message.success(data.message)
+      if (data.status === 'success') {
+        message.success(data.message || '刷新队列已清空')
         // 刷新状态
         await refreshEmbyStatus()
       } else {
-        message.error(data.message)
+        message.error(data.message || '清空队列失败')
       }
     } else {
       message.error('清空刷新队列失败')
     }
   } catch (e) {
     console.error('清空刷新队列失败:', e)
-    message.error('清空队列失败: ' + e.message)
+    message.error('清空队列失败: ' + (e.message || '未知错误'))
   } finally {
     clearingQueue.value = false
+  }
+}
+
+// 删除单个STRM文件
+const deleteStrmFile = async (item) => {
+  // 确认对话框
+  if (!window.confirm(`确定要删除STRM文件 "${item.path}" 吗？此操作不可撤销。`)) {
+    return
+  }
+  
+  // 设置删除状态
+  deletingItem.value = item.id
+  
+  try {
+    // 调用删除接口
+    const response = await fetch('/api/health/strm/delete', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify([item.path]),
+    })
+    
+    const data = await response.json()
+    
+    if (data.status === 'success' || data.status === 'partial_success') {
+      message.success(data.message || '成功删除STRM文件')
+      
+      // 重新获取问题列表和状态
+      await getProblems()
+      await getStatus()
+    } else {
+      message.error(data.message || '删除文件失败')
+    }
+  } catch (error) {
+    console.error('删除文件失败:', error)
+    message.error('删除文件失败: ' + (error.message || '未知错误'))
+  } finally {
+    deletingItem.value = null
   }
 }
 
