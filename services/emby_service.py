@@ -912,8 +912,8 @@ class EmbyService:
             # 获取需要处理的项目数量
             pending_items = [item for item in self.refresh_queue 
                             if item.timestamp <= current_time 
-                            and (item.status not in ["success", "failed"] 
-                                 or (item.status == "failed" and item.retry_count < self.max_retries))]
+                            and item.status != "success"  # 成功的项目不再处理
+                            and (item.status != "failed" or item.retry_count < self.max_retries)]
             
             if not pending_items:
                 self._is_processing = False
@@ -934,8 +934,8 @@ class EmbyService:
                 if self._stop_flag:
                     break
                 
-                # 跳过已处理的项目
-                if item.status in ["success", "failed"] and item.retry_count >= self.max_retries:
+                # 跳过已成功处理的项目或重试次数过多的失败项目
+                if item.status == "success" or (item.status == "failed" and item.retry_count >= self.max_retries):
                     continue
                 
                 # 检查是否到达刷新时间
@@ -1065,7 +1065,7 @@ class EmbyService:
             queue_size = len(self.refresh_queue)
             logger.info(f"开始清空刷新队列，当前队列大小: {queue_size}")
             
-            # 保留成功的项目，清除其他项目
+            # 保留成功的项目，清除待处理和失败的项目
             self.refresh_queue = [item for item in self.refresh_queue if item.status == "success"]
             
             # 保存更新后的队列
@@ -1076,7 +1076,7 @@ class EmbyService:
             
             return {
                 "success": True,
-                "message": f"已清空刷新队列，移除了 {removed_count} 个项目",
+                "message": f"已清空刷新队列，移除了 {removed_count} 个待处理和失败项目，保留 {len(self.refresh_queue)} 个成功项目",
                 "removed_count": removed_count,
                 "remaining_count": len(self.refresh_queue)
             }
