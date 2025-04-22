@@ -392,54 +392,216 @@
         
         <a-divider />
         
-        <!-- 最近成功刷新项目 -->
-        <div v-if="embyStatus.recent_success && embyStatus.recent_success.length > 0">
-          <h4>最近成功刷新项目</h4>
-          <a-list
-            size="small"
-            :data-source="embyStatus.recent_success"
-          >
-            <template #renderItem="{ item }">
-              <a-list-item>
-                <a-space>
-                  <check-circle-outlined style="color: #52c41a" />
-                  <span>{{ item.name }}</span>
-                </a-space>
-                <span>{{ item.refresh_time }}</span>
-              </a-list-item>
-            </template>
-          </a-list>
-        </div>
-        
-        <!-- 最近失败刷新项目 -->
-        <div v-if="embyStatus.recent_failed && embyStatus.recent_failed.length > 0" style="margin-top: 16px;">
-          <h4>最近失败刷新项目</h4>
-          <a-list
-            size="small"
-            :data-source="embyStatus.recent_failed"
-          >
-            <template #renderItem="{ item }">
-              <a-list-item>
-                <a-space>
-                  <warning-outlined style="color: #fa8c16" />
-                  <span>{{ item.path.split('/').pop() }}</span>
-                  <span style="color: #cf1322;">{{ item.error }}</span>
-                </a-space>
-                <div style="display: flex; align-items: center;">
-                  <span style="margin-right: 16px;">下次尝试: {{ item.next_retry }}</span>
-                  <a-button 
-                    type="primary" 
-                    size="small"
-                    @click="forceRefreshEmbyItem(item.path)"
-                    :loading="refreshingItem === item.path"
+        <!-- 切换标签页 -->
+        <a-tabs v-model:activeKey="embyActiveTab">
+          <!-- 最近成功刷新项目 -->
+          <a-tab-pane key="success" tab="最近成功项目">
+            <div v-if="embyStatus.recent_success && embyStatus.recent_success.length > 0">
+              <a-list
+                size="small"
+                :data-source="embyStatus.recent_success"
+              >
+                <template #renderItem="{ item }">
+                  <a-list-item>
+                    <a-row style="width: 100%">
+                      <a-col :span="16">
+                        <a-space>
+                          <check-circle-outlined style="color: #52c41a" />
+                          <span>
+                            <a-tag :color="getEmbyTypeColor(item.type)">{{ getEmbyTypeLabel(item.type) }}</a-tag>
+                            {{ item.display_name }}
+                          </span>
+                        </a-space>
+                      </a-col>
+                      <a-col :span="8" style="text-align: right">
+                        <span>{{ item.refresh_time }}</span>
+                      </a-col>
+                    </a-row>
+                  </a-list-item>
+                </template>
+              </a-list>
+            </div>
+            <a-empty v-else description="暂无成功刷新项目" />
+          </a-tab-pane>
+          
+          <!-- 最近失败刷新项目 -->
+          <a-tab-pane key="failed" tab="失败项目">
+            <div v-if="embyStatus.recent_failed && embyStatus.recent_failed.length > 0">
+              <a-list
+                size="small"
+                :data-source="embyStatus.recent_failed"
+              >
+                <template #renderItem="{ item }">
+                  <a-list-item>
+                    <a-card style="width: 100%; margin-bottom: 8px" :bodyStyle="{ padding: '12px' }">
+                      <a-row>
+                        <a-col :span="16">
+                          <div>
+                            <a-space>
+                              <warning-outlined style="color: #fa8c16" />
+                              <a-tag :color="getEmbyTypeColor(item.type)">{{ getEmbyTypeLabel(item.type) }}</a-tag>
+                              <span style="font-weight: bold">{{ item.display_name }}</span>
+                            </a-space>
+                          </div>
+                          <div style="margin-top: 4px; color: #cf1322;">
+                            <span>错误: {{ item.error }}</span>
+                          </div>
+                        </a-col>
+                        <a-col :span="8" style="text-align: right">
+                          <div style="margin-bottom: 4px;">失败时间: {{ item.failed_time }}</div>
+                          <div style="display: flex; justify-content: flex-end; align-items: center;">
+                            <span style="margin-right: 16px;">
+                              重试次数: {{ item.retry_count }}/{{ item.max_retries }}
+                              <br />
+                              下次重试: {{ item.next_retry }}
+                            </span>
+                            <a-button 
+                              type="primary" 
+                              size="small"
+                              @click="forceRefreshEmbyItem(item.path)"
+                              :loading="refreshingItem === item.path"
+                            >
+                              立即刷新
+                            </a-button>
+                          </div>
+                        </a-col>
+                      </a-row>
+                    </a-card>
+                  </a-list-item>
+                </template>
+              </a-list>
+            </div>
+            <a-empty v-else description="暂无失败刷新项目" />
+          </a-tab-pane>
+          
+          <!-- 全部队列 -->
+          <a-tab-pane key="queue" tab="完整队列">
+            <div class="queue-filter" style="margin-bottom: 16px;">
+              <a-row :gutter="16">
+                <a-col :span="8">
+                  <a-select 
+                    v-model:value="queueFilter.status" 
+                    style="width: 100%"
+                    placeholder="状态筛选"
+                    @change="loadEmbyQueue"
                   >
-                    立即刷新
-                  </a-button>
-                </div>
-              </a-list-item>
-            </template>
-          </a-list>
-        </div>
+                    <a-select-option value="">全部状态</a-select-option>
+                    <a-select-option value="pending">待处理</a-select-option>
+                    <a-select-option value="processing">处理中</a-select-option>
+                    <a-select-option value="success">成功</a-select-option>
+                    <a-select-option value="failed">失败</a-select-option>
+                  </a-select>
+                </a-col>
+                <a-col :span="8">
+                  <a-select 
+                    v-model:value="queueFilter.sortBy" 
+                    style="width: 100%"
+                    placeholder="排序方式"
+                    @change="loadEmbyQueue"
+                  >
+                    <a-select-option value="timestamp">时间</a-select-option>
+                    <a-select-option value="path">路径</a-select-option>
+                    <a-select-option value="status">状态</a-select-option>
+                  </a-select>
+                </a-col>
+                <a-col :span="8">
+                  <a-select 
+                    v-model:value="queueFilter.sortOrder" 
+                    style="width: 100%"
+                    placeholder="排序顺序"
+                    @change="loadEmbyQueue"
+                  >
+                    <a-select-option value="desc">降序</a-select-option>
+                    <a-select-option value="asc">升序</a-select-option>
+                  </a-select>
+                </a-col>
+              </a-row>
+            </div>
+            
+            <div v-if="embyQueue.items && embyQueue.items.length > 0">
+              <a-list
+                size="small"
+                :data-source="embyQueue.items"
+              >
+                <template #renderItem="{ item }">
+                  <a-list-item>
+                    <a-card style="width: 100%; margin-bottom: 8px" :bodyStyle="{ padding: '12px' }">
+                      <a-row>
+                        <a-col :span="16">
+                          <div>
+                            <a-space>
+                              <check-circle-outlined v-if="item.status === 'success'" style="color: #52c41a" />
+                              <warning-outlined v-else-if="item.status === 'failed'" style="color: #fa8c16" />
+                              <loading-outlined v-else-if="item.status === 'processing'" style="color: #1890ff" />
+                              <clock-circle-outlined v-else style="color: #8c8c8c" />
+                              
+                              <a-tag :color="getStatusColor(item.status)">{{ getStatusLabel(item.status) }}</a-tag>
+                              <a-tag :color="getEmbyTypeColor(item.media_type || item.emby_type)">
+                                {{ getEmbyTypeLabel(item.media_type || item.emby_type) }}
+                              </a-tag>
+                              <span style="font-weight: bold">{{ item.display_name }}</span>
+                            </a-space>
+                          </div>
+                          <div v-if="item.status === 'failed'" style="margin-top: 4px; color: #cf1322;">
+                            <span>错误: {{ item.error }}</span>
+                          </div>
+                          <div style="margin-top: 4px; color: #8c8c8c; font-size: 12px;">
+                            <span>路径: {{ item.path }}</span>
+                          </div>
+                        </a-col>
+                        <a-col :span="8" style="text-align: right">
+                          <div style="margin-bottom: 4px;">{{ item.time_str }}</div>
+                          <div v-if="item.status === 'failed'" style="display: flex; justify-content: flex-end; align-items: center;">
+                            <span style="margin-right: 16px;">
+                              重试次数: {{ item.retry_count }}/{{ item.max_retries }}
+                              <br />
+                              下次重试: {{ item.next_retry_str || '不再重试' }}
+                            </span>
+                            <a-button 
+                              type="primary" 
+                              size="small"
+                              @click="forceRefreshEmbyItem(item.path)"
+                              :loading="refreshingItem === item.path"
+                            >
+                              立即刷新
+                            </a-button>
+                          </div>
+                          <div v-else-if="item.status === 'success'">
+                            <a-button 
+                              type="primary" 
+                              size="small"
+                              @click="forceRefreshEmbyItem(item.path)"
+                              :loading="refreshingItem === item.path"
+                            >
+                              重新刷新
+                            </a-button>
+                          </div>
+                        </a-col>
+                      </a-row>
+                    </a-card>
+                  </a-list-item>
+                </template>
+              </a-list>
+              
+              <!-- 分页 -->
+              <div style="text-align: center; margin-top: 16px;">
+                <a-pagination
+                  v-model:current="queueFilter.page"
+                  :total="embyQueue.total"
+                  :pageSize="queueFilter.pageSize"
+                  @change="loadEmbyQueue"
+                  showSizeChanger
+                  :pageSizeOptions="['10', '20', '50', '100']"
+                  @showSizeChange="onPageSizeChange"
+                />
+              </div>
+            </div>
+            <a-empty v-else-if="!queueLoading" description="暂无队列项目" />
+            <div v-else style="text-align: center; padding: 20px;">
+              <a-spin />
+            </div>
+          </a-tab-pane>
+        </a-tabs>
         
         <a-divider />
         
@@ -478,14 +640,16 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { message } from 'ant-design-vue'
 import { 
   CheckCircleOutlined, 
   CloseCircleOutlined,
   ExclamationCircleOutlined,
   WarningOutlined,
-  QuestionCircleOutlined
+  QuestionCircleOutlined,
+  LoadingOutlined,
+  ClockCircleOutlined
 } from '@ant-design/icons-vue'
 
 // 扫描参数
@@ -529,6 +693,33 @@ const batchReplace = ref({
   loading: false,
   preview: null,
   result: null
+})
+
+// Emby刷新队列相关
+const embyStatus = ref({})
+const embyLoading = ref(false)
+const nextRefreshTime = ref(null)
+const refreshTimer = ref(null)
+const refreshingAllItems = ref(false)
+const refreshingItem = ref(null)
+const clearingQueue = ref(false)
+const embyActiveTab = ref('success')
+
+// Emby队列状态和筛选
+const embyQueue = ref({
+  items: [],
+  total: 0,
+  page: 1,
+  pageSize: 20,
+  total_pages: 1
+})
+const queueLoading = ref(false)
+const queueFilter = ref({
+  status: '',
+  page: 1,
+  pageSize: 20,
+  sortBy: 'timestamp',
+  sortOrder: 'desc'
 })
 
 // 初始化：获取状态和问题列表
@@ -916,15 +1107,6 @@ const getRepairText = (type) => {
   return '修复所有问题'
 }
 
-// Emby刷新队列相关
-const embyStatus = ref({})
-const embyLoading = ref(false)
-const nextRefreshTime = ref(null)
-const refreshTimer = ref(null)
-const refreshingAllItems = ref(false)
-const refreshingItem = ref(null)
-const clearingQueue = ref(false)
-
 // 获取Emby刷新状态
 const refreshEmbyStatus = async () => {
   embyLoading.value = true
@@ -944,15 +1126,112 @@ const refreshEmbyStatus = async () => {
       refreshTimer.value = setTimeout(() => {
         refreshEmbyStatus()
       }, 60000)
+      
+      // 如果当前在队列标签页，顺便刷新队列数据
+      if (embyActiveTab.value === 'queue') {
+        loadEmbyQueue()
+      }
     } else {
       message.error('获取Emby刷新状态失败')
     }
   } catch (e) {
     console.error('获取Emby刷新状态失败:', e)
-    message.error('获取Emby刷新状态失败: ' + e.message)
+    message.error('获取Emby刷新状态失败: ' + (e.message || '未知错误'))
   } finally {
     embyLoading.value = false
   }
+}
+
+// 加载Emby刷新队列详情
+const loadEmbyQueue = async () => {
+  queueLoading.value = true
+  try {
+    const queryParams = new URLSearchParams({
+      page: queueFilter.value.page,
+      page_size: queueFilter.value.pageSize,
+      sort_by: queueFilter.value.sortBy,
+      sort_order: queueFilter.value.sortOrder
+    })
+    
+    if (queueFilter.value.status) {
+      queryParams.append('status', queueFilter.value.status)
+    }
+    
+    const response = await fetch(`/api/health/emby/refresh/queue?${queryParams.toString()}`)
+    if (response.ok) {
+      const data = await response.json()
+      embyQueue.value = data
+    } else {
+      message.error('获取Emby刷新队列失败')
+    }
+  } catch (e) {
+    console.error('获取Emby刷新队列失败:', e)
+    message.error('获取Emby刷新队列失败: ' + (e.message || '未知错误'))
+  } finally {
+    queueLoading.value = false
+  }
+}
+
+// 监听标签页切换，自动加载队列数据
+watch(embyActiveTab, (newTab) => {
+  if (newTab === 'queue' && (!embyQueue.value.items || embyQueue.value.items.length === 0)) {
+    loadEmbyQueue()
+  }
+})
+
+// 分页大小变化处理
+const onPageSizeChange = (page, pageSize) => {
+  queueFilter.value.page = page
+  queueFilter.value.pageSize = pageSize
+  loadEmbyQueue()
+}
+
+// 获取状态标签和颜色
+const getStatusLabel = (status) => {
+  const labels = {
+    'pending': '待处理',
+    'processing': '处理中',
+    'success': '成功',
+    'failed': '失败'
+  }
+  return labels[status] || status
+}
+
+const getStatusColor = (status) => {
+  const colors = {
+    'pending': '#8c8c8c',
+    'processing': '#1890ff',
+    'success': '#52c41a',
+    'failed': '#f5222d'
+  }
+  return colors[status] || '#8c8c8c'
+}
+
+// 获取Emby媒体类型标签和颜色
+const getEmbyTypeLabel = (type) => {
+  const labels = {
+    'Movie': '电影',
+    'Series': '剧集',
+    'Season': '季',
+    'Episode': '剧集',
+    'MusicVideo': '音乐视频',
+    'Audio': '音频',
+    'Video': '视频'
+  }
+  return labels[type] || type || '未知'
+}
+
+const getEmbyTypeColor = (type) => {
+  const colors = {
+    'Movie': '#722ed1',
+    'Series': '#13c2c2',
+    'Season': '#13c2c2',
+    'Episode': '#13c2c2',
+    'MusicVideo': '#eb2f96',
+    'Audio': '#fa8c16',
+    'Video': '#1890ff'
+  }
+  return colors[type] || '#8c8c8c'
 }
 
 // 强制刷新STRM文件

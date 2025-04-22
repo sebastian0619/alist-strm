@@ -23,6 +23,7 @@ class EmbyRefreshItem:
         self.item_id = None  # Emby中的ItemID，如果找到
         self.status = "pending"  # 状态：pending, processing, success, failed
         self.last_error = None  # 最后的错误信息
+        self.next_retry_time = self.timestamp  # 下次重试时间
 
     def to_dict(self) -> Dict:
         """转换为字典，用于序列化"""
@@ -32,7 +33,8 @@ class EmbyRefreshItem:
             "retry_count": self.retry_count,
             "item_id": self.item_id,
             "status": self.status,
-            "last_error": self.last_error
+            "last_error": self.last_error,
+            "next_retry_time": getattr(self, "next_retry_time", self.timestamp)
         }
 
     @classmethod
@@ -46,6 +48,7 @@ class EmbyRefreshItem:
         item.item_id = data.get("item_id")
         item.status = data.get("status", "pending")
         item.last_error = data.get("last_error")
+        item.next_retry_time = data.get("next_retry_time", item.timestamp)
         return item
 
 class EmbyService:
@@ -892,145 +895,119 @@ class EmbyService:
             return False
     
     async def process_refresh_queue(self):
-        """处理刷新队列，刷新到期的项目"""
-        # 如果Emby功能未启用，不处理队列
+        """处理刷新队列中的条目"""
         if not self.emby_enabled:
-            return
-            
-        if self._is_processing:
-            logger.debug("刷新任务已在运行中")
+            logger.debug("Emby服务未启用，跳过处理刷新队列")
             return
         
+        if self._is_processing:
+            logger.debug("队列正在处理中，跳过")
+            return
+        
+        current_time = time.time()
+        self._is_processing = True
         try:
-            self._is_processing = True
-            current_time = time.time()
-            processed_items = []
+            logger.info("开始处理Emby刷新队列...")
+            
+            # 统计初始队列状态
+            total_items = len(self.refresh_queue)
+            pending_items = sum(1 for item in self.refresh_queue if item.status == "pending" and item.timestamp <= current_time)
+            
+            logger.info(f"当前队列共有 {total_items} 个项目，其中 {pending_items} 个待处理")
+            
+            processed_count = 0
             success_count = 0
-            failed_count = 0
-            refreshed_items = []  # 记录成功刷新的项目
-            
-            # 获取需要处理的项目数量
-            pending_items = [item for item in self.refresh_queue 
-                            if item.timestamp <= current_time 
-                            and item.status != "success"  # 成功的项目不再处理
-                            and (item.status != "failed" or item.retry_count < self.max_retries)]
-            
-            if not pending_items:
-                self._is_processing = False
-                return
-                
-            # 发送开始处理的通知
-            service_manager = self._get_service_manager()
-            if pending_items:
-                start_msg = f"🔄 开始刷新Emby媒体库，共有 {len(pending_items)} 个项目待处理"
-                logger.info(start_msg)
-                try:
-                    if service_manager.telegram_service:
-                        await service_manager.telegram_service.send_message(start_msg)
-                except Exception as e:
-                    logger.error(f"发送通知失败: {str(e)}")
-            
             for item in self.refresh_queue:
                 if self._stop_flag:
+                    logger.info("收到停止信号，中断队列处理")
                     break
                 
-                # 跳过已成功处理的项目或重试次数过多的失败项目
-                if item.status == "success" or (item.status == "failed" and item.retry_count >= self.max_retries):
-                    continue
-                
-                # 检查是否到达刷新时间
-                if item.timestamp <= current_time:
+                # 只处理状态为pending且时间已到的项目
+                if item.status == "pending" and item.timestamp <= current_time:
+                    processed_count += 1
+                    
+                    # 更新状态为processing
                     item.status = "processing"
+                    self._save_refresh_queue()
                     
                     try:
-                        # 查找Emby项目
+                        # 根据STRM文件路径找到Emby中的项目
+                        logger.info(f"处理刷新项目: {item.strm_path}")
                         emby_item = await self.find_emby_item(item.strm_path)
                         
                         if emby_item:
-                            # 找到项目，刷新元数据
-                            item_id = emby_item.get("Id")
-                            item_name = emby_item.get("Name", "未知项目")
-                            item.item_id = item_id
+                            # 找到项目，保存ID并刷新
+                            item.item_id = emby_item.get("Id")
                             
-                            logger.info(f"开始刷新Emby项目: {item_name} (ID: {item_id})")
+                            # 刷新Emby项目
+                            refresh_success = await self.refresh_emby_item(item.item_id)
                             
-                            success = await self.refresh_emby_item(item_id)
-                            
-                            if success:
+                            if refresh_success:
+                                # 刷新成功
                                 item.status = "success"
                                 success_count += 1
-                                refreshed_items.append(f"✅ {item_name}")
-                                logger.info(f"成功刷新项目: {item.strm_path} -> {item_id} ({item_name})")
+                                logger.info(f"成功刷新Emby项目: {emby_item.get('Name', '未知')}")
                             else:
-                                # 刷新失败，安排重试
+                                # 刷新失败，设置为失败状态
                                 item.status = "failed"
                                 item.last_error = "刷新API调用失败"
-                                item.retry_count += 1
-                                failed_count += 1
                                 
+                                # 设置下次重试时间
                                 if item.retry_count < self.max_retries:
-                                    delay = self.retry_delays[min(item.retry_count, len(self.retry_delays) - 1)]
-                                    item.timestamp = current_time + delay
-                                    logger.info(f"安排重试刷新: {item.strm_path}, 重试次数: {item.retry_count}, 延迟: {delay}秒")
+                                    delay = self.retry_delays[item.retry_count]
+                                    item.next_retry_time = current_time + delay
+                                    logger.warning(f"刷新失败，将在 {delay/3600:.1f} 小时后重试: {item.strm_path}")
+                                else:
+                                    logger.error(f"刷新失败，超过最大重试次数: {item.strm_path}")
                         else:
-                            # 未找到项目，安排重试
+                            # 未找到项目，设置为失败状态
                             item.status = "failed"
-                            item.last_error = "未找到Emby项目"
-                            item.retry_count += 1
-                            failed_count += 1
+                            item.last_error = "未找到Emby中的媒体项目"
                             
+                            # 设置下次重试时间
                             if item.retry_count < self.max_retries:
-                                delay = self.retry_delays[min(item.retry_count, len(self.retry_delays) - 1)]
-                                item.timestamp = current_time + delay
-                                logger.info(f"未找到项目，安排重试: {item.strm_path}, 重试次数: {item.retry_count}, 延迟: {delay}秒")
+                                delay = self.retry_delays[item.retry_count]
+                                item.next_retry_time = current_time + delay
+                                item.timestamp = item.next_retry_time  # 更新计划时间为下次重试时间
+                                item.retry_count += 1
+                                logger.warning(f"未找到媒体项目，将在 {delay/3600:.1f} 小时后重试 (第{item.retry_count}次): {item.strm_path}")
+                            else:
+                                logger.error(f"未找到媒体项目，超过最大重试次数，不再尝试: {item.strm_path}")
                     
                     except Exception as e:
-                        # 处理过程中的错误
+                        # 处理过程中出错，设置为失败状态
                         item.status = "failed"
                         item.last_error = str(e)
-                        item.retry_count += 1
-                        failed_count += 1
                         
+                        # 设置下次重试时间
                         if item.retry_count < self.max_retries:
-                            delay = self.retry_delays[min(item.retry_count, len(self.retry_delays) - 1)]
-                            item.timestamp = current_time + delay
-                            logger.error(f"处理刷新项目时出错: {item.strm_path}, 错误: {str(e)}")
-                    
-                    processed_items.append(item)
-                    await asyncio.sleep(1)  # 防止API调用过于频繁
-            
-            # 保存队列
-            if processed_items:
-                self._save_refresh_queue()
-                logger.info(f"已处理 {len(processed_items)} 个刷新项目，成功: {success_count}，失败: {failed_count}")
-                
-                # 发送处理结果通知
-                if service_manager.telegram_service:
-                    summary_msg = f"📊 Emby刷库完成\n成功: {success_count} 个\n失败: {failed_count} 个"
-                    
-                    # 如果成功刷新了项目，添加到通知
-                    if refreshed_items:
-                        # 如果项目太多，只显示前10个
-                        if len(refreshed_items) > 10:
-                            refreshed_info = "\n".join(refreshed_items[:10]) + f"\n...等共 {len(refreshed_items)} 个项目"
+                            delay = self.retry_delays[item.retry_count]
+                            item.next_retry_time = current_time + delay
+                            item.timestamp = item.next_retry_time  # 更新计划时间为下次重试时间
+                            item.retry_count += 1
+                            logger.error(f"处理刷新项目时出错，将在 {delay/3600:.1f} 小时后重试 (第{item.retry_count}次): {item.strm_path}, 错误: {str(e)}")
                         else:
-                            refreshed_info = "\n".join(refreshed_items)
-                        
-                        summary_msg += f"\n\n刷新的项目:\n{refreshed_info}"
+                            logger.error(f"处理刷新项目时出错，超过最大重试次数，不再尝试: {item.strm_path}, 错误: {str(e)}")
                     
-                    await service_manager.telegram_service.send_message(summary_msg)
+                    # 保存队列
+                    self._save_refresh_queue()
+                    
+                    # 添加一点延迟，避免过快请求
+                    await asyncio.sleep(1)
             
-            # 清理成功且已完成的项目
-            if len(self.refresh_queue) > 1000:  # 如果队列太长，清理已完成的项目
-                self.refresh_queue = [
-                    item for item in self.refresh_queue 
-                    if not (item.status == "success" and item.retry_count == 0)
-                ]
-                logger.info(f"已清理队列，剩余 {len(self.refresh_queue)} 个项目")
+            # 更新失败项的重试时间
+            if processed_count > 0:
+                # 检查是否有需要重试的项目，并设置它们的时间戳
+                for item in self.refresh_queue:
+                    if item.status == "failed" and item.retry_count < self.max_retries:
+                        # 下次处理时间已经在上面设置好了，不需要再次设置
+                        pass
+                
+                # 保存队列
                 self._save_refresh_queue()
             
-        except Exception as e:
-            logger.error(f"处理刷新队列时出错: {str(e)}")
+            logger.info(f"完成队列处理，共处理 {processed_count} 个项目，成功 {success_count} 个")
+        
         finally:
             self._is_processing = False
     
@@ -1085,4 +1062,36 @@ class EmbyService:
             return {
                 "success": False,
                 "message": f"清空刷新队列失败: {str(e)}"
-            } 
+            }
+
+    # 添加获取单个媒体项的方法
+    async def get_item(self, item_id: str) -> Optional[Dict]:
+        """通过ID获取Emby媒体项目的详细信息"""
+        try:
+            # 确保emby_url是合法的URL
+            if not self.emby_url or not self.emby_url.startswith(('http://', 'https://')):
+                logger.error(f"无效的Emby API URL: {self.emby_url}")
+                return None
+                
+            # 构建API URL
+            url = f"{self.emby_url}/Items/{item_id}"
+            params = {
+                "api_key": self.api_key,
+                "Fields": "Path,ParentId,Overview,Studios,Genres,People,ProductionYear,PremiereDate,ImageTags"
+            }
+            
+            # 发送请求
+            async with httpx.AsyncClient() as client:
+                logger.debug(f"获取Emby项目详情: ID={item_id}")
+                response = await client.get(url, params=params, timeout=30)
+                
+                if response.status_code == 200:
+                    item_data = response.json()
+                    logger.debug(f"成功获取Emby项目: {item_data.get('Name', '未知')}")
+                    return item_data
+                else:
+                    logger.error(f"获取Emby项目失败, 状态码: {response.status_code}, 响应: {response.text[:200]}")
+                    return None
+        except Exception as e:
+            logger.error(f"获取Emby项目失败, ID={item_id}, 错误: {str(e)}")
+            return None 

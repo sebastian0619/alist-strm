@@ -922,28 +922,117 @@ async def get_emby_refresh_status():
         success = sum(1 for item in queue if item.status == "success")
         failed = sum(1 for item in queue if item.status == "failed")
         
-        # 获取最近5个成功项目和5个失败项目
+        # 获取成功项目和失败项目（扩展返回信息，提供更多细节）
         success_items = []
         for item in queue:
-            if item.status == "success" and len(success_items) < 5:
-                emby_item = await service_manager.emby_service.find_emby_item(item.strm_path)
-                if emby_item:
-                    success_items.append({
+            if item.status == "success":
+                try:
+                    emby_item = await service_manager.emby_service.find_emby_item(item.strm_path)
+                    emby_details = {
                         "path": item.strm_path,
                         "name": emby_item.get("Name", "未知"),
+                        "type": emby_item.get("Type", "未知"),
+                        "id": emby_item.get("Id", ""),
+                        "year": emby_item.get("ProductionYear", ""),
+                        "refresh_time": datetime.fromtimestamp(item.timestamp).strftime("%Y-%m-%d %H:%M:%S"),
+                        "image_tag": emby_item.get("ImageTags", {}).get("Primary", "")
+                    }
+                    
+                    # 获取父级信息（针对剧集）
+                    if emby_item.get("Type") == "Episode":
+                        try:
+                            series_id = emby_item.get("SeriesId")
+                            if series_id:
+                                series = await service_manager.emby_service.get_item(series_id)
+                                emby_details["series_name"] = series.get("Name", "")
+                                emby_details["season_number"] = emby_item.get("ParentIndexNumber", 0)
+                                emby_details["episode_number"] = emby_item.get("IndexNumber", 0)
+                                emby_details["display_name"] = f"{emby_details['series_name']} S{emby_details['season_number']:02d}E{emby_details['episode_number']:02d} - {emby_details['name']}"
+                        except Exception as e:
+                            logger.error(f"获取剧集父级信息失败: {str(e)}")
+                    
+                    # 设置显示名称
+                    if "display_name" not in emby_details:
+                        if emby_details["type"] == "Movie" and emby_details["year"]:
+                            emby_details["display_name"] = f"{emby_details['name']} ({emby_details['year']})"
+                        else:
+                            emby_details["display_name"] = emby_details['name']
+                    
+                    success_items.append(emby_details)
+                except Exception as e:
+                    # 如果获取详情失败，添加基本信息
+                    logger.error(f"获取Emby项目详情失败: {str(e)}")
+                    success_items.append({
+                        "path": item.strm_path,
+                        "name": os.path.basename(item.strm_path),
+                        "display_name": os.path.basename(item.strm_path),
+                        "type": "未知",
                         "refresh_time": datetime.fromtimestamp(item.timestamp).strftime("%Y-%m-%d %H:%M:%S")
                     })
         
+        # 获取失败项目
         failed_items = []
         for item in queue:
-            if item.status == "failed" and len(failed_items) < 5:
-                failed_items.append({
+            if item.status == "failed":
+                failed_info = {
                     "path": item.strm_path,
+                    "display_name": os.path.basename(item.strm_path),
                     "error": item.last_error,
                     "retry_count": item.retry_count,
-                    "next_retry": datetime.fromtimestamp(item.timestamp).strftime("%Y-%m-%d %H:%M:%S") if item.retry_count < service_manager.emby_service.max_retries else "不再重试"
-                })
+                    "max_retries": service_manager.emby_service.max_retries,
+                    "next_retry": datetime.fromtimestamp(item.next_retry_time).strftime("%Y-%m-%d %H:%M:%S") if item.retry_count < service_manager.emby_service.max_retries else "不再重试",
+                    "failed_time": datetime.fromtimestamp(item.timestamp).strftime("%Y-%m-%d %H:%M:%S")
+                }
                 
+                # 尝试解析文件名获取更多信息
+                filename = os.path.basename(item.strm_path)
+                name, _ = os.path.splitext(filename)
+                
+                # 尝试匹配电视剧模式 (例如: "Show Name S01E02")
+                tv_match = re.search(r'^(.+?)[.\s]+S(\d+)E(\d+)', name, re.IGNORECASE)
+                movie_match = re.search(r'^(.+?)(?:\s*\((\d{4})\))?$', name)
+                
+                if tv_match:
+                    failed_info["type"] = "Episode"
+                    failed_info["series_name"] = tv_match.group(1).replace(".", " ").strip()
+                    failed_info["season_number"] = int(tv_match.group(2))
+                    failed_info["episode_number"] = int(tv_match.group(3))
+                    failed_info["display_name"] = f"{failed_info['series_name']} S{failed_info['season_number']:02d}E{failed_info['episode_number']:02d}"
+                elif movie_match:
+                    failed_info["type"] = "Movie"
+                    failed_info["movie_name"] = movie_match.group(1).replace(".", " ").strip()
+                    failed_info["year"] = movie_match.group(2) if movie_match.group(2) else ""
+                    if failed_info["year"]:
+                        failed_info["display_name"] = f"{failed_info['movie_name']} ({failed_info['year']})"
+                    else:
+                        failed_info["display_name"] = failed_info['movie_name']
+                
+                failed_items.append(failed_info)
+        
+        # 按时间排序
+        success_items.sort(key=lambda x: x.get("refresh_time", ""), reverse=True)
+        failed_items.sort(key=lambda x: x.get("failed_time", ""), reverse=True)
+        
+        # 获取所有队列项（可选择提供更多详细列表或分页功能）
+        # 注意：这里只返回基本信息，前端可以提供专门的接口来获取完整队列
+        queue_items = []
+        for item in queue:
+            filename = os.path.basename(item.strm_path)
+            name, _ = os.path.splitext(filename)
+            queue_items.append({
+                "path": item.strm_path,
+                "name": name,
+                "status": item.status,
+                "timestamp": item.timestamp,
+                "time_str": datetime.fromtimestamp(item.timestamp).strftime("%Y-%m-%d %H:%M:%S"),
+                "retry_count": item.retry_count if hasattr(item, "retry_count") else 0,
+                "error": item.last_error if item.status == "failed" else None
+            })
+        
+        # 按状态和时间排序
+        status_order = {"processing": 0, "pending": 1, "failed": 2, "success": 3}
+        queue_items.sort(key=lambda x: (status_order.get(x["status"], 999), -x["timestamp"]))
+        
         return {
             "enabled": True,
             "is_processing": service_manager.emby_service._is_processing,
@@ -954,8 +1043,10 @@ async def get_emby_refresh_status():
                 "success": success,
                 "failed": failed
             },
-            "recent_success": success_items,
-            "recent_failed": failed_items
+            "recent_success": success_items[:10],  # 返回最近10个成功项目
+            "recent_failed": failed_items[:10],    # 返回最近10个失败项目
+            "queue_items": queue_items[:20],       # 返回最近20个队列项目
+            "last_update": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
     except Exception as e:
         logger.error(f"获取Emby刷新队列状态失败: {str(e)}")
@@ -1174,6 +1265,143 @@ async def clear_emby_refresh_queue():
     """清空Emby刷新队列"""
     service_manager.emby_service.clear_refresh_queue()
     return {"status": "success", "message": "Emby刷新队列已清空"}
+
+@router.get("/emby/refresh/queue")
+async def get_emby_refresh_queue(
+    status: Optional[str] = Query(None, description="过滤状态: pending, processing, success, failed"),
+    page: int = Query(1, description="页码，从1开始"),
+    page_size: int = Query(20, description="每页项目数量"),
+    sort_by: str = Query("timestamp", description="排序字段: timestamp, path, status"),
+    sort_order: str = Query("desc", description="排序方向: asc, desc")
+):
+    """获取完整的Emby刷新队列"""
+    try:
+        # 检查服务是否开启
+        if not service_manager.emby_service.emby_enabled:
+            return {
+                "enabled": False,
+                "message": "Emby刷库功能未启用"
+            }
+            
+        # 获取刷新队列
+        queue = service_manager.emby_service.refresh_queue
+        
+        # 转换为可读格式
+        queue_items = []
+        for item in queue:
+            # 基本文件信息
+            filename = os.path.basename(item.strm_path)
+            name, _ = os.path.splitext(filename)
+            
+            # 创建项目信息
+            queue_item = {
+                "path": item.strm_path,
+                "name": name,
+                "filename": filename,
+                "status": item.status,
+                "timestamp": item.timestamp,
+                "time_str": datetime.fromtimestamp(item.timestamp).strftime("%Y-%m-%d %H:%M:%S"),
+                "retry_count": item.retry_count if hasattr(item, "retry_count") else 0,
+                "max_retries": service_manager.emby_service.max_retries
+            }
+            
+            # 添加状态特定信息
+            if item.status == "failed":
+                queue_item["error"] = item.last_error
+                # 计算下次重试时间
+                if hasattr(item, "next_retry_time"):
+                    queue_item["next_retry_time"] = item.next_retry_time
+                    queue_item["next_retry_str"] = datetime.fromtimestamp(item.next_retry_time).strftime("%Y-%m-%d %H:%M:%S") if item.retry_count < service_manager.emby_service.max_retries else "不再重试"
+            
+            # 尝试从文件名解析媒体信息
+            # 尝试匹配电视剧模式 (例如: "Show Name S01E02")
+            tv_match = re.search(r'^(.+?)[.\s]+S(\d+)E(\d+)', name, re.IGNORECASE)
+            movie_match = re.search(r'^(.+?)(?:\s*\((\d{4})\))?$', name)
+            
+            if tv_match:
+                queue_item["media_type"] = "Episode"
+                queue_item["series_name"] = tv_match.group(1).replace(".", " ").strip()
+                queue_item["season_number"] = int(tv_match.group(2))
+                queue_item["episode_number"] = int(tv_match.group(3))
+                queue_item["display_name"] = f"{queue_item['series_name']} S{queue_item['season_number']:02d}E{queue_item['episode_number']:02d}"
+            elif movie_match:
+                queue_item["media_type"] = "Movie"
+                queue_item["movie_name"] = movie_match.group(1).replace(".", " ").strip()
+                queue_item["year"] = movie_match.group(2) if movie_match.group(2) else ""
+                if queue_item["year"]:
+                    queue_item["display_name"] = f"{queue_item['movie_name']} ({queue_item['year']})"
+                else:
+                    queue_item["display_name"] = queue_item['movie_name']
+            else:
+                queue_item["display_name"] = name
+            
+            # 如果是成功状态，尝试获取Emby中的实际信息
+            if item.status == "success":
+                try:
+                    emby_item = await service_manager.emby_service.find_emby_item(item.strm_path)
+                    if emby_item:
+                        queue_item["emby_id"] = emby_item.get("Id")
+                        queue_item["emby_name"] = emby_item.get("Name")
+                        queue_item["emby_type"] = emby_item.get("Type")
+                        queue_item["emby_year"] = emby_item.get("ProductionYear", "")
+                        
+                        # 更新显示名称
+                        if emby_item.get("Type") == "Episode":
+                            try:
+                                series_id = emby_item.get("SeriesId")
+                                if series_id:
+                                    series = await service_manager.emby_service.get_item(series_id)
+                                    queue_item["series_name"] = series.get("Name", "")
+                                    queue_item["season_number"] = emby_item.get("ParentIndexNumber", 0)
+                                    queue_item["episode_number"] = emby_item.get("IndexNumber", 0)
+                                    queue_item["display_name"] = f"{queue_item['series_name']} S{queue_item['season_number']:02d}E{queue_item['episode_number']:02d} - {emby_item.get('Name')}"
+                            except Exception as e:
+                                logger.warning(f"获取剧集详情失败: {str(e)}")
+                        elif emby_item.get("Type") == "Movie" and emby_item.get("ProductionYear"):
+                            queue_item["display_name"] = f"{emby_item.get('Name')} ({emby_item.get('ProductionYear')})"
+                        else:
+                            queue_item["display_name"] = emby_item.get("Name")
+                except Exception as e:
+                    logger.warning(f"获取Emby项目详情失败: {str(e)}")
+            
+            queue_items.append(queue_item)
+        
+        # 过滤
+        if status:
+            queue_items = [item for item in queue_items if item["status"] == status]
+        
+        # 排序
+        reverse = sort_order.lower() == "desc"
+        if sort_by == "timestamp":
+            queue_items.sort(key=lambda x: x["timestamp"], reverse=reverse)
+        elif sort_by == "path":
+            queue_items.sort(key=lambda x: x["path"], reverse=reverse)
+        elif sort_by == "status":
+            status_order = {"processing": 0, "pending": 1, "failed": 2, "success": 3}
+            if reverse:
+                queue_items.sort(key=lambda x: (-status_order.get(x["status"], 999), -x["timestamp"]))
+            else:
+                queue_items.sort(key=lambda x: (status_order.get(x["status"], 999), x["timestamp"]))
+        
+        # 分页
+        total = len(queue_items)
+        start = (page - 1) * page_size
+        end = start + page_size
+        paginated_items = queue_items[start:end]
+        
+        return {
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": (total + page_size - 1) // page_size,
+            "items": paginated_items,
+            "status_filter": status,
+            "sort_by": sort_by,
+            "sort_order": sort_order
+        }
+    except Exception as e:
+        logger.error(f"获取Emby刷新队列详情失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"获取刷新队列详情失败: {str(e)}")
 
 @router.post("/strm/delete")
 async def delete_strm_files(paths: List[str] = Body(..., description="要删除的STRM文件路径列表")):
