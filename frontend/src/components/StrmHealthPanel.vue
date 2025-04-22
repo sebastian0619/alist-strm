@@ -1114,6 +1114,13 @@ const refreshEmbyStatus = async () => {
     const response = await fetch('/api/health/emby/refresh/status')
     if (response.ok) {
       const data = await response.json()
+      // 添加错误处理
+      if (data.error) {
+        console.error("获取刷新状态错误:", data.error);
+        message.error("获取Emby刷新状态失败: " + data.error);
+        return;
+      }
+      
       embyStatus.value = data
       
       // 设置下次刷新时间（60秒后）
@@ -1209,6 +1216,8 @@ const getStatusColor = (status) => {
 
 // 获取Emby媒体类型标签和颜色
 const getEmbyTypeLabel = (type) => {
+  if (!type) return '未知类型';
+  
   const labels = {
     'Movie': '电影',
     'Series': '剧集',
@@ -1216,12 +1225,15 @@ const getEmbyTypeLabel = (type) => {
     'Episode': '剧集',
     'MusicVideo': '音乐视频',
     'Audio': '音频',
-    'Video': '视频'
+    'Video': '视频',
+    '已删除': '已删除'
   }
   return labels[type] || type || '未知'
 }
 
 const getEmbyTypeColor = (type) => {
+  if (!type) return '#8c8c8c';
+  
   const colors = {
     'Movie': '#722ed1',
     'Series': '#13c2c2',
@@ -1229,7 +1241,8 @@ const getEmbyTypeColor = (type) => {
     'Episode': '#13c2c2',
     'MusicVideo': '#eb2f96',
     'Audio': '#fa8c16',
-    'Video': '#1890ff'
+    'Video': '#1890ff',
+    '已删除': '#5c5c5c'
   }
   return colors[type] || '#8c8c8c'
 }

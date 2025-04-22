@@ -447,8 +447,13 @@ class EmbyService:
             encoded_name = quote(name)
             logger.info(f"【请求准备】原始搜索名称: '{name}', URL编码后: '{encoded_name}'")
             
-            # 构建搜索API URL
-            url = f"{self.emby_url}/Items"
+            # 构建搜索API URL - 修复路径重复问题
+            base_url = self.emby_url
+            if base_url.endswith('/'):
+                base_url = base_url[:-1]  # 移除末尾的斜杠
+                
+            url = f"{base_url}/Items"
+            
             params = {
                 "api_key": self.api_key,
                 "SearchTerm": encoded_name,  # 使用编码后的名称
@@ -616,6 +621,7 @@ class EmbyService:
                     logger.info(f"  [{idx+1}] 类型: {item.get('Type')}, 名称: {item.get('Name')}, ID: {item.get('Id')}")
             else:
                 logger.warning(f"搜索系列'{series_name}'没有结果")
+                return None
             
             # 找到匹配的系列
             for item in series_items:
@@ -634,40 +640,54 @@ class EmbyService:
                 logger.warning(f"未找到系列: {series_name}")
                 return None
             
+            # 构建基础URL
+            base_url = self.emby_url
+            if base_url.endswith('/'):
+                base_url = base_url[:-1]  # 移除末尾的斜杠
+                
             # 查找该系列的季
-            url = f"{self.emby_url}/Shows/{series_id}/Seasons"
-            params = {"api_key": self.api_key}
-            
-            # 构建完整URL用于调试（包含参数）
-            full_url = f"{url}?{urlencode(params)}"
-            # 隐藏API密钥用于日志显示
-            display_url = full_url.replace(self.api_key, "API_KEY_HIDDEN")
-            
-            logger.info(f"获取系列{series_id}的季列表: 完整URL={display_url}")
-            
-            async with httpx.AsyncClient() as client:
-                response = await client.get(url, params=params, timeout=30)
+            try:
+                # 修复URL拼接 
+                url = f"{base_url}/Shows/{series_id}/Seasons"
+                params = {"api_key": self.api_key}
                 
-                if response.status_code != 200:
-                    logger.error(f"获取季失败: 状态码={response.status_code}, 响应={response.text[:200]}")
-                    logger.error(f"请求URL: {display_url}")
-                    return None
+                # 构建完整URL用于调试（包含参数）
+                full_url = f"{url}?{urlencode(params)}"
+                # 隐藏API密钥用于日志显示
+                display_url = full_url.replace(self.api_key, "API_KEY_HIDDEN")
                 
-                seasons_data = response.json()
-                seasons = seasons_data.get("Items", [])
+                logger.info(f"获取系列{series_id}的季列表: 完整URL={display_url}")
                 
-                # 记录找到的季
-                logger.info(f"系列{series_id}有 {len(seasons)} 个季")
-                for s in seasons:
-                    logger.info(f"  - 季 {s.get('IndexNumber', '未知')}: {s.get('Name')} (ID: {s.get('Id')})")
-                
-                # 找到对应的季
-                season_id = None
-                for season in seasons:
-                    if season.get("IndexNumber") == season_num:
-                        season_id = season.get("Id")
-                        logger.info(f"找到季: {season.get('Name')} (ID: {season_id})")
-                        break
+                async with httpx.AsyncClient() as client:
+                    response = await client.get(url, params=params, timeout=30)
+                    
+                    if response.status_code != 200:
+                        logger.error(f"获取季失败: 状态码={response.status_code}, 响应={response.text[:200]}")
+                        logger.error(f"请求URL: {display_url}")
+                        return None
+                    
+                    seasons_data = response.json()
+                    seasons = seasons_data.get("Items", [])
+                    
+                    # 记录找到的季
+                    if seasons:
+                        logger.info(f"系列{series_id}有 {len(seasons)} 个季")
+                        for s in seasons:
+                            logger.info(f"  - 季 {s.get('IndexNumber', '未知')}: {s.get('Name')} (ID: {s.get('Id')})")
+                    else:
+                        logger.warning(f"系列{series_id}没有季数据")
+                        return None
+                    
+                    # 找到对应的季
+                    season_id = None
+                    for season in seasons:
+                        if season.get("IndexNumber") == season_num:
+                            season_id = season.get("Id")
+                            logger.info(f"找到季: {season.get('Name')} (ID: {season_id})")
+                            break
+            except Exception as e:
+                logger.error(f"获取季列表失败: {str(e)}")
+                return None
             
             if not season_id:
                 logger.warning(f"未找到季: {series_name} S{season_num:02d}, 尝试强制使用第一个季")
@@ -675,43 +695,53 @@ class EmbyService:
                     season_id = seasons[0].get("Id")
                     logger.info(f"强制使用第一个季: {seasons[0].get('Name')} (ID: {season_id})")
                 else:
+                    logger.warning("无可用季，无法继续查找剧集")
                     return None
             
             # 查找该季的集
-            url = f"{self.emby_url}/Shows/{series_id}/Episodes"
-            params = {
-                "api_key": self.api_key,
-                "SeasonId": season_id
-            }
-            
-            # 构建完整URL用于调试（包含参数）
-            full_url = f"{url}?{urlencode(params)}"
-            # 隐藏API密钥用于日志显示
-            display_url = full_url.replace(self.api_key, "API_KEY_HIDDEN")
-            
-            logger.info(f"获取季{season_id}的剧集列表: 完整URL={display_url}")
-            
-            async with httpx.AsyncClient() as client:
-                response = await client.get(url, params=params, timeout=30)
+            try:
+                # 修复URL拼接
+                url = f"{base_url}/Shows/{series_id}/Episodes"
+                params = {
+                    "api_key": self.api_key,
+                    "SeasonId": season_id
+                }
                 
-                if response.status_code != 200:
-                    logger.error(f"获取剧集失败: 状态码={response.status_code}, 响应={response.text[:200]}")
-                    logger.error(f"请求URL: {display_url}")
-                    return None
+                # 构建完整URL用于调试（包含参数）
+                full_url = f"{url}?{urlencode(params)}"
+                # 隐藏API密钥用于日志显示
+                display_url = full_url.replace(self.api_key, "API_KEY_HIDDEN")
                 
-                episodes_data = response.json()
-                episodes = episodes_data.get("Items", [])
+                logger.info(f"获取季{season_id}的剧集列表: 完整URL={display_url}")
                 
-                # 记录找到的集
-                logger.info(f"季{season_id}有 {len(episodes)} 个剧集")
-                for ep in episodes:
-                    logger.info(f"  - 集 {ep.get('IndexNumber', '未知')}: {ep.get('Name')} (ID: {ep.get('Id')})")
-                
-                # 找到对应的集
-                for episode in episodes:
-                    if episode.get("IndexNumber") == episode_num:
-                        logger.info(f"找到剧集: {episode.get('Name')} (ID: {episode.get('Id')})")
-                        return episode
+                async with httpx.AsyncClient() as client:
+                    response = await client.get(url, params=params, timeout=30)
+                    
+                    if response.status_code != 200:
+                        logger.error(f"获取剧集失败: 状态码={response.status_code}, 响应={response.text[:200]}")
+                        logger.error(f"请求URL: {display_url}")
+                        return None
+                    
+                    episodes_data = response.json()
+                    episodes = episodes_data.get("Items", [])
+                    
+                    # 记录找到的集
+                    if episodes:
+                        logger.info(f"季{season_id}有 {len(episodes)} 个剧集")
+                        for ep in episodes:
+                            logger.info(f"  - 集 {ep.get('IndexNumber', '未知')}: {ep.get('Name')} (ID: {ep.get('Id')})")
+                    else:
+                        logger.warning(f"季{season_id}没有剧集数据")
+                        return None
+                    
+                    # 找到对应的集
+                    for episode in episodes:
+                        if episode.get("IndexNumber") == episode_num:
+                            logger.info(f"找到剧集: {episode.get('Name')} (ID: {episode.get('Id')})")
+                            return episode
+            except Exception as e:
+                logger.error(f"获取剧集列表失败: {str(e)}")
+                return None
             
             logger.warning(f"未找到剧集: {series_name} S{season_num:02d}E{episode_num:02d}")
             return None
@@ -747,50 +777,60 @@ class EmbyService:
                 logger.info(f"从目录提取的系列名称: {series_from_dir}")
                 
                 series_name = media_info.get("series_name")
-                logger.info(f"使用系列名称: {series_name} (从文件名) vs {series_from_dir} (从目录)")
-                
-                # 检查从文件名提取的系列名称是否可能不准确
-                if len(series_name) < 4 and len(series_from_dir) > len(series_name):
-                    logger.info(f"文件名中的系列名称可能不准确，改用目录名: {series_from_dir}")
-                    series_name = series_from_dir
-                    media_info["series_name"] = series_from_dir
+                if series_name:  # 确保series_name不为None
+                    logger.info(f"使用系列名称: {series_name} (从文件名) vs {series_from_dir} (从目录)")
+                    
+                    # 检查从文件名提取的系列名称是否可能不准确
+                    if len(series_name) < 4 and len(series_from_dir) > len(series_name):
+                        logger.info(f"文件名中的系列名称可能不准确，改用目录名: {series_from_dir}")
+                        series_name = series_from_dir
+                        media_info["series_name"] = series_from_dir
             
             # 根据媒体类型使用不同的查找策略
             if media_info.get("type") == "Episode":
                 # 查找剧集
                 if media_info.get("series_name"):
                     logger.info(f"尝试查找系列: {media_info.get('series_name')}")
-                    episode = await self.find_episode_by_info(
-                        media_info.get("series_name", ""),
-                        media_info.get("season", 1),
-                        media_info.get("episode", 1)
-                    )
-                    
-                    if episode:
-                        logger.info(f"成功找到剧集: {episode.get('Name')}")
-                        return episode
-                    else:
-                        logger.warning(f"未找到剧集，尝试使用目录名称查找系列")
-                        # 尝试使用目录名称
-                        series_from_dir = series_dir.split(" (")[0] if " (" in series_dir else series_dir
+                    try:
                         episode = await self.find_episode_by_info(
-                            series_from_dir,
+                            media_info.get("series_name", ""),
                             media_info.get("season", 1),
                             media_info.get("episode", 1)
                         )
+                        
                         if episode:
-                            logger.info(f"使用目录名成功找到剧集: {episode.get('Name')}")
+                            logger.info(f"成功找到剧集: {episode.get('Name')}")
                             return episode
+                        else:
+                            logger.warning(f"未找到剧集，尝试使用目录名称查找系列")
+                            # 尝试使用目录名称
+                            series_from_dir = series_dir.split(" (")[0] if " (" in series_dir else series_dir
+                            try:
+                                episode = await self.find_episode_by_info(
+                                    series_from_dir,
+                                    media_info.get("season", 1),
+                                    media_info.get("episode", 1)
+                                )
+                                if episode:
+                                    logger.info(f"使用目录名成功找到剧集: {episode.get('Name')}")
+                                    return episode
+                            except Exception as e:
+                                logger.error(f"使用目录名查找剧集失败: {str(e)}")
+                    except Exception as e:
+                        logger.error(f"查找剧集时出错: {str(e)}")
                 else:
                     # 没有具体的剧集信息，尝试搜索名称
                     tv_name = media_info.get("name", "")
                     if tv_name:
                         logger.info(f"没有剧集信息，尝试直接搜索TV名称: {tv_name}")
-                        tv_items = await self.search_by_name(tv_name)
-                        for item in tv_items:
-                            if item.get("Type") in ["Series", "Episode"]:
-                                logger.info(f"找到TV项目: {item.get('Name')}")
-                                return item
+                        try:
+                            tv_items = await self.search_by_name(tv_name)
+                            for item in tv_items:
+                                if item.get("Type") in ["Series", "Episode"]:
+                                    logger.info(f"找到TV项目: {item.get('Name')}")
+                                    return item
+                        except Exception as e:
+                            logger.error(f"搜索TV名称失败: {str(e)}")
             elif media_info.get("type") == "Movie":
                 # 查找电影
                 movie_title = media_info.get("title", "") or media_info.get("name", "")
@@ -798,54 +838,67 @@ class EmbyService:
                 
                 logger.info(f"尝试查找电影: {movie_title} ({movie_year if movie_year else '未知年份'})")
                 
-                # 通过标题和年份搜索电影
-                movie_items = await self.search_by_name(movie_title)
-                
-                # 过滤匹配项
-                for item in movie_items:
-                    if item.get("Type") == "Movie" and item.get("Name", "").lower() == movie_title.lower():
-                        # 如果有年份，进一步匹配年份
-                        if movie_year and item.get("ProductionYear") == movie_year:
-                            logger.info(f"找到完全匹配的电影: {item.get('Name')} ({item.get('ProductionYear')})")
+                try:
+                    # 通过标题和年份搜索电影
+                    movie_items = await self.search_by_name(movie_title)
+                    
+                    # 过滤匹配项
+                    for item in movie_items:
+                        if item.get("Type") == "Movie" and item.get("Name", "").lower() == movie_title.lower():
+                            # 如果有年份，进一步匹配年份
+                            if movie_year and item.get("ProductionYear") == movie_year:
+                                logger.info(f"找到完全匹配的电影: {item.get('Name')} ({item.get('ProductionYear')})")
+                                return item
+                    
+                    # 如果没有完全匹配，返回第一个类型为Movie的结果
+                    for item in movie_items:
+                        if item.get("Type") == "Movie":
+                            logger.info(f"找到最接近的电影: {item.get('Name')} ({item.get('ProductionYear', '未知')})")
                             return item
-                
-                # 如果没有完全匹配，返回第一个类型为Movie的结果
-                for item in movie_items:
-                    if item.get("Type") == "Movie":
-                        logger.info(f"找到最接近的电影: {item.get('Name')} ({item.get('ProductionYear', '未知')})")
-                        return item
-                
-                # 尝试更简化的搜索（如果电影名称中包含冒号，尝试只搜索冒号前的部分）
-                if "：" in movie_title or ":" in movie_title:
-                    simple_title = re.split(r'[：:]', movie_title)[0].strip()
-                    if simple_title and len(simple_title) >= 2 and simple_title != movie_title:
-                        logger.info(f"尝试使用简化电影标题搜索: '{movie_title}' -> '{simple_title}'")
-                        simple_items = await self.search_by_name(simple_title)
-                        
-                        # 检查简化搜索结果
-                        if simple_items:
-                            for item in simple_items:
-                                if item.get("Type") == "Movie":
-                                    logger.info(f"使用简化标题找到电影: {item.get('Name')}")
-                                    return item
+                    
+                    # 尝试更简化的搜索（如果电影名称中包含冒号，尝试只搜索冒号前的部分）
+                    if "：" in movie_title or ":" in movie_title:
+                        simple_title = re.split(r'[：:]', movie_title)[0].strip()
+                        if simple_title and len(simple_title) >= 2 and simple_title != movie_title:
+                            logger.info(f"尝试使用简化电影标题搜索: '{movie_title}' -> '{simple_title}'")
+                            try:
+                                simple_items = await self.search_by_name(simple_title)
+                                
+                                # 检查简化搜索结果
+                                if simple_items:
+                                    for item in simple_items:
+                                        if item.get("Type") == "Movie":
+                                            logger.info(f"使用简化标题找到电影: {item.get('Name')}")
+                                            return item
+                            except Exception as e:
+                                logger.error(f"简化标题搜索失败: {str(e)}")
+                except Exception as e:
+                    logger.error(f"搜索电影失败: {str(e)}")
             else:
                 # 尝试直接搜索
                 search_name = media_info.get("name", "")
-                logger.info(f"使用文件名直接搜索: {search_name}")
-                items = await self.search_by_name(search_name)
-                if items:
-                    # 返回第一个结果
-                    logger.info(f"搜索到结果: {items[0].get('Name')} (类型: {items[0].get('Type')})")
-                    return items[0]
+                if search_name:
+                    logger.info(f"使用文件名直接搜索: {search_name}")
+                    try:
+                        items = await self.search_by_name(search_name)
+                        if items:
+                            # 返回第一个结果
+                            logger.info(f"搜索到结果: {items[0].get('Name')} (类型: {items[0].get('Type')})")
+                            return items[0]
+                    except Exception as e:
+                        logger.error(f"直接搜索失败: {str(e)}")
             
             # 旧的查找方法作为备选
-            emby_path = self.convert_to_emby_path(strm_path)
-            if emby_path:
-                logger.info(f"使用路径转换结果查找: {strm_path} -> {emby_path}")
-                item = await self.query_item_by_path(emby_path)
-                if item:
-                    logger.info(f"通过路径找到Emby项目: {strm_path} -> {item.get('Id')}")
-                    return item
+            try:
+                emby_path = self.convert_to_emby_path(strm_path)
+                if emby_path:
+                    logger.info(f"使用路径转换结果查找: {strm_path} -> {emby_path}")
+                    item = await self.query_item_by_path(emby_path)
+                    if item:
+                        logger.info(f"通过路径找到Emby项目: {strm_path} -> {item.get('Id')}")
+                        return item
+            except Exception as e:
+                logger.error(f"通过路径查找失败: {str(e)}")
             
             logger.warning(f"无法找到Emby项目: {strm_path}")
             return None
@@ -861,8 +914,14 @@ class EmbyService:
                 logger.error(f"无效的Emby API URL: {self.emby_url}")
                 return False
             
-            # 构建API URL
-            url = f"{self.emby_url}/Items/{item_id}/Refresh"
+            # 构建API URL - 修复路径重复问题
+            base_url = self.emby_url
+            if base_url.endswith('/'):
+                base_url = base_url[:-1]  # 移除末尾的斜杠
+                
+            # 检查并调整API路径
+            url = f"{base_url}/Items/{item_id}/Refresh"
+            
             params = {
                 "api_key": self.api_key,
                 "Recursive": "true",
@@ -1064,6 +1123,39 @@ class EmbyService:
                 "message": f"清空刷新队列失败: {str(e)}"
             }
 
+    def clean_failed_refresh_queue(self):
+        """清理失败的刷新队列项，移除404错误项"""
+        try:
+            # 记录当前队列大小
+            queue_size = len(self.refresh_queue)
+            logger.info(f"开始清理失败的刷新队列项，当前队列大小: {queue_size}")
+            
+            # 移除404错误的项目
+            old_queue = self.refresh_queue.copy()
+            self.refresh_queue = [
+                item for item in old_queue 
+                if not (item.status == "failed" and item.last_error and "404" in item.last_error)
+            ]
+            
+            # 保存更新后的队列
+            self._save_refresh_queue()
+            
+            removed_count = queue_size - len(self.refresh_queue)
+            logger.info(f"已清理失败的刷新队列项，移除了 {removed_count} 个404错误项，剩余 {len(self.refresh_queue)} 个项目")
+            
+            return {
+                "success": True, 
+                "message": f"已清理队列中的404错误项，移除了 {removed_count} 个项目",
+                "removed_count": removed_count,
+                "remaining_count": len(self.refresh_queue)
+            }
+        except Exception as e:
+            logger.error(f"清理失败的刷新队列项失败: {str(e)}")
+            return {
+                "success": False,
+                "message": f"清理失败: {str(e)}"
+            }
+
     # 添加获取单个媒体项的方法
     async def get_item(self, item_id: str) -> Optional[Dict]:
         """通过ID获取Emby媒体项目的详细信息"""
@@ -1072,9 +1164,19 @@ class EmbyService:
             if not self.emby_url or not self.emby_url.startswith(('http://', 'https://')):
                 logger.error(f"无效的Emby API URL: {self.emby_url}")
                 return None
+                    
+            # 构建API URL - 修复路径重复问题
+            # 检查URL是否已经包含了/emby路径
+            base_url = self.emby_url
+            if base_url.endswith('/'):
+                base_url = base_url[:-1]  # 移除末尾的斜杠
                 
-            # 构建API URL
-            url = f"{self.emby_url}/Items/{item_id}"
+            # 检查并调整API路径
+            url = f"{base_url}/Items/{item_id}"
+            
+            # 调试日志
+            logger.debug(f"Emby API请求URL: {self.emby_url} -> {url}")
+
             params = {
                 "api_key": self.api_key,
                 "Fields": "Path,ParentId,Overview,Studios,Genres,People,ProductionYear,PremiereDate,ImageTags"
@@ -1082,16 +1184,20 @@ class EmbyService:
             
             # 发送请求
             async with httpx.AsyncClient() as client:
-                logger.debug(f"获取Emby项目详情: ID={item_id}")
+                logger.debug(f"获取Emby项目详情: ID={item_id}, URL={url.replace(self.api_key, 'API_KEY_HIDDEN')}")
                 response = await client.get(url, params=params, timeout=30)
                 
                 if response.status_code == 200:
                     item_data = response.json()
                     logger.debug(f"成功获取Emby项目: {item_data.get('Name', '未知')}")
                     return item_data
+                elif response.status_code == 404:
+                    logger.warning(f"Emby项目不存在: ID={item_id}, URL={url.replace(self.api_key, 'API_KEY_HIDDEN')}")
+                    return None
                 else:
                     logger.error(f"获取Emby项目失败, 状态码: {response.status_code}, 响应: {response.text[:200]}")
+                    logger.error(f"请求URL: {url.replace(self.api_key, 'API_KEY_HIDDEN')}")
                     return None
         except Exception as e:
             logger.error(f"获取Emby项目失败, ID={item_id}, 错误: {str(e)}")
-            return None 
+            return None
