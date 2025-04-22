@@ -38,6 +38,12 @@ class ScanRequest(BaseModel):
     type: str = "all"
     mode: str = "full"  # full, incremental, problems_only
 
+class ReplaceRequest(BaseModel):
+    search_text: str = Body(..., description="要查找的文本")
+    replace_text: str = Body(..., description="替换的文本")
+    target_paths: Optional[List[str]] = Body(None, description="指定要处理的STRM文件路径（为空则处理所有STRM文件）")
+    preview_only: bool = Body(False, description="是否仅预览更改而不实际执行")
+
 # 存储最近一次扫描状态
 _is_scanning: bool = False
 _scan_progress: int = 0
@@ -1201,4 +1207,98 @@ async def delete_strm_files(paths: List[str] = Body(..., description="要删除�
         "deleted": deleted_files,
         "failed": failed_files,
         "message": f"成功删除 {len(deleted_files)} 个文件，失败 {len(failed_files)} 个文件"
-    } 
+    }
+
+@router.post("/strm/replace")
+async def batch_replace_strm_content(request: ReplaceRequest):
+    """批量查找替换STRM文件的内容"""
+    if not request.search_text:
+        raise HTTPException(status_code=400, detail="查找的文本不能为空")
+    
+    try:
+        # 获取STRM文件列表
+        strm_dir = service_manager.strm_service.settings.output_dir
+        
+        # 处理指定文件列表或扫描整个目录
+        if request.target_paths and len(request.target_paths) > 0:
+            strm_files = [Path(path) for path in request.target_paths if os.path.isfile(path) and path.endswith('.strm')]
+        else:
+            strm_files = await scan_strm_files(strm_dir)
+        
+        total_files = len(strm_files)
+        replaced_files = []
+        failed_files = []
+        unchanged_files = []
+        
+        logger.info(f"开始批量替换，共 {total_files} 个STRM文件")
+        
+        # 预览模式下收集的替换预览
+        preview_results = []
+        
+        for strm_file in strm_files:
+            try:
+                # 读取STRM文件内容
+                with open(strm_file, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                
+                # 检查是否需要替换
+                if request.search_text in content:
+                    new_content = content.replace(request.search_text, request.replace_text)
+                    
+                    # 预览模式下只收集信息，不实际修改
+                    if request.preview_only:
+                        preview_results.append({
+                            "path": str(strm_file),
+                            "original": content,
+                            "new": new_content
+                        })
+                    else:
+                        # 写入新内容
+                        with open(strm_file, 'w', encoding='utf-8') as f:
+                            f.write(new_content)
+                        
+                        # 添加到已替换列表
+                        replaced_files.append(str(strm_file))
+                        
+                        # 更新健康状态数据
+                        target_path = await extract_target_path_from_file(strm_file)
+                        service_manager.health_service.update_strm_status(str(strm_file), {
+                            "status": "valid",  # 假设替换后文件有效
+                            "targetPath": target_path
+                        })
+                        
+                        logger.info(f"成功替换STRM文件内容: {strm_file}")
+                else:
+                    unchanged_files.append(str(strm_file))
+            except Exception as e:
+                failed_files.append({"path": str(strm_file), "reason": str(e)})
+                logger.error(f"替换STRM文件内容失败: {strm_file}, 错误: {str(e)}")
+        
+        # 如果不是预览模式，保存健康状态数据
+        if not request.preview_only:
+            service_manager.health_service.save_health_data()
+            
+            return {
+                "status": "success",
+                "total": total_files,
+                "replaced": len(replaced_files),
+                "unchanged": len(unchanged_files),
+                "failed": len(failed_files),
+                "replaced_files": replaced_files[:10],  # 限制返回的文件数量
+                "failed_details": failed_files[:10],
+                "message": f"共处理 {total_files} 个文件，替换 {len(replaced_files)} 个，未变更 {len(unchanged_files)} 个，失败 {len(failed_files)} 个"
+            }
+        else:
+            # 预览模式下返回预览结果
+            return {
+                "status": "preview",
+                "total": total_files,
+                "matches": len(preview_results),
+                "unchanged": total_files - len(preview_results),
+                "preview_results": preview_results[:10],  # 限制预览数量
+                "message": f"共 {total_files} 个文件，其中 {len(preview_results)} 个匹配替换条件"
+            }
+            
+    except Exception as e:
+        logger.error(f"批量替换STRM文件内容失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"批量替换失败: {str(e)}") 
