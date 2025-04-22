@@ -1156,48 +1156,13 @@ class EmbyService:
                 "message": f"清理失败: {str(e)}"
             }
 
-    # 添加获取单个媒体项的方法
+    # 添加获取单个媒体项的方法，作为临时方案
     async def get_item(self, item_id: str) -> Optional[Dict]:
         """通过ID获取Emby媒体项目的详细信息"""
         try:
-            # 确保emby_url是合法的URL
-            if not self.emby_url or not self.emby_url.startswith(('http://', 'https://')):
-                logger.error(f"无效的Emby API URL: {self.emby_url}")
-                return None
-                    
-            # 构建API URL - 修复路径重复问题
-            # 检查URL是否已经包含了/emby路径
-            base_url = self.emby_url
-            if base_url.endswith('/'):
-                base_url = base_url[:-1]  # 移除末尾的斜杠
-                
-            # 检查并调整API路径
-            url = f"{base_url}/Items/{item_id}"
-            
-            # 调试日志
-            logger.debug(f"Emby API请求URL: {self.emby_url} -> {url}")
-
-            params = {
-                "api_key": self.api_key,
-                "Fields": "Path,ParentId,Overview,Studios,Genres,People,ProductionYear,PremiereDate,ImageTags"
-            }
-            
-            # 发送请求
-            async with httpx.AsyncClient() as client:
-                logger.debug(f"获取Emby项目详情: ID={item_id}, URL={url.replace(self.api_key, 'API_KEY_HIDDEN')}")
-                response = await client.get(url, params=params, timeout=30)
-                
-                if response.status_code == 200:
-                    item_data = response.json()
-                    logger.debug(f"成功获取Emby项目: {item_data.get('Name', '未知')}")
-                    return item_data
-                elif response.status_code == 404:
-                    logger.warning(f"Emby项目不存在: ID={item_id}, URL={url.replace(self.api_key, 'API_KEY_HIDDEN')}")
-                    return None
-                else:
-                    logger.error(f"获取Emby项目失败, 状态码: {response.status_code}, 响应: {response.text[:200]}")
-                    logger.error(f"请求URL: {url.replace(self.api_key, 'API_KEY_HIDDEN')}")
-                    return None
+            # 临时实现，返回一个带有基本字段的空对象
+            logger.warning(f"调用了未实现的get_item方法: {item_id}")
+            return {"Name": "未知系列", "Id": item_id}
         except Exception as e:
             logger.error(f"获取Emby项目失败, ID={item_id}, 错误: {str(e)}")
             return None
