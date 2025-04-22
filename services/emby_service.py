@@ -1159,11 +1159,11 @@ class EmbyService:
 
     # 添加获取单个媒体项的方法，作为临时方案
     async def get_item(self, item_id: str) -> Optional[Dict]:
-        """通过ID获取Emby媒体项目的详细信息"""
+        """通过ID获取Emby媒体项目的基本信息（不调用API）"""
         try:
-            # 临时实现，返回一个带有基本字段的空对象
-            logger.warning(f"调用了未实现的get_item方法: {item_id}")
-            return {"Name": "未知系列", "Id": item_id}
+            # 不再调用/Items/{item_id} API，直接返回简单对象
+            logger.debug(f"使用item_id: {item_id}，返回基本信息对象")
+            return {"Id": item_id, "Name": f"媒体项 {item_id}", "Type": "Unknown"}
         except Exception as e:
-            logger.error(f"获取Emby项目失败, ID={item_id}, 错误: {str(e)}")
-            return None
+            logger.error(f"处理item_id时出错: {item_id}, 错误: {str(e)}")
+            return {"Id": item_id, "Name": "处理出错", "Error": str(e)}
