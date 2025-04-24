@@ -405,31 +405,22 @@ class StrmService:
             
             # 如果是元数据文件且开启了下载元数据
             if self.settings.download_metadata and ext in metadata_extensions:
-                # 构建下载路径 - 保留原始目录结构
-                rel_path = path.replace(self.settings.alist_scan_path, '').lstrip('/')
+                # 构建完整的文件路径
+                full_file_path = path
+                if os.path.basename(path) != filename:
+                    full_file_path = f"{path}/{filename}" if not path.endswith('/') else f"{path}{filename}"
                 
-                # 确保元数据文件存放在正确的目录中，而不是与视频同名的目录中
-                download_dir = os.path.join(self.settings.output_dir, rel_path)
-                if os.path.splitext(download_dir)[1].lower():
-                    # 如果下载目录路径包含文件扩展名，说明是文件路径而非目录
-                    # 我们应该使用其父目录作为下载目录
-                    download_dir = os.path.dirname(download_dir)
+                # 替换路径前缀：从alist_scan_path替换为output_dir
+                relative_path = full_file_path.replace(self.settings.alist_scan_path, '')
+                download_path = os.path.join(self.settings.output_dir, relative_path.lstrip('/'))
                 
-                download_path = os.path.join(download_dir, filename)
-                
-                # 创建目录
-                os.makedirs(download_dir, exist_ok=True)
+                # 确保目录存在
+                os.makedirs(os.path.dirname(download_path), exist_ok=True)
                 
                 # 构建下载URL
-                # 检查path是否已经包含文件名，避免重复
-                if os.path.basename(path) == filename:
-                    file_path = path  # path已经包含文件名，直接使用
-                else:
-                    file_path = f"{path}/{filename}" if not path.endswith('/') else f"{path}{filename}"
-                
-                if not file_path.startswith('/'):
-                    file_path = '/' + file_path
-                download_url = f"{self.settings.alist_url}/d{quote(file_path)}"
+                if not full_file_path.startswith('/'):
+                    full_file_path = '/' + full_file_path
+                download_url = f"{self.settings.alist_url}/d{quote(full_file_path)}"
                 
                 # 下载文件
                 success = await self._download_file(download_url, download_path)
@@ -447,38 +438,39 @@ class StrmService:
             if file_info.get('size', 0) < self.settings.min_file_size * 1024 * 1024:
                 logger.debug(f"跳过小视频文件: {filename}")
                 return False
-                
-            # 构建相对路径，确保使用正确的目录结构
-            rel_path = path.replace(self.settings.alist_scan_path, '').lstrip('/')
             
-            # 确保rel_path不包含文件名
-            if os.path.basename(rel_path) == filename:
-                rel_path = os.path.dirname(rel_path)
+            # 构建完整的文件路径
+            full_file_path = path
+            if os.path.basename(path) != filename:
+                full_file_path = f"{path}/{filename}" if not path.endswith('/') else f"{path}{filename}"
             
-            # 创建输出目录
-            output_dir = os.path.join(self.settings.output_dir, rel_path)
-            os.makedirs(output_dir, exist_ok=True)
+            # 确保路径以 / 开头
+            if not full_file_path.startswith('/'):
+                full_file_path = '/' + full_file_path
             
-            # 构建STRM文件名，使用原始视频文件名（移除扩展名，增加.strm扩展名）
-            base_name = os.path.splitext(filename)[0]
-            strm_path = os.path.join(output_dir, f"{base_name}.strm")
+            # 直接替换方法：替换路径前缀和文件扩展名
+            relative_path = full_file_path.replace(self.settings.alist_scan_path, '').lstrip('/')
+            base_name = os.path.splitext(relative_path)[0]
+            strm_relative_path = f"{base_name}.strm"
+            strm_path = os.path.join(self.settings.output_dir, strm_relative_path)
             
-            # 构建strm文件内容
-            # 检查path是否已经包含文件名，避免重复
-            if os.path.basename(path) == filename:
-                file_path = path  # path已经包含文件名，直接使用
-            else:
-                file_path = f"{path}/{filename}" if not path.endswith('/') else f"{path}{filename}"
-                
-            if not file_path.startswith('/'):
-                file_path = '/' + file_path
-            strm_url = f"{self.settings.alist_url}/d{quote(file_path)}"
+            # 确保STRM文件所在目录存在
+            os.makedirs(os.path.dirname(strm_path), exist_ok=True)
+            
+            # 构建STRM文件内容（即原始文件的URL）
+            strm_url = f"{self.settings.alist_url}/d{quote(full_file_path)}"
+            
+            # 记录详细日志
+            logger.info(f"处理视频文件: {filename}")
+            logger.info(f"源路径: {full_file_path}")
+            logger.info(f"STRM文件路径: {strm_path}")
             
             # 检查文件是否已存在且内容相同
             if os.path.exists(strm_path):
                 with open(strm_path, 'r', encoding='utf-8') as f:
                     existing_content = f.read().strip()
                 if existing_content == strm_url:
+                    logger.debug(f"STRM文件已存在且内容相同，跳过: {strm_path}")
                     return False
             
             # 写入strm文件
@@ -489,16 +481,11 @@ class StrmService:
             self._total_size += file_info.get('size', 0)
             
             # 记录到日志
-            logger.info(
-                f"生成STRM文件:\n"
-                f"源文件: {file_path}\n"
-                f"STRM路径: {strm_path}\n"
-                f"STRM内容: {strm_url}"
-            )
+            logger.info(f"生成STRM文件成功: {strm_path} -> {strm_url}")
             
             # 将STRM文件添加到健康状态服务
             service_manager = self._get_service_manager()
-            service_manager.health_service.add_strm_file(strm_path, file_path)
+            service_manager.health_service.add_strm_file(strm_path, full_file_path)
             
             # 添加到Emby刷新队列
             if hasattr(service_manager, 'emby_service') and service_manager.emby_service:

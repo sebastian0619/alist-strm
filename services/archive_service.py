@@ -673,16 +673,8 @@ class ArchiveService:
             service_manager = self._get_service_manager()
             strm_service = service_manager.strm_service
             
-            # 获取相对路径
-            source_rel_path = source_directory.relative_to(self.settings.archive_source_root)
-            
-            # 创建输出目录（与原始strm_service保持一致）- 确保保留目录结构
-            output_base_dir = strm_service.settings.output_dir
-            output_rel_dir = str(source_rel_path)
-            output_dir = os.path.join(output_base_dir, output_rel_dir)
-            
             # 确保输出目录存在
-            os.makedirs(output_dir, exist_ok=True)
+            os.makedirs(strm_service.settings.output_dir, exist_ok=True)
             
             # 统计处理文件数
             strm_count = 0
@@ -701,45 +693,52 @@ class ArchiveService:
                 if file_info.get("size", 0) < strm_service.settings.min_file_size * 1024 * 1024:
                     logger.debug(f"跳过小视频文件: {filename}")
                     continue
-                    
-                # 构建相对路径
+                
+                # 构建完整的目标文件路径（Alist路径）
+                # 获取相对于源目录的路径部分
                 rel_file_path = str(file_info["relative_path"]).replace('\\', '/')
                 
-                # 构建完整的目标Alist路径（不编码）
-                # 检查路径中是否已包含文件名，避免重复
-                filename = os.path.basename(rel_file_path)
-                target_path_dir = os.path.dirname(target_alist_path)
-                if os.path.basename(target_alist_path) == filename:
-                    # 目标路径已包含文件名，不需要再添加
-                    target_file_path = target_alist_path
-                else:
-                    target_file_path = f"{target_alist_path}/{rel_file_path}"
+                # 构建完整的目标Alist路径
+                target_file_path = f"{target_alist_path}/{rel_file_path}"
+                if target_file_path.endswith(f"/{filename}"):
+                    # 避免重复添加文件名
+                    target_file_path = target_file_path[:-len(f"/{filename}")] + f"/{filename}"
                 
-                logger.debug(f"原始目标文件路径: {target_file_path}")
-                
-                # 从文件名中获取基本名称（不包含扩展名）
-                output_base_name = os.path.splitext(filename)[0]
-                
-                # 直接在当前目录下生成STRM文件，不创建额外的子目录
-                strm_path = os.path.join(output_dir, f"{output_base_name}.strm")
-                
-                # 构建strm文件内容 - 根据全局编码设置决定是否进行URL编码
-                from urllib.parse import quote
+                # 确保路径以 / 开头
                 if not target_file_path.startswith('/'):
-                    path_for_url = '/' + target_file_path
-                else:
-                    path_for_url = target_file_path
+                    target_file_path = '/' + target_file_path
+                
+                logger.debug(f"完整目标文件路径: {target_file_path}")
+                
+                # 直接替换方法：基于实际的Alist路径生成STRM文件路径
+                # 1. 从目标Alist路径中提取相对路径部分
+                rel_path = target_file_path.lstrip('/')
+                
+                # 2. 分离文件名和扩展名
+                file_base, file_ext = os.path.splitext(rel_path)
+                
+                # 3. 构建STRM文件路径（保留原始目录结构，只替换扩展名）
+                strm_path = os.path.join(strm_service.settings.output_dir, f"{file_base}.strm")
+                
+                # 确保STRM文件所在目录存在
+                os.makedirs(os.path.dirname(strm_path), exist_ok=True)
+                
+                # 构建STRM文件内容（即原始文件的URL）
+                from urllib.parse import quote
                 
                 # 根据全局设置决定是否进行URL编码
                 if strm_service.settings.encode:
                     # 进行URL编码，但保留路径分隔符
-                    encoded_path = quote(path_for_url)
+                    encoded_path = quote(target_file_path)
                     strm_url = f"{strm_service.settings.alist_url}/d{encoded_path}"
-                    logger.debug(f"已编码的STRM URL: {strm_url}")
                 else:
                     # 不进行URL编码
-                    strm_url = f"{strm_service.settings.alist_url}/d{path_for_url}"
-                    logger.debug(f"未编码的STRM URL: {strm_url}")
+                    strm_url = f"{strm_service.settings.alist_url}/d{target_file_path}"
+                
+                # 记录详细日志
+                logger.info(f"处理视频文件: {filename}")
+                logger.info(f"源路径: {target_file_path}")
+                logger.info(f"STRM文件路径: {strm_path}")
                 
                 # 检查文件是否已存在且内容相同
                 if os.path.exists(strm_path):
@@ -747,7 +746,7 @@ class ArchiveService:
                         with open(strm_path, 'r', encoding='utf-8') as f:
                             existing_content = f.read().strip()
                         if existing_content == strm_url:
-                            logger.debug(f"STRM文件已存在且内容相同: {strm_path}")
+                            logger.debug(f"STRM文件已存在且内容相同，跳过: {strm_path}")
                             continue
                     except Exception as e:
                         logger.warning(f"读取现有STRM文件失败: {str(e)}")
@@ -756,7 +755,7 @@ class ArchiveService:
                 with open(strm_path, 'w', encoding='utf-8') as f:
                     f.write(strm_url)
                 
-                logger.info(f"已创建STRM文件: {strm_path}")
+                logger.info(f"生成STRM文件成功: {strm_path} -> {strm_url}")
                 strm_count += 1
                 
                 # 将STRM文件添加到健康状态服务
