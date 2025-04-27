@@ -438,7 +438,7 @@ class StrmService:
             if file_info.get('size', 0) < self.settings.min_file_size * 1024 * 1024:
                 logger.debug(f"跳过小视频文件: {filename}")
                 return False
-            
+                
             # 构建完整的文件路径
             full_file_path = path
             if os.path.basename(path) != filename:

@@ -693,7 +693,7 @@ class ArchiveService:
                 if file_info.get("size", 0) < strm_service.settings.min_file_size * 1024 * 1024:
                     logger.debug(f"跳过小视频文件: {filename}")
                     continue
-                
+                    
                 # 构建完整的目标文件路径（Alist路径）
                 # 获取相对于源目录的路径部分
                 rel_file_path = str(file_info["relative_path"]).replace('\\', '/')
@@ -703,7 +703,6 @@ class ArchiveService:
                 if target_file_path.endswith(f"/{filename}"):
                     # 避免重复添加文件名
                     target_file_path = target_file_path[:-len(f"/{filename}")] + f"/{filename}"
-                
                 # 确保路径以 / 开头
                 if not target_file_path.startswith('/'):
                     target_file_path = '/' + target_file_path
