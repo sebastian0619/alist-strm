@@ -1,6 +1,16 @@
 <template>
   <div class="emby-refresh-panel">
     <a-card class="emby-card" :bordered="false">
+      <!-- 添加Emby功能未启用警告 -->
+      <a-alert 
+        v-if="!embyStatus.enabled" 
+        type="warning" 
+        banner
+        message="Emby刷库功能未启用"
+        description="请在基本配置页面启用Emby刷库功能，并确保配置正确的API地址和密钥"
+        style="margin-bottom: 16px;"
+      />
+
       <div class="emby-header">
         <div class="emby-title">
           <h2>Emby刷库队列管理</h2>
@@ -326,18 +336,35 @@
           </a-form-item>
         </a-form>
       </a-card>
+      
+      <!-- 调试面板 -->
+      <a-collapse style="margin-top: 16px;">
+        <a-collapse-panel key="1" header="调试信息">
+          <a-descriptions title="API信息" bordered>
+            <a-descriptions-item label="服务状态">{{ embyStatus.enabled ? '已启用' : '未启用' }}</a-descriptions-item>
+            <a-descriptions-item label="上次请求">{{ lastRequestTime }}</a-descriptions-item>
+            <a-descriptions-item label="队列项总数">{{ embyStatus.queue_stats?.total || 0 }}</a-descriptions-item>
+            <a-descriptions-item label="API原始响应">
+              <a-button size="small" @click="showRawResponse">查看原始数据</a-button>
+            </a-descriptions-item>
+            <a-descriptions-item label="刷新队列API">
+              <a-button size="small" @click="debugRequest">测试API请求</a-button>
+            </a-descriptions-item>
+          </a-descriptions>
+        </a-collapse-panel>
+      </a-collapse>
     </a-card>
   </div>
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, computed } from 'vue';
+import { ref, reactive, onMounted, onUnmounted } from 'vue';
 import { 
   CheckCircleOutlined,
   WarningOutlined,
   ClockCircleOutlined
 } from '@ant-design/icons-vue';
-import { notification } from 'ant-design-vue';
+import { notification, Modal } from 'ant-design-vue';
 import axios from 'axios';
 
 // Emby队列状态
@@ -367,6 +394,8 @@ const embyActiveTab = ref('pending');
 const manualRefresh = reactive({
   path: ''
 });
+const lastRequestTime = ref('未请求');
+const lastResponse = ref(null);
 
 // 过滤器
 const queueFilter = reactive({
@@ -375,42 +404,87 @@ const queueFilter = reactive({
   sortOrder: 'desc'
 });
 
-// 加载Emby状态
+// 加载Emby状态 - 改进的版本
 const refreshEmbyStatus = async () => {
   embyLoading.value = true;
   try {
     const response = await axios.get('/api/health/emby/refresh/status');
+    lastResponse.value = response.data; // 保存原始响应
+    lastRequestTime.value = new Date().toLocaleString();
+    console.log('[Emby刷库] API响应:', response.data);
+    
     if (response.data.success) {
-      // 更新状态
-      embyStatus.enabled = response.data.data.enabled;
-      embyStatus.queue_stats = response.data.data.stats;
+      // 更新Emby启用状态
+      embyStatus.enabled = response.data.data?.enabled || false;
       
-      // 更新队列
-      embyStatus.queue.pending = response.data.data.pending || [];
-      embyStatus.queue.success = response.data.data.success || [];
-      embyStatus.queue.failed = response.data.data.failed || [];
+      // 处理统计数据 - 适应多种可能的数据结构
+      const statsData = response.data.data?.stats || 
+                       response.data.data?.queue_stats || 
+                       response.data.data || {};
       
-      // 合并所有队列项
-      embyStatus.all_items = [
-        ...(embyStatus.queue.pending || []),
-        ...(embyStatus.queue.success || []),
-        ...(embyStatus.queue.failed || [])
-      ];
+      embyStatus.queue_stats = {
+        total: statsData.total || 
+               (statsData.pending_count + statsData.success_count + statsData.failed_count) || 0,
+        pending: statsData.pending || statsData.pending_count || 0,
+        success: statsData.success || statsData.success_count || 0,
+        failed: statsData.failed || statsData.failed_count || 0
+      };
+      
+      // 处理队列数据
+      if (response.data.data?.items) {
+        // 如果返回的是完整列表，需要自己分类
+        const allItems = response.data.data.items || [];
+        embyStatus.all_items = allItems;
+        
+        // 按状态分类
+        embyStatus.queue.pending = allItems.filter(item => item.status === 'pending' || !item.status);
+        embyStatus.queue.success = allItems.filter(item => item.status === 'success');
+        embyStatus.queue.failed = allItems.filter(item => item.status === 'failed');
+      } else if (response.data.data?.queue) {
+        // 如果直接返回了分类后的队列
+        embyStatus.queue = response.data.data.queue;
+        embyStatus.all_items = [
+          ...(embyStatus.queue.pending || []),
+          ...(embyStatus.queue.success || []),
+          ...(embyStatus.queue.failed || [])
+        ];
+      } else if (response.data.data?.pending && Array.isArray(response.data.data.pending)) {
+        // 另一种返回格式：直接包含各状态数组
+        embyStatus.queue.pending = response.data.data.pending || [];
+        embyStatus.queue.success = response.data.data.success || [];
+        embyStatus.queue.failed = response.data.data.failed || [];
+        
+        embyStatus.all_items = [
+          ...embyStatus.queue.pending,
+          ...embyStatus.queue.success,
+          ...embyStatus.queue.failed
+        ];
+      }
       
       // 设置下次刷新时间
-      if (response.data.data.next_check) {
-        nextRefreshTime.value = new Date(response.data.data.next_check * 1000);
+      if (response.data.data?.next_check) {
+        const timestamp = typeof response.data.data.next_check === 'number' ? 
+                          response.data.data.next_check * 1000 : 
+                          new Date(response.data.data.next_check).getTime();
+        nextRefreshTime.value = new Date(timestamp);
+      }
+      
+      // 如果队列为空但有统计数据，可能需要主动加载队列
+      if (embyStatus.queue_stats.total > 0 && embyStatus.all_items.length === 0) {
+        console.log('[Emby刷库] 统计数据显示有队列项，但返回的队列为空，将加载队列...');
+        loadEmbyQueue();
       }
     } else {
-      notification.error({
+      notification.warning({
         message: '加载失败',
-        description: response.data.message
+        description: response.data.message || '获取Emby刷新队列状态失败'
       });
     }
   } catch (error) {
+    console.error('[Emby刷库] 请求错误:', error);
     notification.error({
-      message: '请求错误',
-      description: error.message
+      message: '请求出错',
+      description: `请求Emby刷新队列状态时出错: ${error.message}`
     });
   } finally {
     embyLoading.value = false;
@@ -428,19 +502,37 @@ const loadEmbyQueue = async () => {
     };
     
     const response = await axios.get('/api/health/emby/refresh/queue', { params });
+    console.log('[Emby刷库] 加载队列响应:', response.data);
+    
     if (response.data.success) {
-      embyStatus.all_items = response.data.data.items || [];
-      embyStatus.queue_stats = response.data.data.stats;
+      // 更新全部项目
+      if (response.data.data.items) {
+        embyStatus.all_items = response.data.data.items || [];
+        
+        // 如果返回了统计信息，也更新
+        if (response.data.data.stats) {
+          embyStatus.queue_stats = response.data.data.stats;
+        }
+        
+        // 按状态重新分类
+        embyStatus.queue.pending = embyStatus.all_items.filter(item => 
+          item.status === 'pending' || !item.status);
+        embyStatus.queue.success = embyStatus.all_items.filter(item => 
+          item.status === 'success');
+        embyStatus.queue.failed = embyStatus.all_items.filter(item => 
+          item.status === 'failed');
+      }
     } else {
-      notification.error({
-        message: '加载失败',
-        description: response.data.message
+      notification.warning({
+        message: '加载队列失败',
+        description: response.data.message || '请求成功但返回错误'
       });
     }
   } catch (error) {
+    console.error('[Emby刷库] 加载队列错误:', error);
     notification.error({
       message: '请求错误',
-      description: error.message
+      description: `加载队列数据时出错: ${error.message}`
     });
   } finally {
     embyLoading.value = false;
@@ -460,23 +552,26 @@ const forceRefreshEmbyItem = async (path) => {
   refreshingItem.value = path;
   try {
     const response = await axios.post('/api/health/emby/refresh/force', { path });
+    console.log('[Emby刷库] 强制刷新响应:', response.data);
+    
     if (response.data.success) {
       notification.success({
         message: '刷新请求已发送',
-        description: response.data.message
+        description: response.data.message || '已将项目加入刷新队列'
       });
       // 刷新队列状态
-      refreshEmbyStatus();
+      setTimeout(() => refreshEmbyStatus(), 500); // 稍微延迟刷新，给后端处理的时间
     } else {
       notification.error({
         message: '刷新失败',
-        description: response.data.message
+        description: response.data.message || '请求成功但返回错误'
       });
     }
   } catch (error) {
+    console.error('[Emby刷库] 强制刷新错误:', error);
     notification.error({
       message: '请求错误',
-      description: error.message
+      description: `强制刷新时出错: ${error.message}`
     });
   } finally {
     refreshingItem.value = '';
@@ -488,23 +583,26 @@ const removeQueueItem = async (path) => {
   removingItem.value = path;
   try {
     const response = await axios.post('/api/health/emby/refresh/remove', { path });
+    console.log('[Emby刷库] 移除队列项响应:', response.data);
+    
     if (response.data.success) {
       notification.success({
         message: '移除成功',
-        description: response.data.message
+        description: response.data.message || '已从队列中移除'
       });
       // 刷新队列状态
-      refreshEmbyStatus();
+      setTimeout(() => refreshEmbyStatus(), 500); // 稍微延迟刷新
     } else {
       notification.error({
         message: '移除失败',
-        description: response.data.message
+        description: response.data.message || '请求成功但返回错误'
       });
     }
   } catch (error) {
+    console.error('[Emby刷库] 移除队列项错误:', error);
     notification.error({
       message: '请求错误',
-      description: error.message
+      description: `移除队列项时出错: ${error.message}`
     });
   } finally {
     removingItem.value = '';
@@ -516,23 +614,26 @@ const processAllPendingItems = async () => {
   processingAll.value = true;
   try {
     const response = await axios.post('/api/health/emby/refresh/process_all');
+    console.log('[Emby刷库] 处理所有待处理项响应:', response.data);
+    
     if (response.data.success) {
       notification.success({
         message: '处理请求已发送',
-        description: response.data.message
+        description: response.data.message || '已开始处理所有待处理项'
       });
       // 刷新队列状态
-      refreshEmbyStatus();
+      setTimeout(() => refreshEmbyStatus(), 800); // 稍微长点的延迟
     } else {
       notification.error({
         message: '处理失败',
-        description: response.data.message
+        description: response.data.message || '请求成功但返回错误'
       });
     }
   } catch (error) {
+    console.error('[Emby刷库] 处理所有待处理项错误:', error);
     notification.error({
       message: '请求错误',
-      description: error.message
+      description: `处理所有待处理项时出错: ${error.message}`
     });
   } finally {
     processingAll.value = false;
@@ -639,9 +740,82 @@ const getTimeValue = (item) => {
   return item.added_time;
 };
 
-// 初始化加载
+// 调试功能 - 显示原始响应
+const showRawResponse = () => {
+  Modal.info({
+    title: 'API原始响应数据',
+    width: 800,
+    content: h => {
+      return h('div', {
+        style: {
+          maxHeight: '60vh',
+          overflow: 'auto'
+        }
+      }, [
+        h('pre', {
+          style: {
+            whiteSpace: 'pre-wrap'
+          }
+        }, JSON.stringify(lastResponse.value, null, 2))
+      ]);
+    }
+  });
+};
+
+// 调试功能 - 测试API请求
+const debugRequest = async () => {
+  try {
+    notification.info({
+      message: '发送测试请求',
+      description: '正在请求Emby刷新队列状态...'
+    });
+    
+    const response = await axios.get('/api/health/emby/refresh/status');
+    console.log('[Emby刷库调试] API响应原始数据:', response.data);
+    
+    Modal.info({
+      title: 'API测试结果',
+      width: 800,
+      content: h => {
+        return h('div', {
+          style: {
+            maxHeight: '60vh',
+            overflow: 'auto'
+          }
+        }, [
+          h('pre', {
+            style: {
+              whiteSpace: 'pre-wrap'
+            }
+          }, JSON.stringify(response.data, null, 2))
+        ]);
+      }
+    });
+  } catch (error) {
+    console.error('[Emby刷库调试] API请求错误:', error);
+    notification.error({
+      message: '请求错误',
+      description: `测试API请求失败: ${error.message}`
+    });
+  }
+};
+
+// 页面加载和卸载逻辑
 onMounted(() => {
+  // 初始化时加载一次
   refreshEmbyStatus();
+  
+  // 设置自动刷新（每30秒刷新一次状态）
+  const interval = setInterval(() => {
+    if (!document.hidden) { // 只在页面可见时刷新
+      refreshEmbyStatus();
+    }
+  }, 30000);
+  
+  // 卸载时清除定时器
+  onUnmounted(() => {
+    clearInterval(interval);
+  });
 });
 </script>
 
