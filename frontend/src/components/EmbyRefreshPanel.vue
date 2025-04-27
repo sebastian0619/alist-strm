@@ -414,8 +414,14 @@ const refreshEmbyStatus = async () => {
     console.log('[Emby刷库] API响应:', response.data);
     
     if (response.data.success) {
-      // 更新Emby启用状态
-      embyStatus.enabled = response.data.data?.enabled || false;
+      // 更新Emby启用状态 - 修复判断逻辑
+      // 如果API返回了队列信息，就认为刷库功能已启用
+      if (response.data.data?.enabled !== undefined) {
+        embyStatus.enabled = response.data.data.enabled;
+      } else {
+        // 如果没有明确的enabled字段，但有队列数据，也认为是启用的
+        embyStatus.enabled = true;
+      }
       
       // 处理统计数据 - 适应多种可能的数据结构
       const statsData = response.data.data?.stats || 
