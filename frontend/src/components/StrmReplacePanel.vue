@@ -40,7 +40,7 @@
         <a-form-item>
           <a-button 
             type="primary" 
-            @click="previewBatchReplace" 
+            @click="batchReplace.previewOnly ? previewBatchReplace() : executeBatchReplace()"
             :loading="batchReplace.loading" 
             :disabled="!batchReplace.searchText"
           >
@@ -266,7 +266,7 @@ const previewBatchReplace = async () => {
         search_text: batchReplace.value.searchText,
         replace_text: batchReplace.value.replaceText,
         target_paths: targetPaths,
-        preview_only: true // 始终先预览
+        preview_only: true
       }),
     })
     
