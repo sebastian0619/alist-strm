@@ -694,33 +694,43 @@ class ArchiveService:
                     logger.debug(f"跳过小视频文件: {filename}")
                     continue
                     
-                # 构建完整的目标文件路径（Alist路径）
-                # 获取相对于源目录的路径部分
+                # 1. 获取相对于源目录的路径部分
                 rel_file_path = str(file_info["relative_path"]).replace('\\', '/')
+                
+                # 2. 获取当前媒体类型的目录前缀
+                media_type = self._current_media_type
+                media_dir_prefix = ""
+                if media_type and media_type in self._media_types:
+                    media_dir_prefix = self._media_types[media_type].get('dir', '').strip('/')
+                
+                logger.debug(f"扫描路径前缀: {media_dir_prefix}")
+                
+                # 3. 从相对路径中移除媒体目录前缀
+                media_rel_path = rel_file_path
+                if media_dir_prefix and rel_file_path.startswith(media_dir_prefix):
+                    # 从路径中移除前缀部分
+                    media_rel_path = rel_file_path[len(media_dir_prefix):].lstrip('/')
+                    logger.debug(f"移除前缀后的路径: {media_rel_path}")
+                    
+                # 4. 分离文件名和扩展名
+                media_path_no_ext, file_ext = os.path.splitext(media_rel_path)
+                
+                # 5. 直接替换扩展名为.strm
+                strm_rel_path = f"{media_path_no_ext}.strm"
+                
+                # 6. 拼接输出目录，创建完整的STRM文件路径
+                strm_path = os.path.join(strm_service.settings.output_dir, strm_rel_path)
+                
+                # 确保STRM文件所在目录存在
+                os.makedirs(os.path.dirname(strm_path), exist_ok=True)
                 
                 # 构建完整的目标Alist路径
                 target_file_path = f"{target_alist_path}/{rel_file_path}"
-                if target_file_path.endswith(f"/{filename}"):
-                    # 避免重复添加文件名
-                    target_file_path = target_file_path[:-len(f"/{filename}")] + f"/{filename}"
                 # 确保路径以 / 开头
                 if not target_file_path.startswith('/'):
                     target_file_path = '/' + target_file_path
                 
                 logger.debug(f"完整目标文件路径: {target_file_path}")
-                
-                # 直接替换方法：基于实际的Alist路径生成STRM文件路径
-                # 1. 从目标Alist路径中提取相对路径部分
-                rel_path = target_file_path.lstrip('/')
-                
-                # 2. 分离文件名和扩展名
-                file_base, file_ext = os.path.splitext(rel_path)
-                
-                # 3. 构建STRM文件路径（保留原始目录结构，只替换扩展名）
-                strm_path = os.path.join(strm_service.settings.output_dir, f"{file_base}.strm")
-                
-                # 确保STRM文件所在目录存在
-                os.makedirs(os.path.dirname(strm_path), exist_ok=True)
                 
                 # 构建STRM文件内容（即原始文件的URL）
                 from urllib.parse import quote
