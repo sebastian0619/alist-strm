@@ -4,7 +4,7 @@ import time
 import re
 import json
 import hashlib
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 from loguru import logger
 from config import Settings
 from typing import List, Optional
@@ -457,14 +457,20 @@ class StrmService:
             # 确保STRM文件所在目录存在
             os.makedirs(os.path.dirname(strm_path), exist_ok=True)
             
+            # 确定使用的URL基础地址（根据use_external_url开关决定是否使用外部地址）
+            base_url = self.settings.alist_url
+            if hasattr(self.settings, 'use_external_url') and self.settings.use_external_url and self.settings.alist_external_url:
+                base_url = self.settings.alist_external_url
+            base_url = base_url.rstrip('/')
+            
             # 构建STRM文件内容（即原始文件的URL）
             if self.settings.encode:
                 # 进行URL编码，但保留路径分隔符
                 encoded_path = quote(full_file_path)
-                strm_url = f"{self.settings.alist_url}/d{encoded_path}"
+                strm_url = f"{base_url}/d{encoded_path}"
             else:
                 # 不进行URL编码
-                strm_url = f"{self.settings.alist_url}/d{full_file_path}"
+                strm_url = f"{base_url}/d{full_file_path}"
             
             # 记录详细日志
             logger.info(f"处理视频文件: {filename}")
@@ -558,10 +564,23 @@ class StrmService:
             with open(src_strm, 'r', encoding='utf-8') as f:
                 content = f.read().strip()
             
-            # 从URL中提取云盘路径
-            cloud_path = content.replace(f"{self.settings.alist_url}/d", "")
+            # 从URL中提取云盘路径 - 需要考虑可能使用了不同的base_url
+            cloud_path = None
+            
+            # 尝试用alist_url提取
+            if content.startswith(f"{self.settings.alist_url}/d"):
+                cloud_path = content.replace(f"{self.settings.alist_url}/d", "")
+            # 尝试用external_url提取
+            elif hasattr(self.settings, 'alist_external_url') and self.settings.alist_external_url and content.startswith(f"{self.settings.alist_external_url}/d"):
+                cloud_path = content.replace(f"{self.settings.alist_external_url}/d", "")
+            # 如果都不匹配，尝试直接提取/d后面的部分
+            elif "/d" in content:
+                cloud_path = content.split("/d", 1)[1]
+            else:
+                return {"success": False, "message": f"无法从STRM文件中提取云盘路径: {content}"}
+            
+            # 如果编码了，需要解码
             if self.settings.encode:
-                from urllib.parse import unquote
                 cloud_path = unquote(cloud_path)
             
             # 构建目标云盘路径
@@ -582,14 +601,20 @@ class StrmService:
             # 移动strm文件
             os.rename(src_strm, dest_strm)
             
+            # 确定使用的URL基础地址（根据use_external_url开关决定是否使用外部地址）
+            base_url = self.settings.alist_url
+            if hasattr(self.settings, 'use_external_url') and self.settings.use_external_url and self.settings.alist_external_url:
+                base_url = self.settings.alist_external_url
+            base_url = base_url.rstrip('/')
+            
             # 更新strm文件内容
-            base_url = self.settings.alist_url.rstrip('/')
             if self.settings.encode:
                 encoded_path = quote(dest_cloud_path)
                 play_url = f"{base_url}/d{encoded_path}"
             else:
                 play_url = f"{base_url}/d{dest_cloud_path}"
             
+            # 写入strm文件
             with open(dest_strm, 'w', encoding='utf-8') as f:
                 f.write(play_url)
             

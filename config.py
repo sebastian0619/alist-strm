@@ -71,6 +71,8 @@ class Settings(BaseSettings):
     
     # Alist配置
     alist_url: str = Field(default="http://localhost:5244", description="AList服务地址")
+    alist_external_url: str = Field(default="", description="AList外部访问地址（用于STRM文件）")
+    use_external_url: bool = Field(default=False, description="是否在STRM文件中使用外部访问地址")
     alist_token: str = Field(default="", alias="ALIST_TOKEN")
     alist_scan_path: str = Field(default="", alias="ALIST_SCAN_PATH")
     
@@ -163,7 +165,8 @@ class Settings(BaseSettings):
         bool_fields = ['run_after_startup', 'slow_mode', 'encode', 
                       'is_down_sub', 'is_down_meta', 'refresh', 'tg_enabled',
                       'schedule_enabled', 'remove_empty_dirs', 'archive_enabled',
-                      'archive_auto_strm', 'archive_delete_source', 'emby_enabled']
+                      'archive_auto_strm', 'archive_delete_source', 'emby_enabled',
+                      'use_external_url']
         for field in bool_fields:
             if field in values and isinstance(values[field], str):
                 values[field] = str(values[field]).lower() in ('true', '1', 'yes', 'on', 't')

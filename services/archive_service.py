@@ -732,17 +732,20 @@ class ArchiveService:
                 
                 logger.debug(f"完整目标文件路径: {target_file_path}")
                 
-                # 构建STRM文件内容（即原始文件的URL）
-                from urllib.parse import quote
+                # 确定使用的URL基础地址（根据use_external_url开关决定是否使用外部地址）
+                base_url = strm_service.settings.alist_url
+                if hasattr(strm_service.settings, 'use_external_url') and strm_service.settings.use_external_url and strm_service.settings.alist_external_url:
+                    base_url = strm_service.settings.alist_external_url
+                base_url = base_url.rstrip('/')
                 
                 # 根据全局设置决定是否进行URL编码
                 if strm_service.settings.encode:
                     # 进行URL编码，但保留路径分隔符
                     encoded_path = quote(target_file_path)
-                    strm_url = f"{strm_service.settings.alist_url}/d{encoded_path}"
+                    strm_url = f"{base_url}/d{encoded_path}"
                 else:
                     # 不进行URL编码
-                    strm_url = f"{strm_service.settings.alist_url}/d{target_file_path}"
+                    strm_url = f"{base_url}/d{target_file_path}"
                 
                 # 记录详细日志
                 logger.info(f"处理视频文件: {filename}")
