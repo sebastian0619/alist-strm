@@ -122,6 +122,33 @@
         </a-tooltip>
       </a-form-item>
 
+      <a-form-item label="Alist 外部访问地址">
+        <a-input
+          v-model:value="config.alist_external_url"
+          placeholder="https://example.com"
+        />
+        <a-tooltip>
+          <template #title>
+            外部网络可访问的Alist地址，用于在STRM文件中生成URL
+          </template>
+          <info-circle-outlined style="margin-left: 8px" />
+        </a-tooltip>
+      </a-form-item>
+
+      <a-form-item label="STRM使用外部地址">
+        <a-switch
+          v-model:checked="config.use_external_url"
+          :checked-children="'开启'"
+          :un-checked-children="'关闭'"
+        />
+        <a-tooltip>
+          <template #title>
+            是否在STRM文件中使用外部访问地址。启用后，STRM文件将使用外部地址而非内网地址
+          </template>
+          <info-circle-outlined style="margin-left: 8px" />
+        </a-tooltip>
+      </a-form-item>
+
       <a-form-item label="扫描路径" required>
         <a-input
           v-model:value="config.alist_scan_path"

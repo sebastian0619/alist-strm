@@ -31,6 +31,8 @@ class ConfigService:
                 
                 # Alist配置
                 "alist_url": self.settings.alist_url,
+                "alist_external_url": self.settings.alist_external_url,
+                "use_external_url": self.settings.use_external_url,
                 "alist_token": self.settings.alist_token,
                 "alist_scan_path": self.settings.alist_scan_path,
                 
