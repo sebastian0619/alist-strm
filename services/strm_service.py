@@ -458,7 +458,13 @@ class StrmService:
             os.makedirs(os.path.dirname(strm_path), exist_ok=True)
             
             # 构建STRM文件内容（即原始文件的URL）
-            strm_url = f"{self.settings.alist_url}/d{quote(full_file_path)}"
+            if self.settings.encode:
+                # 进行URL编码，但保留路径分隔符
+                encoded_path = quote(full_file_path)
+                strm_url = f"{self.settings.alist_url}/d{encoded_path}"
+            else:
+                # 不进行URL编码
+                strm_url = f"{self.settings.alist_url}/d{full_file_path}"
             
             # 记录详细日志
             logger.info(f"处理视频文件: {filename}")
