@@ -12,6 +12,7 @@ import importlib
 import json
 from services.alist_client import AlistClient
 import re
+from urllib.parse import quote
 
 class MediaThreshold(NamedTuple):
     """媒体文件的时间阈值配置"""
@@ -696,6 +697,7 @@ class ArchiveService:
                     
                 # 1. 获取相对于源目录的路径部分
                 rel_file_path = str(file_info["relative_path"]).replace('\\', '/')
+                logger.info(f"原始相对路径: {rel_file_path}")
                 
                 # 2. 获取当前媒体类型的目录前缀
                 media_type = self._current_media_type
@@ -703,22 +705,23 @@ class ArchiveService:
                 if media_type and media_type in self._media_types:
                     media_dir_prefix = self._media_types[media_type].get('dir', '').strip('/')
                 
-                logger.debug(f"扫描路径前缀: {media_dir_prefix}")
+                logger.debug(f"媒体类型: {media_type}, 扫描路径前缀: {media_dir_prefix}")
                 
-                # 3. 从相对路径中移除媒体目录前缀
-                media_rel_path = rel_file_path
-                if media_dir_prefix and rel_file_path.startswith(media_dir_prefix):
-                    # 从路径中移除前缀部分
-                    media_rel_path = rel_file_path[len(media_dir_prefix):].lstrip('/')
-                    logger.debug(f"移除前缀后的路径: {media_rel_path}")
-                    
-                # 4. 分离文件名和扩展名
-                media_path_no_ext, file_ext = os.path.splitext(media_rel_path)
+                # 3. 构建完整的输出路径，保留原始目录结构
+                # 首先检查是否需要保留媒体类型目录
+                if media_dir_prefix and not rel_file_path.startswith(media_dir_prefix):
+                    # 如果相对路径不包含媒体类型目录，添加它
+                    rel_strm_path = f"{media_dir_prefix}/{rel_file_path}" if media_dir_prefix else rel_file_path
+                else:
+                    rel_strm_path = rel_file_path
                 
-                # 5. 直接替换扩展名为.strm
-                strm_rel_path = f"{media_path_no_ext}.strm"
+                logger.debug(f"处理后的相对路径: {rel_strm_path}")
                 
-                # 6. 拼接输出目录，创建完整的STRM文件路径
+                # 4. 分离文件名和扩展名，替换为.strm
+                rel_path_no_ext, _ = os.path.splitext(rel_strm_path)
+                strm_rel_path = f"{rel_path_no_ext}.strm"
+                
+                # 5. 拼接输出目录，创建完整的STRM文件路径
                 strm_path = os.path.join(strm_service.settings.output_dir, strm_rel_path)
                 
                 # 确保STRM文件所在目录存在
@@ -779,7 +782,13 @@ class ArchiveService:
             # 将生成的STRM文件添加到Emby刷新队列
             if generated_strm_files and hasattr(service_manager, 'emby_service') and service_manager.emby_service:
                 for strm_path in generated_strm_files:
-                    service_manager.emby_service.add_to_refresh_queue(strm_path)
+                    # 使用增强的add_to_refresh_queue方法，传递额外的媒体信息
+                    media_info = {
+                        "source_path": strm_path.replace('.strm', '.mkv'),  # 近似源文件路径
+                        "title": os.path.splitext(os.path.basename(strm_path))[0],
+                        "created_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    }
+                    service_manager.emby_service.add_to_refresh_queue(strm_path, media_info=media_info)
                 logger.info(f"已将 {len(generated_strm_files)} 个STRM文件添加到Emby刷新队列")
             
             logger.info(f"成功生成 {strm_count} 个STRM文件，指向目标路径: {target_alist_path}")
