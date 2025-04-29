@@ -10,6 +10,7 @@ from config import Settings
 from typing import List, Optional
 import asyncio
 import importlib
+from datetime import datetime
 
 class AlistClient:
     def __init__(self, base_url: str, token: str = None):
@@ -448,11 +449,41 @@ class StrmService:
             if not full_file_path.startswith('/'):
                 full_file_path = '/' + full_file_path
             
-            # 直接替换方法：替换路径前缀和文件扩展名
-            relative_path = full_file_path.replace(self.settings.alist_scan_path, '').lstrip('/')
-            base_name = os.path.splitext(relative_path)[0]
-            strm_relative_path = f"{base_name}.strm"
-            strm_path = os.path.join(self.settings.output_dir, strm_relative_path)
+            # 计算相对路径，保持目录结构
+            logger.info(f"计算STRM文件路径, 原始路径: {full_file_path}")
+            logger.info(f"扫描路径前缀: {self.settings.alist_scan_path}")
+            
+            # 方法1: 直接替换前缀,保持完整的目录结构
+            if full_file_path.startswith(self.settings.alist_scan_path):
+                # 正确计算相对路径
+                relative_path = full_file_path[len(self.settings.alist_scan_path):].lstrip('/')
+                logger.info(f"计算得到的相对路径: {relative_path}")
+                
+                # 更改扩展名为.strm
+                base_path, _ = os.path.splitext(relative_path)
+                strm_relative_path = f"{base_path}.strm"
+                
+                # 拼接完整的STRM文件路径
+                strm_path = os.path.join(self.settings.output_dir, strm_relative_path)
+                logger.info(f"最终STRM文件路径: {strm_path}")
+            else:
+                # 回退方案：如果前缀替换失败，尝试保留部分路径结构
+                # 提取文件所在目录结构
+                path_parts = full_file_path.strip('/').split('/')
+                # 确保至少保留最后几层目录结构
+                if len(path_parts) >= 3:
+                    # 使用最后三层路径 (通常是 [媒体类型]/[标题]/[文件名])
+                    relative_path = '/'.join(path_parts[-3:])
+                else:
+                    relative_path = '/'.join(path_parts)
+                    
+                # 更改扩展名为.strm
+                base_path, _ = os.path.splitext(relative_path)
+                strm_relative_path = f"{base_path}.strm"
+                
+                # 拼接完整的STRM文件路径
+                strm_path = os.path.join(self.settings.output_dir, strm_relative_path)
+                logger.info(f"使用备用方案的STRM文件路径: {strm_path}")
             
             # 确保STRM文件所在目录存在
             os.makedirs(os.path.dirname(strm_path), exist_ok=True)
@@ -488,6 +519,9 @@ class StrmService:
             # 写入strm文件
             with open(strm_path, 'w', encoding='utf-8') as f:
                 f.write(strm_url)
+                # 写入额外的元数据行，帮助后续查找
+                # 这里可以考虑添加特殊注释或隐藏字段用于记录路径信息
+                # f.write(f"\n#META:{base_name}")
             
             self._processed_files += 1
             self._total_size += file_info.get('size', 0)
@@ -499,9 +533,18 @@ class StrmService:
             service_manager = self._get_service_manager()
             service_manager.health_service.add_strm_file(strm_path, full_file_path)
             
-            # 添加到Emby刷新队列
+            # 存储原始路径和文件信息，便于后续查询
+            media_info = {
+                "path": strm_path,
+                "source_path": full_file_path,
+                "filename": filename,
+                "title": os.path.splitext(filename)[0],
+                "created_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            }
+            
+            # 添加到Emby刷新队列，同时传递更多信息
             if hasattr(service_manager, 'emby_service') and service_manager.emby_service:
-                service_manager.emby_service.add_to_refresh_queue(strm_path)
+                service_manager.emby_service.add_to_refresh_queue(strm_path, media_info=media_info)
                 logger.debug(f"已将STRM文件添加到Emby刷新队列: {strm_path}")
             
             return True

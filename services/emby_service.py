@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 class EmbyRefreshItem:
     """表示需要刷新的Emby项目"""
-    def __init__(self, strm_path: str, timestamp: float = None, retry_count: int = 0):
+    def __init__(self, strm_path: str, timestamp: float = None, retry_count: int = 0, media_info: dict = None):
         self.strm_path = strm_path  # STRM文件路径
         self.timestamp = timestamp or time.time()  # 计划刷新时间
         self.retry_count = retry_count  # 重试次数
@@ -25,6 +25,7 @@ class EmbyRefreshItem:
         self.status = "pending"  # 状态：pending, processing, success, failed
         self.last_error = None  # 最后的错误信息
         self.next_retry_time = self.timestamp  # 下次重试时间
+        self.media_info = media_info or {}  # 媒体信息，包含原始路径、文件名等
 
     def to_dict(self) -> Dict:
         """转换为字典，用于序列化"""
@@ -35,7 +36,8 @@ class EmbyRefreshItem:
             "item_id": self.item_id,
             "status": self.status,
             "last_error": self.last_error,
-            "next_retry_time": getattr(self, "next_retry_time", self.timestamp)
+            "next_retry_time": getattr(self, "next_retry_time", self.timestamp),
+            "media_info": self.media_info
         }
 
     @classmethod
@@ -44,7 +46,8 @@ class EmbyRefreshItem:
         item = cls(
             strm_path=data["strm_path"],
             timestamp=data.get("timestamp", time.time()),
-            retry_count=data.get("retry_count", 0)
+            retry_count=data.get("retry_count", 0),
+            media_info=data.get("media_info", {})
         )
         item.item_id = data.get("item_id")
         item.status = data.get("status", "pending")
@@ -70,10 +73,13 @@ class EmbyService:
             logger.warning("Emby配置不完整，服务将不可用")
             self.emby_enabled = False
         
+        # 创建缓存目录
+        cache_dir = "/cache"
+        os.makedirs(cache_dir, exist_ok=True)
+        
         # 刷新队列
         self.refresh_queue: List[EmbyRefreshItem] = []
-        self.queue_file = Path("data/emby_refresh_queue.json")
-        self.queue_file.parent.mkdir(exist_ok=True)
+        self.queue_file = Path(os.path.join(cache_dir, "emby_refresh_queue.json"))
         
         # 加载刷新队列
         self._load_refresh_queue()
@@ -86,10 +92,18 @@ class EmbyService:
         self.initial_delay = 1800  # 30分钟
         self.retry_delays = [3600, 7200, 14400, 28800]  # 1小时, 2小时, 4小时, 8小时
         self.max_retries = len(self.retry_delays)
+        
+        # 媒体路径到Emby ID的映射缓存
+        self.path_to_id_cache = {}
+        self.cache_file = Path(os.path.join(cache_dir, "emby_path_cache.json"))
+        self._load_path_cache()
     
     def _load_refresh_queue(self):
         """从文件加载刷新队列"""
         try:
+            # 确保缓存目录存在
+            os.makedirs(os.path.dirname(self.queue_file), exist_ok=True)
+            
             if self.queue_file.exists():
                 with open(self.queue_file, 'r', encoding='utf-8') as f:
                     data = json.load(f)
@@ -105,6 +119,9 @@ class EmbyService:
     def _save_refresh_queue(self):
         """保存刷新队列到文件"""
         try:
+            # 确保缓存目录存在
+            os.makedirs(os.path.dirname(self.queue_file), exist_ok=True)
+            
             data = [item.to_dict() for item in self.refresh_queue]
             with open(self.queue_file, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
@@ -112,136 +129,136 @@ class EmbyService:
         except Exception as e:
             logger.error(f"保存刷新队列失败: {e}")
     
-    def add_to_refresh_queue(self, strm_path: str):
+    def add_to_refresh_queue(self, strm_path: str, media_info: dict = None):
         """添加STRM文件到刷新队列"""
         # 如果Emby功能未开启，不添加到队列
         if not self.emby_enabled:
             logger.debug(f"Emby刷库功能未启用，不添加到刷新队列: {strm_path}")
             return
             
-        # 检查是否已在队列中
-        for item in self.refresh_queue:
-            if item.strm_path == strm_path and item.status in ["pending", "processing"]:
-                logger.info(f"STRM文件已在刷新队列中: {strm_path}")
+        try:
+            # 规范化路径格式，确保Windows和Linux路径格式一致
+            strm_path = str(strm_path).replace('\\', '/')
+            # 记录详细的文件信息
+            file_exists = os.path.exists(strm_path)
+            file_size = os.path.getsize(strm_path) if file_exists else 0
+            logger.info(f"处理STRM文件添加到刷新队列: {strm_path}")
+            logger.info(f"文件状态: {'存在' if file_exists else '不存在'}, 大小: {file_size} 字节")
+            
+            # 检查文件是否存在，不存在则记录警告但仍尝试添加到队列
+            if not file_exists:
+                logger.warning(f"STRM文件不存在: {strm_path}，但仍将添加到队列")
+                
+            # 检查是否已在队列中
+            duplicate = False
+            for item in self.refresh_queue:
+                if item.strm_path == strm_path and item.status in ["pending", "processing"]:
+                    logger.info(f"STRM文件已在刷新队列中: {strm_path}, 状态: {item.status}")
+                    duplicate = True
+                    break
+                    
+            if duplicate:
                 return
-        
-        # 添加到队列，设置延迟时间
-        refresh_time = time.time() + self.initial_delay
-        item = EmbyRefreshItem(strm_path, refresh_time)
-        self.refresh_queue.append(item)
-        
-        # 保存队列
-        self._save_refresh_queue()
-        logger.info(f"已将STRM文件添加到刷新队列: {strm_path}，计划刷新时间: {datetime.fromtimestamp(refresh_time).strftime('%Y-%m-%d %H:%M:%S')}")
+            
+            # 分析文件以获取更多调试信息
+            filename = os.path.basename(strm_path)
+            dirname = os.path.dirname(strm_path)
+            
+            # 补充媒体信息(如果未提供)
+            if not media_info:
+                media_info = {
+                    "path": strm_path,
+                    "filename": filename,
+                    "dirname": dirname,
+                    "created_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                }
+            
+            # 尝试从文件名中解析媒体信息
+            if not media_info.get("title"):
+                name_without_ext = os.path.splitext(filename)[0]
+                media_info["title"] = name_without_ext
+            
+            # 添加到队列，设置延迟时间
+            refresh_time = time.time() + self.initial_delay
+            next_time_str = datetime.fromtimestamp(refresh_time).strftime('%Y-%m-%d %H:%M:%S')
+            logger.info(f"添加到刷新队列: {filename}")
+            logger.info(f"目录: {dirname}")
+            logger.info(f"计划刷新时间: {next_time_str} (延迟{self.initial_delay/60:.1f}分钟)")
+            
+            item = EmbyRefreshItem(strm_path, refresh_time, 0, media_info)
+            self.refresh_queue.append(item)
+            
+            # 保存队列
+            self._save_refresh_queue()
+            
+            # 记录当前队列状态
+            pending_count = sum(1 for item in self.refresh_queue if item.status == "pending")
+            processing_count = sum(1 for item in self.refresh_queue if item.status == "processing")
+            success_count = sum(1 for item in self.refresh_queue if item.status == "success")
+            failed_count = sum(1 for item in self.refresh_queue if item.status == "failed")
+            
+            logger.info(f"当前队列状态: 总计{len(self.refresh_queue)}个项目")
+            logger.info(f"待处理: {pending_count}, 处理中: {processing_count}, 成功: {success_count}, 失败: {failed_count}")
+            
+        except Exception as e:
+            logger.error(f"添加STRM文件到刷新队列时出错: {strm_path}, 错误: {str(e)}")
+            # 记录异常堆栈
+            import traceback
+            logger.error(f"异常详情: {traceback.format_exc()}")
     
     def convert_to_emby_path(self, strm_path: str) -> str:
         """将STRM文件路径转换为Emby中的路径"""
-        # 处理路径中的反斜杠
+        # 统一路径格式：使用正斜杠，去除末尾斜杠
         strm_path = strm_path.replace('\\', '/')
         strm_root = self.strm_root_path.replace('\\', '/')
         emby_root = self.emby_root_path.replace('\\', '/')
         
-        logger.info(f"==== 路径转换详细日志 ====")
-        logger.info(f"转换路径: {strm_path}")
-        logger.info(f"STRM根路径: {strm_root}")
-        logger.info(f"Emby根路径: {emby_root}")
-        
         # 去除路径末尾的斜杠
-        if strm_root.endswith('/'):
-            strm_root = strm_root[:-1]
-            logger.info(f"去除末尾斜杠后的STRM根路径: {strm_root}")
-            
-        if emby_root.endswith('/'):
-            emby_root = emby_root[:-1]
-            logger.info(f"去除末尾斜杠后的Emby根路径: {emby_root}")
-            
-        # 标准化路径（确保开头的斜杠一致）
+        strm_root = strm_root.rstrip('/')
+        emby_root = emby_root.rstrip('/')
+        
+        logger.info(f"路径转换: STRM={strm_path}, STRM根路径={strm_root}, Emby根路径={emby_root}")
+        
+        # 标准化路径（确保处理各种路径格式）
         normalized_strm_path = '/' + strm_path.lstrip('/')
         normalized_strm_root = '/' + strm_root.lstrip('/')
         
-        logger.info(f"标准化后的STRM路径: {normalized_strm_path}")
-        logger.info(f"标准化后的STRM根路径: {normalized_strm_root}")
-        
-        # 检查路径是否匹配
+        # 直接替换根路径部分
         if normalized_strm_path.startswith(normalized_strm_root):
             # 提取相对路径
             relative_path = normalized_strm_path[len(normalized_strm_root):].lstrip('/')
             emby_path = f"{emby_root}/{relative_path}"
-            logger.info(f"匹配成功 - 标准化路径匹配: {strm_path} -> {emby_path}")
+            logger.info(f"路径转换成功: {strm_path} -> {emby_path}")
             return emby_path
         
-        # 检查不带前导斜杠的情况
-        strm_root_no_slash = strm_root.lstrip('/')
-        if strm_path.startswith(strm_root_no_slash):
-            # 提取相对路径
-            relative_path = strm_path[len(strm_root_no_slash):].lstrip('/')
-            emby_path = f"{emby_root}/{relative_path}"
-            logger.info(f"匹配成功 - 无斜杠路径匹配: {strm_path} -> {emby_path}")
-            return emby_path
-            
-        # 如果以上都不匹配，尝试直接查找非路径部分
+        # 尝试从路径提取媒体相对路径
         try:
-            # 获取最有可能的相对路径
-            normalized_path = strm_path.lstrip('/')
-            normalized_root = strm_root.lstrip('/')
+            # 分析路径结构
+            strm_parts = strm_path.split('/')
+            # 查找常见媒体类型目录名
+            media_types = ['电影', '电视剧', '动漫', 'Movies', 'TV Shows', 'Anime']
             
-            logger.info(f"尝试部分匹配 - 标准化后的STRM路径(无斜杠): {normalized_path}")
-            logger.info(f"尝试部分匹配 - 标准化后的STRM根路径(无斜杠): {normalized_root}")
-            
-            # 检查路径中是否包含根路径的最后一部分
-            root_parts = normalized_root.split('/')
-            logger.info(f"根路径的组成部分: {root_parts}")
-            
-            if root_parts and root_parts[-1] in normalized_path:
-                # 查找根目录的最后一部分在路径中的位置
-                pos = normalized_path.find(root_parts[-1])
-                logger.info(f"找到根目录最后部分 '{root_parts[-1]}' 在路径中的位置: {pos}")
-                
-                if pos >= 0:
-                    # 找到根目录的最后一部分后的路径
-                    end_pos = pos + len(root_parts[-1])
-                    relative_path = normalized_path[end_pos:].lstrip('/')
+            for idx, part in enumerate(strm_parts):
+                if part in media_types and idx < len(strm_parts) - 1:
+                    # 找到媒体类型目录，取其后的路径作为相对路径
+                    relative_path = '/'.join(strm_parts[idx:])
                     emby_path = f"{emby_root}/{relative_path}"
-                    logger.info(f"匹配成功 - 部分匹配路径转换: {strm_path} -> {emby_path}")
+                    logger.info(f"基于媒体类型的路径转换: {strm_path} -> {emby_path}")
                     return emby_path
-        except Exception as e:
-            logger.warning(f"尝试部分匹配路径时出错: {str(e)}")
-        
-        # 如果不能转换，返回原路径并记录警告
-        logger.warning(f"无法转换路径: {strm_path}，STRM根路径: {strm_root}, Emby根路径: {emby_root}")
-        
-        # 最后尝试直接使用Emby根路径加相对路径
-        try:
-            # 尝试提取相对路径的另一种方法
-            # 使用STRM路径的目录结构，从后往前匹配
-            strm_parts = normalized_path.split('/')
-            logger.info(f"尝试使用STRM路径的目录结构: {strm_parts}")
             
-            # 提取电视剧/电影名称和季信息等
+            # 最后尝试：如果是多层路径，尝试使用最后2-3层
             if len(strm_parts) >= 3:
-                # 假设格式为 [media_type]/[series_name]/[season]/[episode.strm]
-                file_name = strm_parts[-1]  # 文件名
-                season_dir = strm_parts[-2] if len(strm_parts) > 1 else ""
-                series_dir = strm_parts[-3] if len(strm_parts) > 2 else ""
-                media_type = strm_parts[-4] if len(strm_parts) > 3 else ""
+                # 取最后3层路径（通常是媒体类型/标题/文件）
+                relative_path = '/'.join(strm_parts[-3:])
+                emby_path = f"{emby_root}/{relative_path}"
+                logger.info(f"基于路径结构的转换: {strm_path} -> {emby_path}")
+                return emby_path
                 
-                logger.info(f"尝试从路径结构提取: 媒体类型={media_type}, 系列={series_dir}, 季={season_dir}, 文件={file_name}")
-                
-                # 构建Emby根路径下的相对路径
-                if media_type and series_dir and (season_dir or file_name):
-                    relative_path = "/".join(filter(None, [media_type, series_dir, season_dir, file_name]))
-                    emby_path = f"{emby_root}/{relative_path}"
-                    logger.info(f"回退方案 - 使用路径结构构建: {strm_path} -> {emby_path}")
-                    return emby_path
-            
-            # 假设strm_path是相对于STRM根目录的路径，直接拼接
-            relative_path = strm_path.lstrip('/')
-            emby_path = f"{emby_root}/{relative_path}"
-            logger.info(f"回退方案 - 直接拼接路径: {strm_path} -> {emby_path}")
-            return emby_path
+            # 如果所有尝试都失败，返回原始路径
+            logger.warning(f"无法转换路径，使用原始路径: {strm_path}")
+            return strm_path
         except Exception as e:
-            logger.error(f"回退路径转换失败: {str(e)}")
-            logger.info(f"使用原始路径作为Emby路径: {strm_path}")
+            logger.error(f"路径转换失败: {str(e)}")
             return strm_path
     
     def parse_media_info_from_path(self, path: str) -> Dict[str, Any]:
@@ -438,83 +455,112 @@ class EmbyService:
     async def search_by_name(self, name: str) -> List[Dict]:
         """通过名称搜索Emby媒体项目"""
         try:
+            # 空白检查
+            if not name or len(name.strip()) < 2:
+                logger.warning(f"搜索名称太短或为空: '{name}'")
+                return []
+                
+            # 预处理名称，去除常见的噪音字符
+            original_name = name
+            name = name.replace('.', ' ').replace('_', ' ')  # 替换常见分隔符为空格
+            name = re.sub(r'\s+', ' ', name).strip()  # 合并多个空格并去除首尾空格
+            
             # 确保emby_url是合法的URL
             if not self.emby_url or not self.emby_url.startswith(('http://', 'https://')):
                 logger.error(f"无效的Emby API URL: {self.emby_url}")
                 return []
             
-            # URL编码搜索名称
-            from urllib.parse import quote
-            encoded_name = quote(name)
-            logger.info(f"【请求准备】原始搜索名称: '{name}', URL编码后: '{encoded_name}'")
-            
-            # 构建搜索API URL - 修复路径重复问题
-            base_url = self.emby_url
-            if base_url.endswith('/'):
-                base_url = base_url[:-1]  # 移除末尾的斜杠
-                
+            # 构建搜索API URL
+            base_url = self.emby_url.rstrip('/')
             url = f"{base_url}/Items"
+            
+            # 记录原始搜索名称和处理后的名称
+            logger.info(f"准备搜索 - 原始名称: '{original_name}' -> 处理后: '{name}'")
+            
+            # URL编码搜索名称
+            encoded_name = quote(name)
             
             params = {
                 "api_key": self.api_key,
-                "SearchTerm": encoded_name,  # 使用编码后的名称
+                "SearchTerm": encoded_name,
                 "Recursive": "true",
-                "IncludeItemTypes": "Movie,Series,Episode",
-                "Limit": 10,
-                "Fields": "Path,ParentId"
+                "IncludeItemTypes": "Movie,Series,Episode,Season",
+                "Limit": 15,  # 增加返回数量
+                "Fields": "Path,ParentId,Overview,ProductionYear",
+                "EnableTotalRecordCount": "false"  # 提高性能
             }
             
-            # 构建完整URL用于调试（包含参数，使用urlencode）
-            from urllib.parse import urlencode
+            # 构建完整URL用于调试（包含参数）
             params_no_api = {k: v for k, v in params.items() if k != "api_key"}
             params_no_api["api_key"] = "API_KEY_HIDDEN"  # 隐藏API密钥
-            full_url_safe = f"{url}?{urlencode(params_no_api, safe='')}"
-            logger.info(f"【EMBY请求】发送请求: GET {full_url_safe}")
             
-            # 记录详细的请求参数
-            for k, v in params_no_api.items():
-                logger.info(f"【请求参数】{k}: {v}")
-            
-            # 记录curl命令（方便复制粘贴测试）
-            curl_command = f"curl -X GET \"{url}?{urlencode(params, safe='')}\""
-            curl_safe = curl_command.replace(self.api_key, "API_KEY_HIDDEN")
-            logger.info(f"【调试命令】{curl_safe}")
+            logger.info(f"发送Emby搜索请求: {url}?{urlencode(params_no_api)}")
             
             # 发送请求
             async with httpx.AsyncClient() as client:
-                logger.info(f"【网络请求】开始向Emby发送请求...")
+                logger.info(f"开始搜索: '{name}'")
                 response = await client.get(url, params=params, timeout=30)
-                logger.info(f"【网络请求】收到响应，状态码: {response.status_code}")
-                
-                # 记录实际发送的URL（从响应对象获取）
-                actual_url = str(response.url).replace(self.api_key, "API_KEY_HIDDEN")
-                logger.info(f"【实际请求URL】{actual_url}")
+                logger.info(f"收到响应，状态码: {response.status_code}")
                 
                 if response.status_code == 200:
                     data = response.json()
                     items = data.get("Items", [])
                     
-                    # 记录原始响应数据
-                    logger.info(f"【响应数据】{data}")
-                    
                     if items:
-                        logger.info(f"【搜索结果】搜索\"{name}\"找到 {len(items)} 个结果")
-                        for idx, item in enumerate(items):
-                            logger.info(f"  [{idx+1}] {item.get('Type')}: {item.get('Name')} (ID: {item.get('Id')})")
+                        logger.info(f"搜索'{name}'找到 {len(items)} 个结果")
+                        
+                        # 记录前几个搜索结果
+                        for idx, item in enumerate(items[:min(5, len(items))]):
+                            logger.info(f"  [{idx+1}] {item.get('Type')}: {item.get('Name')} ({item.get('ProductionYear', 'N/A')}) - ID: {item.get('Id')}")
+                            
+                        # 尝试进行更精确的匹配排序
+                        name_lower = name.lower()
+                        scored_items = []
+                        
+                        for item in items:
+                            item_name = item.get('Name', '').lower()
+                            score = 0
+                            
+                            # 完全匹配得高分
+                            if item_name == name_lower:
+                                score += 100
+                            # 包含完整关键词得中等分数
+                            elif name_lower in item_name:
+                                score += 60
+                            # 部分匹配得低分
+                            elif any(word in item_name for word in name_lower.split() if len(word) > 3):
+                                score += 30
+                                
+                            # 记录每项的得分
+                            scored_items.append((item, score))
+                        
+                        # 按分数排序
+                        scored_items.sort(key=lambda x: x[1], reverse=True)
+                        
+                        # 返回按分数排序后的结果
+                        if any(score > 0 for _, score in scored_items):
+                            logger.info(f"根据相关性排序后的结果:")
+                            for idx, (item, score) in enumerate(scored_items[:5]):
+                                if score > 0:
+                                    logger.info(f"  [{idx+1}] 分数{score}: {item.get('Type')}: {item.get('Name')}")
+                            
+                            return [item for item, score in scored_items if score > 0]
+                        
+                        # 如果没有找到相关性高的结果，返回原始结果
+                        return items
                     else:
-                        logger.warning(f"【搜索结果】搜索\"{name}\"未找到任何结果。原始响应: {data}")
-                    
-                    return items
+                        logger.warning(f"搜索'{name}'未找到结果")
+                        return []
                 else:
-                    logger.error(f"【请求失败】搜索失败，状态码: {response.status_code}")
-                    logger.error(f"【错误响应】{response.text[:500]}")
-                    logger.error(f"【请求URL】{actual_url}")
+                    logger.error(f"搜索失败，状态码: {response.status_code}")
+                    logger.error(f"错误响应: {response.text[:500]}")
             
             return []
         except Exception as e:
-            logger.error(f"【异常】通过名称搜索失败: {str(e)}")
+            logger.error(f"搜索'{name}'失败: {str(e)}")
+            # 记录完整的异常堆栈，方便调试
             import traceback
-            logger.error(f"【异常详情】{traceback.format_exc()}")
+            logger.error(f"完整异常: {traceback.format_exc()}")
             return []
     
     async def extract_media_name_from_strm(self, strm_path: str) -> Dict:
@@ -525,11 +571,19 @@ class EmbyService:
             name_without_ext = os.path.splitext(filename)[0]
             full_path = str(strm_path).replace('\\', '/')
             
+            # 提取文件所在目录和父目录信息
+            parent_dir = os.path.dirname(strm_path)
+            parent_name = os.path.basename(parent_dir)
+            grandparent_dir = os.path.dirname(parent_dir)
+            grandparent_name = os.path.basename(grandparent_dir)
+            
+            logger.info(f"提取媒体信息 - 文件: {filename}, 父目录: {parent_name}, 祖父目录: {grandparent_name}")
+            
             # 根据路径判断媒体类型
             media_type = "Unknown"
-            if "电影" in full_path:
+            if any(keyword in full_path for keyword in ["电影", "Movies", "movie", "/movies/"]):
                 media_type = "Movie"
-            elif any(keyword in full_path for keyword in ["电视剧", "动漫", "综艺"]):
+            elif any(keyword in full_path for keyword in ["电视剧", "TV", "Series", "tv", "/shows/"]):
                 media_type = "TV"
             
             logger.info(f"根据路径识别媒体类型: {media_type}, 路径: {full_path}")
@@ -537,50 +591,96 @@ class EmbyService:
             # 解析媒体信息
             media_info = {
                 "type": media_type,
-                "name": name_without_ext
+                "name": name_without_ext,
+                "parent_dir": parent_name,
+                "grandparent_dir": grandparent_name
             }
             
-            # 匹配电视剧格式: "洛基 - S02E05 - 第 5 集"
+            # 匹配电视剧格式，支持多种命名模式
+            # 模式1: "洛基 - S02E05 - 第 5 集"
+            # 模式2: "Show.S01E01.Episode"
+            # 模式3: "Show.201.Episode"
             import re
-            tv_match = re.search(r'^(.+?) - S(\d+)E(\d+)(?:\s*-\s*(.+))?', name_without_ext)
             
-            if tv_match and (media_type == "TV" or media_type == "Unknown"):
-                series_name = tv_match.group(1).strip()
-                season_num = int(tv_match.group(2))
-                episode_num = int(tv_match.group(3))
-                
-                media_info = {
-                    "type": "Episode",
-                    "series_name": series_name,
-                    "season": season_num,
-                    "episode": episode_num
-                }
-                
-                if tv_match.group(4):
-                    media_info["episode_title"] = tv_match.group(4).strip()
-                
-                logger.info(f"识别为剧集: {series_name} S{season_num:02d}E{episode_num:02d}")
-                return media_info
+            # 尝试多种电视剧格式匹配
+            tv_patterns = [
+                r'^(.+?) - S(\d+)E(\d+)(?:\s*-\s*(.+))?',  # 模式1
+                r'^(.+?)[\.\s]+S(\d+)E(\d+)(?:[\.\s]+(.+))?',  # 模式2
+                r'^(.+?)[\.\s]+(?:S)?(\d)(\d{2})(?:[\.\s]+(.+))?',  # 模式3
+            ]
+            
+            for pattern in tv_patterns:
+                tv_match = re.search(pattern, name_without_ext)
+                if tv_match and (media_type == "TV" or media_type == "Unknown"):
+                    series_name = tv_match.group(1).strip().replace('.', ' ')
+                    season_num = int(tv_match.group(2))
+                    episode_num = int(tv_match.group(3))
+                    
+                    # 如果季目录名称比文件名更清晰，使用季目录名称
+                    if parent_name.lower().startswith(('season', 's0', 's1', '第')):
+                        # 父目录是季目录，祖父目录可能是系列名称
+                        if len(grandparent_name) > 3:  # 只有当祖父目录名称足够长时才使用
+                            series_name = grandparent_name
+                    
+                    media_info = {
+                        "type": "Episode",
+                        "series_name": series_name,
+                        "season": season_num,
+                        "episode": episode_num,
+                        "parent_dir": parent_name,
+                        "grandparent_dir": grandparent_name
+                    }
+                    
+                    if len(tv_match.groups()) > 3 and tv_match.group(4):
+                        media_info["episode_title"] = tv_match.group(4).strip().replace('.', ' ')
+                    
+                    logger.info(f"识别为剧集: {series_name} S{season_num:02d}E{episode_num:02d}")
+                    return media_info
+            
+            # 检查是否可能是季文件夹中的剧集
+            if parent_name.lower().startswith(('season', 's0', 's1', '第')) and len(grandparent_name) > 3:
+                # 尝试从文件名提取集号
+                ep_match = re.search(r'E(\d+)|第(\d+)集|(\d+)(?!.*\d)', name_without_ext)
+                if ep_match:
+                    # 找到第一个非空的组作为集号
+                    episode_num = next((int(g) for g in ep_match.groups() if g), 1)
+                    
+                    # 从季目录名提取季号
+                    season_match = re.search(r'Season\s*(\d+)|S(\d+)|第(\d+)季', parent_name)
+                    season_num = 1  # 默认为第一季
+                    if season_match:
+                        # 找到第一个非空的组作为季号
+                        season_num = next((int(g) for g in season_match.groups() if g), 1)
+                    
+                    media_info = {
+                        "type": "Episode",
+                        "series_name": grandparent_name,
+                        "season": season_num,
+                        "episode": episode_num,
+                        "parent_dir": parent_name,
+                        "grandparent_dir": grandparent_name
+                    }
+                    
+                    logger.info(f"从目录结构识别为剧集: {grandparent_name} S{season_num:02d}E{episode_num:02d}")
+                    return media_info
             
             # 匹配电影格式，提取年份
-            movie_match = re.search(r'^(.+?)(?:\s*\((\d{4})\))?', name_without_ext)
+            movie_match = re.search(r'^(.+?)(?:\s*[\(\[（](\d{4})[\)\]）])?', name_without_ext)
             if movie_match and (media_type == "Movie" or media_type == "Unknown"):
                 title = movie_match.group(1).strip()
                 
-                # 清理电影标题中的额外信息（如分辨率、音频编码等）
-                # 移除类似" - 1080p"," - 蓝光"," - HC"等后缀
-                title = re.sub(r'\s*-\s*\d+[pP].*$', '', title)
+                # 清理电影标题中的额外信息
+                title = re.sub(r'\s*-\s*\d+p\s*', '', title)
                 title = re.sub(r'\s*-\s*[^(]*$', '', title)
                 title = title.strip()
                 
-                # 从目录名中获取更干净的电影名称（通常不含分辨率等信息）
-                dir_name = os.path.basename(os.path.dirname(strm_path))
-                dir_title_match = re.search(r'^(.+?)(?:\s*\((\d{4})\))?', dir_name)
+                # 从目录名中获取更干净的电影名称
+                dir_title_match = re.search(r'^(.+?)(?:\s*[\(\[（](\d{4})[\)\]）])?', parent_name)
                 
                 if dir_title_match:
                     dir_title = dir_title_match.group(1).strip()
                     # 如果目录名看起来更简洁，使用目录名作为标题
-                    if len(dir_title) > 0 and len(dir_title) < len(title):
+                    if len(dir_title) > 3 and (len(dir_title) < len(title) or "." in title):
                         logger.info(f"使用目录名作为电影标题: '{title}' -> '{dir_title}'")
                         title = dir_title
                 
@@ -589,21 +689,20 @@ class EmbyService:
                     "title": title,
                 }
                 
-                # 提取年份（如果有）
+                # 提取年份（优先从文件名，其次从目录名）
                 if movie_match.group(2):
                     media_info["year"] = int(movie_match.group(2))
-                elif dir_title_match and dir_title_match.group(2):
-                    # 如果文件名中没有年份但目录名中有，使用目录名中的年份
+                elif dir_title_match and len(dir_title_match.groups()) > 1 and dir_title_match.group(2):
                     media_info["year"] = int(dir_title_match.group(2))
                 
                 logger.info(f"识别为电影: {title} ({media_info.get('year', '未知年份')})")
                 return media_info
             
-            logger.info(f"媒体类型识别结果: {media_type}, 名称: {name_without_ext}")
+            logger.info(f"默认媒体类型: {media_type}, 名称: {name_without_ext}")
             return media_info
         except Exception as e:
             logger.error(f"提取媒体名称出错: {str(e)}")
-            return {"type": "Unknown", "name": ""}
+            return {"type": "Unknown", "name": os.path.basename(strm_path)}
     
     async def find_episode_by_info(self, series_name: str, season_num: int, episode_num: int) -> Optional[Dict]:
         """通过系列名称和集数查找剧集"""
@@ -756,152 +855,140 @@ class EmbyService:
             # 记录原始STRM路径
             logger.info(f"开始查找STRM对应的Emby项目: {strm_path}")
             
-            # 从STRM文件名提取媒体信息
-            media_info = await self.extract_media_name_from_strm(strm_path)
-            logger.info(f"从STRM提取的媒体信息: {media_info}")
+            # 保存原始路径用于备用方案
+            original_path = strm_path
             
-            # 提取STRM文件所在的目录路径，用于分析媒体类型
-            strm_dir = os.path.dirname(strm_path)
-            logger.info(f"STRM所在目录: {strm_dir}")
-            
-            # 提取季信息和系列名称
-            parent_dir = os.path.dirname(strm_dir)
-            season_dir = os.path.basename(strm_dir)
-            series_dir = os.path.basename(parent_dir)
-            
-            logger.info(f"目录层次结构: 系列目录={series_dir}, 季目录={season_dir}")
-            
-            # 改进剧集媒体信息，使用目录名和文件名
-            if media_info.get("type") == "Episode":
-                # 使用目录名可能更准确
-                series_from_dir = series_dir.split(" (")[0] if " (" in series_dir else series_dir
-                logger.info(f"从目录提取的系列名称: {series_from_dir}")
-                
-                series_name = media_info.get("series_name")
-                if series_name:  # 确保series_name不为None
-                    logger.info(f"使用系列名称: {series_name} (从文件名) vs {series_from_dir} (从目录)")
-                    
-                    # 检查从文件名提取的系列名称是否可能不准确
-                    if len(series_name) < 4 and len(series_from_dir) > len(series_name):
-                        logger.info(f"文件名中的系列名称可能不准确，改用目录名: {series_from_dir}")
-                        series_name = series_from_dir
-                        media_info["series_name"] = series_from_dir
-            
-            # 根据媒体类型使用不同的查找策略
-            if media_info.get("type") == "Episode":
-                # 查找剧集
-                if media_info.get("series_name"):
-                    logger.info(f"尝试查找系列: {media_info.get('series_name')}")
-                    try:
-                        episode = await self.find_episode_by_info(
-                            media_info.get("series_name", ""),
-                            media_info.get("season", 1),
-                            media_info.get("episode", 1)
-                        )
-                        
-                        if episode:
-                            logger.info(f"成功找到剧集: {episode.get('Name')}")
-                            return episode
-                        else:
-                            logger.warning(f"未找到剧集，尝试使用目录名称查找系列")
-                            # 尝试使用目录名称
-                            series_from_dir = series_dir.split(" (")[0] if " (" in series_dir else series_dir
-                            try:
-                                episode = await self.find_episode_by_info(
-                                    series_from_dir,
-                                    media_info.get("season", 1),
-                                    media_info.get("episode", 1)
-                                )
-                                if episode:
-                                    logger.info(f"使用目录名成功找到剧集: {episode.get('Name')}")
-                                    return episode
-                            except Exception as e:
-                                logger.error(f"使用目录名查找剧集失败: {str(e)}")
-                    except Exception as e:
-                        logger.error(f"查找剧集时出错: {str(e)}")
-                else:
-                    # 没有具体的剧集信息，尝试搜索名称
-                    tv_name = media_info.get("name", "")
-                    if tv_name:
-                        logger.info(f"没有剧集信息，尝试直接搜索TV名称: {tv_name}")
-                        try:
-                            tv_items = await self.search_by_name(tv_name)
-                            for item in tv_items:
-                                if item.get("Type") in ["Series", "Episode"]:
-                                    logger.info(f"找到TV项目: {item.get('Name')}")
-                                    return item
-                        except Exception as e:
-                            logger.error(f"搜索TV名称失败: {str(e)}")
-            elif media_info.get("type") == "Movie":
-                # 查找电影
-                movie_title = media_info.get("title", "") or media_info.get("name", "")
-                movie_year = media_info.get("year")
-                
-                logger.info(f"尝试查找电影: {movie_title} ({movie_year if movie_year else '未知年份'})")
-                
-                try:
-                    # 通过标题和年份搜索电影
-                    movie_items = await self.search_by_name(movie_title)
-                    
-                    # 过滤匹配项
-                    for item in movie_items:
-                        if item.get("Type") == "Movie" and item.get("Name", "").lower() == movie_title.lower():
-                            # 如果有年份，进一步匹配年份
-                            if movie_year and item.get("ProductionYear") == movie_year:
-                                logger.info(f"找到完全匹配的电影: {item.get('Name')} ({item.get('ProductionYear')})")
-                                return item
-                    
-                    # 如果没有完全匹配，返回第一个类型为Movie的结果
-                    for item in movie_items:
-                        if item.get("Type") == "Movie":
-                            logger.info(f"找到最接近的电影: {item.get('Name')} ({item.get('ProductionYear', '未知')})")
-                            return item
-                    
-                    # 尝试更简化的搜索（如果电影名称中包含冒号，尝试只搜索冒号前的部分）
-                    if "：" in movie_title or ":" in movie_title:
-                        simple_title = re.split(r'[：:]', movie_title)[0].strip()
-                        if simple_title and len(simple_title) >= 2 and simple_title != movie_title:
-                            logger.info(f"尝试使用简化电影标题搜索: '{movie_title}' -> '{simple_title}'")
-                            try:
-                                simple_items = await self.search_by_name(simple_title)
-                                
-                                # 检查简化搜索结果
-                                if simple_items:
-                                    for item in simple_items:
-                                        if item.get("Type") == "Movie":
-                                            logger.info(f"使用简化标题找到电影: {item.get('Name')}")
-                                            return item
-                            except Exception as e:
-                                logger.error(f"简化标题搜索失败: {str(e)}")
-                except Exception as e:
-                    logger.error(f"搜索电影失败: {str(e)}")
-            else:
-                # 尝试直接搜索
-                search_name = media_info.get("name", "")
-                if search_name:
-                    logger.info(f"使用文件名直接搜索: {search_name}")
-                    try:
-                        items = await self.search_by_name(search_name)
-                        if items:
-                            # 返回第一个结果
-                            logger.info(f"搜索到结果: {items[0].get('Name')} (类型: {items[0].get('Type')})")
-                            return items[0]
-                    except Exception as e:
-                        logger.error(f"直接搜索失败: {str(e)}")
-            
-            # 旧的查找方法作为备选
+            # 尝试方案1：通过路径直接查询
             try:
                 emby_path = self.convert_to_emby_path(strm_path)
                 if emby_path:
-                    logger.info(f"使用路径转换结果查找: {strm_path} -> {emby_path}")
+                    logger.info(f"方案1 - 使用转换后的路径查询: {emby_path}")
                     item = await self.query_item_by_path(emby_path)
                     if item:
-                        logger.info(f"通过路径找到Emby项目: {strm_path} -> {item.get('Id')}")
+                        logger.info(f"方案1成功 - 通过路径找到Emby项目: ID={item.get('Id')}, 名称={item.get('Name')}")
                         return item
             except Exception as e:
-                logger.error(f"通过路径查找失败: {str(e)}")
+                logger.error(f"方案1失败 - 路径查询出错: {str(e)}")
             
-            logger.warning(f"无法找到Emby项目: {strm_path}")
+            # 尝试方案2：从STRM提取媒体信息并搜索
+            try:
+                media_info = await self.extract_media_name_from_strm(strm_path)
+                logger.info(f"从STRM提取的媒体信息: {media_info}")
+                
+                if media_info.get("type") == "Episode" and media_info.get("series_name"):
+                    logger.info(f"方案2 - 查找剧集: {media_info.get('series_name')} S{media_info.get('season', 1):02d}E{media_info.get('episode', 1):02d}")
+                    episode = await self.find_episode_by_info(
+                        media_info.get("series_name", ""),
+                        media_info.get("season", 1),
+                        media_info.get("episode", 1)
+                    )
+                    
+                    if episode:
+                        logger.info(f"方案2成功 - 找到剧集: {episode.get('Name')}, ID={episode.get('Id')}")
+                        return episode
+                    
+                elif media_info.get("type") == "Movie" and media_info.get("title"):
+                    title = media_info.get("title", "")
+                    year = media_info.get("year", None)
+                    search_text = f"{title}" if not year else f"{title} {year}"
+                    
+                    logger.info(f"方案2 - 搜索电影: {search_text}")
+                    items = await self.search_by_name(search_text)
+                    
+                    if items:
+                        # 筛选电影类型的结果
+                        movie_items = [item for item in items if item.get("Type") == "Movie"]
+                        if movie_items:
+                            # 如果有年份，优先匹配年份相同的电影
+                            if year:
+                                exact_year_items = [item for item in movie_items if item.get("ProductionYear") == year]
+                                if exact_year_items:
+                                    logger.info(f"方案2成功 - 找到电影(精确年份): {exact_year_items[0].get('Name')}, ID={exact_year_items[0].get('Id')}")
+                                    return exact_year_items[0]
+                            
+                            # 返回第一个匹配的电影
+                            logger.info(f"方案2成功 - 找到电影: {movie_items[0].get('Name')}, ID={movie_items[0].get('Id')}")
+                            return movie_items[0]
+            except Exception as e:
+                logger.error(f"方案2失败 - 媒体信息提取或搜索出错: {str(e)}")
+            
+            # 尝试方案3：使用文件名和目录名进行多种组合搜索
+            try:
+                filename = os.path.basename(strm_path)
+                name_without_ext = os.path.splitext(filename)[0]
+                parent_dir = os.path.dirname(strm_path)
+                parent_name = os.path.basename(parent_dir)
+                
+                # 尝试多种搜索组合
+                search_terms = [
+                    name_without_ext,  # 文件名
+                    parent_name,       # 父目录名
+                ]
+                
+                # 如果文件名包含 S00E00 格式，提取系列名
+                series_match = re.search(r'^(.+?)\s*-\s*S\d+E\d+', name_without_ext)
+                if series_match:
+                    search_terms.append(series_match.group(1).strip())
+                
+                # 如果父目录是季目录，使用祖父目录作为系列名
+                if re.search(r'^(?:Season\s*\d+|S\d+|第.+?季)$', parent_name, re.IGNORECASE):
+                    grandparent_dir = os.path.dirname(parent_dir)
+                    grandparent_name = os.path.basename(grandparent_dir)
+                    search_terms.append(grandparent_name)
+                
+                # 搜索不同的名称组合
+                logger.info(f"方案3 - 尝试多种搜索组合: {search_terms}")
+                
+                for term in search_terms:
+                    if not term or len(term) < 2:
+                        continue
+                        
+                    logger.info(f"方案3 - 搜索: {term}")
+                    items = await self.search_by_name(term)
+                    if items:
+                        logger.info(f"方案3成功 - 使用'{term}'找到结果: {items[0].get('Name')}, ID={items[0].get('Id')}")
+                        return items[0]
+            except Exception as e:
+                logger.error(f"方案3失败 - 组合搜索出错: {str(e)}")
+            
+            # 尝试方案4：使用路径的相似性搜索
+            try:
+                logger.info("方案4 - 尝试直接搜索所有媒体库项目并匹配路径")
+                
+                # 将strm路径分解为目录和文件名
+                filename = os.path.basename(strm_path)
+                dirname = os.path.dirname(strm_path)
+                
+                # 在这里可以实现一个更复杂的匹配逻辑，匹配路径的各个部分
+                # 此方案需要与Emby API进行更多交互，可能会很耗时
+                # 这里简化为前面已实现的方案
+                logger.info(f"方案4跳过 - 使用简化逻辑")
+            except Exception as e:
+                logger.error(f"方案4失败 - 路径相似性搜索出错: {str(e)}")
+            
+            # 如果上述所有方法都失败，尝试最后的方法：使用正则表达式提取简化名称进行搜索
+            try:
+                filename = os.path.basename(strm_path)
+                name_without_ext = os.path.splitext(filename)[0]
+                
+                # 移除常见的格式标记和无关字符，只保留关键标题
+                simplified_name = re.sub(r'\s*-\s*.*$', '', name_without_ext)  # 移除 - 之后的内容
+                simplified_name = re.sub(r'\s*\(.*\)', '', simplified_name)    # 移除括号内容
+                simplified_name = re.sub(r'\s*\[.*\]', '', simplified_name)    # 移除方括号内容
+                simplified_name = re.sub(r'\s*\d+p\s*', '', simplified_name)   # 移除分辨率
+                simplified_name = re.sub(r'\s+', ' ', simplified_name)         # 合并空格
+                simplified_name = simplified_name.strip()
+                
+                if simplified_name and len(simplified_name) >= 3 and simplified_name != name_without_ext:
+                    logger.info(f"最终尝试 - 使用简化名称搜索: '{simplified_name}'")
+                    items = await self.search_by_name(simplified_name)
+                    if items:
+                        logger.info(f"最终尝试成功 - 使用简化名称'{simplified_name}'找到: {items[0].get('Name')}, ID={items[0].get('Id')}")
+                        return items[0]
+            except Exception as e:
+                logger.error(f"最终尝试失败 - 简化名称搜索出错: {str(e)}")
+            
+            logger.warning(f"所有方法都失败，无法找到Emby项目: {strm_path}")
             return None
         except Exception as e:
             logger.error(f"查找Emby项目过程中出错: {str(e)}, strm文件: {strm_path}")
@@ -993,20 +1080,156 @@ class EmbyService:
                     try:
                         # 根据STRM文件路径找到Emby中的项目
                         logger.info(f"处理刷新项目: {item.strm_path}")
-                        emby_item = await self.find_emby_item(item.strm_path)
                         
-                        if emby_item:
-                            # 找到项目，保存ID并刷新
-                            item.item_id = emby_item.get("Id")
+                        # 优先使用存储的媒体信息来定位项目
+                        media_info = item.media_info or {}
+                        emby_item = None
+                        item_id = None
+                        
+                        # 方法0: 从缓存中查找
+                        # 首先检查STRM路径是否在缓存中
+                        cached_id = self.get_from_path_cache(item.strm_path)
+                        if cached_id:
+                            logger.info(f"从缓存中找到STRM路径对应的Emby项目ID: {cached_id}")
+                            try:
+                                # 验证ID是否有效
+                                item_info = await self.get_item(cached_id)
+                                if item_info and item_info.get("Id") == cached_id:
+                                    item_id = cached_id
+                                    logger.info(f"缓存中的Emby项目ID有效: {cached_id}")
+                            except Exception as e:
+                                logger.warning(f"缓存中的Emby项目ID无效: {cached_id}, 错误: {str(e)}")
+                        
+                        # 如果源路径在缓存中，也尝试查找
+                        if not item_id and media_info.get("source_path"):
+                            cached_id = self.get_from_path_cache(media_info.get("source_path"))
+                            if cached_id:
+                                logger.info(f"从缓存中找到源路径对应的Emby项目ID: {cached_id}")
+                                try:
+                                    # 验证ID是否有效
+                                    item_info = await self.get_item(cached_id)
+                                    if item_info and item_info.get("Id") == cached_id:
+                                        item_id = cached_id
+                                        logger.info(f"缓存中的Emby项目ID有效: {cached_id}")
+                                except Exception as e:
+                                    logger.warning(f"缓存中的Emby项目ID无效: {cached_id}, 错误: {str(e)}")
+                        
+                        # 如果已从缓存中找到有效ID，直接使用
+                        if item_id:
+                            item.item_id = item_id
+                        else:
+                            # 方法1: 如果有源路径，尝试直接用路径查询
+                            if media_info.get("source_path"):
+                                logger.info(f"方法1: 使用源文件路径查询: {media_info.get('source_path')}")
+                                source_path = media_info.get("source_path")
+                                emby_path = self.convert_to_emby_path(source_path)
+                                if emby_path:
+                                    item_by_path = await self.query_item_by_path(emby_path)
+                                    if item_by_path:
+                                        emby_item = item_by_path
+                                        logger.info(f"方法1成功 - 通过源路径找到Emby项目: {emby_item.get('Name')}")
+                                        # 添加到缓存
+                                        self.add_to_path_cache(
+                                            source_path, 
+                                            emby_item.get("Id"),
+                                            emby_item.get("Type"),
+                                            emby_item.get("Name")
+                                        )
+                                        self.add_to_path_cache(
+                                            item.strm_path, 
+                                            emby_item.get("Id"),
+                                            emby_item.get("Type"),
+                                            emby_item.get("Name")
+                                        )
                             
-                            # 刷新Emby项目
+                            # 方法2: 使用文件名中的标题和年份查询
+                            if not emby_item and media_info.get("title"):
+                                logger.info(f"方法2: 使用媒体标题查询: {media_info.get('title')}")
+                                title = media_info.get("title")
+                                year = None
+                                
+                                # 尝试从标题中提取年份
+                                year_match = re.search(r'\((\d{4})\)', title)
+                                if year_match:
+                                    year = year_match.group(1)
+                                    title = title.replace(f"({year})", "").strip()
+                                    
+                                title_items = await self.search_by_name(title)
+                                if title_items:
+                                    # 如果有年份，优先匹配年份
+                                    if year:
+                                        year_items = [i for i in title_items if i.get("ProductionYear") == int(year)]
+                                        if year_items:
+                                            emby_item = year_items[0]
+                                            logger.info(f"方法2成功 - 通过标题和年份找到Emby项目: {emby_item.get('Name')}")
+                                            # 添加到缓存
+                                            self.add_to_path_cache(
+                                                item.strm_path, 
+                                                emby_item.get("Id"),
+                                                emby_item.get("Type"),
+                                                emby_item.get("Name")
+                                            )
+                                            if media_info.get("source_path"):
+                                                self.add_to_path_cache(
+                                                    media_info.get("source_path"), 
+                                                    emby_item.get("Id"),
+                                                    emby_item.get("Type"),
+                                                    emby_item.get("Name")
+                                                )
+                                    
+                                    # 如果没有匹配到年份，或没有提供年份，使用第一个结果
+                                    if not emby_item and title_items:
+                                        emby_item = title_items[0]
+                                        logger.info(f"方法2成功 - 通过标题找到Emby项目: {emby_item.get('Name')}")
+                                        # 添加到缓存
+                                        self.add_to_path_cache(
+                                            item.strm_path, 
+                                            emby_item.get("Id"),
+                                            emby_item.get("Type"),
+                                            emby_item.get("Name")
+                                        )
+                                        if media_info.get("source_path"):
+                                            self.add_to_path_cache(
+                                                media_info.get("source_path"), 
+                                                emby_item.get("Id"),
+                                                emby_item.get("Type"),
+                                                emby_item.get("Name")
+                                            )
+                            
+                            # 方法3: 使用标准的find_emby_item方法查找
+                            if not emby_item:
+                                logger.info(f"方法3: 使用标准查找方法")
+                                emby_item = await self.find_emby_item(item.strm_path)
+                                if emby_item:
+                                    logger.info(f"方法3成功 - 标准查找方法找到Emby项目: {emby_item.get('Name')}")
+                                    # 添加到缓存
+                                    self.add_to_path_cache(
+                                        item.strm_path, 
+                                        emby_item.get("Id"),
+                                        emby_item.get("Type"),
+                                        emby_item.get("Name")
+                                    )
+                                    if media_info.get("source_path"):
+                                        self.add_to_path_cache(
+                                            media_info.get("source_path"), 
+                                            emby_item.get("Id"),
+                                            emby_item.get("Type"),
+                                            emby_item.get("Name")
+                                        )
+                            
+                            # 如果找到项目，保存ID
+                            if emby_item:
+                                item.item_id = emby_item.get("Id")
+                        
+                        # 刷新Emby项目
+                        if item.item_id:
                             refresh_success = await self.refresh_emby_item(item.item_id)
                             
                             if refresh_success:
                                 # 刷新成功
                                 item.status = "success"
                                 success_count += 1
-                                logger.info(f"成功刷新Emby项目: {emby_item.get('Name', '未知')}")
+                                logger.info(f"成功刷新Emby项目ID: {item.item_id}")
                             else:
                                 # 刷新失败，设置为失败状态
                                 item.status = "failed"
@@ -1167,3 +1390,331 @@ class EmbyService:
         except Exception as e:
             logger.error(f"处理item_id时出错: {item_id}, 错误: {str(e)}")
             return {"Id": item_id, "Name": "处理出错", "Error": str(e)}
+
+    def _load_path_cache(self):
+        """加载路径缓存"""
+        try:
+            # 确保缓存目录存在
+            os.makedirs(os.path.dirname(self.cache_file), exist_ok=True)
+            
+            if self.cache_file.exists():
+                with open(self.cache_file, 'r', encoding='utf-8') as f:
+                    self.path_to_id_cache = json.load(f)
+                logger.info(f"已加载路径缓存，共{len(self.path_to_id_cache)}个记录")
+            else:
+                self.path_to_id_cache = {}
+                logger.info("路径缓存文件不存在，创建新缓存")
+        except Exception as e:
+            logger.error(f"加载路径缓存失败: {e}")
+            self.path_to_id_cache = {}
+    
+    def _save_path_cache(self):
+        """保存路径缓存到文件"""
+        try:
+            # 确保缓存目录存在
+            os.makedirs(os.path.dirname(self.cache_file), exist_ok=True)
+            
+            with open(self.cache_file, 'w', encoding='utf-8') as f:
+                json.dump(self.path_to_id_cache, f, ensure_ascii=False, indent=2)
+            logger.debug(f"已保存路径缓存，共{len(self.path_to_id_cache)}个记录")
+        except Exception as e:
+            logger.error(f"保存路径缓存失败: {e}")
+            
+    def add_to_path_cache(self, path: str, item_id: str, media_type: str = None, title: str = None):
+        """添加路径到ID的映射
+        
+        Args:
+            path: 路径（可以是STRM路径或源文件路径）
+            item_id: Emby媒体项ID
+            media_type: 媒体类型（如Movie, Episode）
+            title: 媒体标题
+        """
+        if not path or not item_id:
+            return
+            
+        # 标准化路径
+        path = str(path).replace('\\', '/').rstrip('/')
+        
+        # 创建或更新缓存条目
+        cache_entry = {
+            "item_id": item_id,
+            "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
+        
+        if media_type:
+            cache_entry["media_type"] = media_type
+            
+        if title:
+            cache_entry["title"] = title
+            
+        # 添加到缓存
+        self.path_to_id_cache[path] = cache_entry
+        self._save_path_cache()
+        logger.debug(f"添加路径映射到缓存: {path} -> {item_id}")
+        
+    def get_from_path_cache(self, path: str) -> Optional[str]:
+        """从路径缓存中获取Emby媒体项ID
+        
+        Args:
+            path: 路径（可以是STRM路径或源文件路径）
+            
+        Returns:
+            Optional[str]: Emby媒体项ID，如果不存在则返回None
+        """
+        if not path:
+            return None
+            
+        # 标准化路径
+        path = str(path).replace('\\', '/').rstrip('/')
+        
+        # 从缓存中获取
+        cache_entry = self.path_to_id_cache.get(path)
+        if cache_entry:
+            logger.debug(f"从缓存中找到路径映射: {path} -> {cache_entry.get('item_id')}")
+            return cache_entry.get("item_id")
+        
+        return None
+        
+    def clear_path_cache(self):
+        """清空路径缓存"""
+        self.path_to_id_cache = {}
+        self._save_path_cache()
+        logger.info("已清空路径缓存")
+
+    async def test_search(self, query: str, mode: str = "name") -> dict:
+        """测试搜索功能
+        
+        Args:
+            query: 搜索查询
+            mode: 搜索模式 (name: 按名称, path: 按路径)
+            
+        Returns:
+            dict: 搜索结果
+        """
+        try:
+            if not self.emby_enabled:
+                return {"success": False, "message": "Emby服务未启用"}
+            
+            results = []
+            
+            if mode == "path":
+                # 转换路径
+                emby_path = self.convert_to_emby_path(query)
+                logger.info(f"测试按路径搜索: 原始路径={query}, 转换后={emby_path}")
+                
+                # 查询媒体项
+                item = await self.query_item_by_path(emby_path)
+                if item:
+                    results.append({
+                        "id": item.get("Id"),
+                        "name": item.get("Name"),
+                        "type": item.get("Type"),
+                        "path": item.get("Path"),
+                        "year": item.get("ProductionYear")
+                    })
+                
+            else:  # 默认按名称搜索
+                logger.info(f"测试按名称搜索: {query}")
+                items = await self.search_by_name(query)
+                
+                # 提取结果
+                for item in items[:10]:  # 最多返回10个结果
+                    results.append({
+                        "id": item.get("Id"),
+                        "name": item.get("Name"),
+                        "type": item.get("Type"),
+                        "path": item.get("Path"),
+                        "year": item.get("ProductionYear")
+                    })
+            
+            # 缓存状态
+            cache_count = len(self.path_to_id_cache)
+            
+            return {
+                "success": True,
+                "query": query,
+                "mode": mode,
+                "result_count": len(results),
+                "results": results,
+                "cache_count": cache_count
+            }
+            
+        except Exception as e:
+            logger.error(f"测试搜索失败: {str(e)}")
+            import traceback
+            return {
+                "success": False,
+                "message": str(e),
+                "error_detail": traceback.format_exc()
+            }
+
+    async def force_refresh(self, path: str) -> dict:
+        """强制刷新指定文件
+        
+        Args:
+            path: 文件路径
+            
+        Returns:
+            dict: 刷新结果
+        """
+        try:
+            if not self.emby_enabled:
+                return {"success": False, "message": "Emby服务未启用"}
+            
+            # 标准化路径
+            path = str(path).replace('\\', '/')
+            
+            # 首先检查是否存在于缓存中
+            emby_id = self.get_from_path_cache(path)
+            
+            if emby_id:
+                logger.info(f"从缓存中找到路径 {path} 对应的Emby项目ID: {emby_id}")
+                # 直接刷新
+                refresh_result = await self.refresh_emby_item(emby_id)
+                if refresh_result:
+                    return {
+                        "success": True,
+                        "message": f"成功刷新Emby项目ID: {emby_id}",
+                        "refresh_method": "cache"
+                    }
+                else:
+                    return {
+                        "success": False,
+                        "message": f"刷新Emby项目失败: {emby_id}",
+                        "refresh_method": "cache"
+                    }
+            
+            # 如果不在缓存中，尝试搜索
+            logger.info(f"在缓存中未找到路径 {path}，尝试搜索Emby")
+            
+            # 尝试通过路径查询
+            emby_path = self.convert_to_emby_path(path)
+            item = await self.query_item_by_path(emby_path)
+            
+            if item:
+                # 添加到缓存
+                self.add_to_path_cache(path, item.get("Id"), item.get("Type"), item.get("Name"))
+                
+                # 刷新
+                refresh_result = await self.refresh_emby_item(item.get("Id"))
+                if refresh_result:
+                    return {
+                        "success": True,
+                        "message": f"成功刷新Emby项目: {item.get('Name')} (ID: {item.get('Id')})",
+                        "refresh_method": "path_query"
+                    }
+                else:
+                    return {
+                        "success": False,
+                        "message": f"刷新Emby项目失败: {item.get('Name')} (ID: {item.get('Id')})",
+                        "refresh_method": "path_query"
+                    }
+            
+            # 如果通过路径查询失败，尝试通过文件名搜索
+            filename = os.path.basename(path)
+            name_without_ext = os.path.splitext(filename)[0]
+            
+            items = await self.search_by_name(name_without_ext)
+            if items:
+                item = items[0]  # 使用第一个匹配结果
+                
+                # 添加到缓存
+                self.add_to_path_cache(path, item.get("Id"), item.get("Type"), item.get("Name"))
+                
+                # 刷新
+                refresh_result = await self.refresh_emby_item(item.get("Id"))
+                if refresh_result:
+                    return {
+                        "success": True,
+                        "message": f"成功刷新Emby项目: {item.get('Name')} (ID: {item.get('Id')})",
+                        "refresh_method": "name_search"
+                    }
+                else:
+                    return {
+                        "success": False,
+                        "message": f"刷新Emby项目失败: {item.get('Name')} (ID: {item.get('Id')})",
+                        "refresh_method": "name_search"
+                    }
+            
+            # 如果所有方法都失败
+            return {
+                "success": False,
+                "message": f"未找到路径 {path} 对应的Emby项目"
+            }
+            
+        except Exception as e:
+            logger.error(f"强制刷新失败: {str(e)}")
+            import traceback
+            return {
+                "success": False,
+                "message": str(e),
+                "error_detail": traceback.format_exc()
+            }
+
+    async def get_queue_status(self) -> dict:
+        """获取刷新队列状态
+        
+        Returns:
+            dict: 队列状态
+        """
+        try:
+            if not self.emby_enabled:
+                return {"success": False, "message": "Emby服务未启用"}
+            
+            # 统计各状态的数量
+            total = len(self.refresh_queue)
+            pending = sum(1 for item in self.refresh_queue if item.status == "pending")
+            processing = sum(1 for item in self.refresh_queue if item.status == "processing")
+            success = sum(1 for item in self.refresh_queue if item.status == "success")
+            failed = sum(1 for item in self.refresh_queue if item.status == "failed")
+            
+            # 获取下一个待处理项的时间
+            next_item = None
+            current_time = time.time()
+            for item in self.refresh_queue:
+                if item.status == "pending" and item.timestamp > current_time:
+                    if next_item is None or item.timestamp < next_item.timestamp:
+                        next_item = item
+            
+            next_time = None
+            if next_item:
+                next_time = datetime.fromtimestamp(next_item.timestamp).strftime('%Y-%m-%d %H:%M:%S')
+            
+            # 获取最近的几个项目详情
+            recent_items = []
+            for item in sorted(self.refresh_queue, key=lambda x: x.timestamp, reverse=True)[:10]:
+                recent_items.append({
+                    "path": item.strm_path,
+                    "status": item.status,
+                    "time": datetime.fromtimestamp(item.timestamp).strftime('%Y-%m-%d %H:%M:%S'),
+                    "retry_count": item.retry_count,
+                    "error": item.last_error
+                })
+            
+            # 缓存状态
+            cache_count = len(self.path_to_id_cache)
+            
+            return {
+                "success": True,
+                "queue_status": {
+                    "total": total,
+                    "pending": pending,
+                    "processing": processing,
+                    "success": success,
+                    "failed": failed,
+                    "next_time": next_time
+                },
+                "recent_items": recent_items,
+                "cache_status": {
+                    "total": cache_count
+                }
+            }
+            
+        except Exception as e:
+            logger.error(f"获取刷新队列状态失败: {str(e)}")
+            import traceback
+            return {
+                "success": False,
+                "message": str(e),
+                "error_detail": traceback.format_exc()
+            }
