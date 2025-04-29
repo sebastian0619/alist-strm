@@ -74,7 +74,7 @@ class EmbyService:
             self.emby_enabled = False
         
         # 创建缓存目录
-        cache_dir = "/cache"
+        cache_dir = "/app/cache"
         os.makedirs(cache_dir, exist_ok=True)
         
         # 刷新队列
