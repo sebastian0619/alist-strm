@@ -907,13 +907,20 @@ async def get_emby_refresh_status():
     try:
         # 检查服务是否开启
         if not service_manager.emby_service.emby_enabled:
+            logger.info("Emby刷库功能未启用，返回disabled状态")
             return {
                 "enabled": False,
-                "message": "Emby刷库功能未启用"
+                "message": "Emby刷库功能未启用",
+                "queue_stats": {"total": 0, "pending": 0, "processing": 0, "success": 0, "failed": 0},
+                "recent_success": [],
+                "recent_failed": [],
+                "queue_items": [],
+                "last_update": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             }
             
         # 获取刷新队列状态
         queue = service_manager.emby_service.refresh_queue
+        logger.info(f"获取Emby刷新队列状态，当前队列长度: {len(queue)}")
         
         # 统计队列状态
         total = len(queue)
@@ -1078,6 +1085,7 @@ async def get_emby_refresh_status():
         status_order = {"processing": 0, "pending": 1, "failed": 2, "success": 3}
         queue_items.sort(key=lambda x: (status_order.get(x["status"], 999), -x["timestamp"]))
         
+        logger.info(f"成功获取Emby刷新队列状态: 共{total}个项目, 待处理{pending}个, 成功{success}个, 失败{failed}个")
         return {
             "enabled": True,
             "is_processing": service_manager.emby_service._is_processing,
@@ -1095,6 +1103,10 @@ async def get_emby_refresh_status():
         }
     except Exception as e:
         logger.error(f"获取Emby刷新队列状态失败: {str(e)}")
+        # 详细记录异常信息
+        import traceback
+        logger.error(f"异常详情: {traceback.format_exc()}")
+        
         # 返回基本信息而不是抛出异常
         return {
             "enabled": True,
@@ -1111,11 +1123,22 @@ async def get_emby_refresh_status():
 async def force_refresh_emby_item(path: str = Query(..., description="STRM文件路径")):
     """强制刷新指定的STRM文件对应的Emby项目"""
     try:
+        logger.info(f"强制刷新Emby项目请求: 路径={path}")
+        
         # 检查服务是否开启
         if not service_manager.emby_service.emby_enabled:
+            logger.warning("Emby刷库功能未启用，拒绝刷新请求")
             return {
                 "success": False,
                 "message": "Emby刷库功能未启用"
+            }
+        
+        # 检查文件是否存在
+        if not os.path.exists(path):
+            logger.warning(f"文件不存在: {path}")
+            return {
+                "success": False,
+                "message": f"文件不存在: {path}"
             }
             
         # 添加到刷新队列，设置为立即刷新
@@ -1127,6 +1150,7 @@ async def force_refresh_emby_item(path: str = Query(..., description="STRM文件
             item.status = "pending"
             item.retry_count = 0
             message = "已将项目移至队列前端，将立即刷新"
+            logger.info(f"项目已在队列中，更新为立即刷新: {path}")
         else:
             # 如果不在队列中，添加到队列
             service_manager.emby_service.add_to_refresh_queue(path)
@@ -1136,6 +1160,7 @@ async def force_refresh_emby_item(path: str = Query(..., description="STRM文件
                     queue_item.timestamp = time.time()
                     break
             message = "已添加到刷新队列，将立即刷新"
+            logger.info(f"新项目已添加到队列并设置为立即刷新: {path}")
             
         # 保存队列
         service_manager.emby_service._save_refresh_queue()
@@ -1145,7 +1170,10 @@ async def force_refresh_emby_item(path: str = Query(..., description="STRM文件
             "message": message
         }
     except Exception as e:
-        logger.error(f"强制刷新Emby项目失败: {str(e)}")
+        logger.error(f"强制刷新Emby项目失败: {path}, 错误: {str(e)}")
+        # 详细记录异常信息
+        import traceback
+        logger.error(f"异常详情: {traceback.format_exc()}")
         return {
             "success": False,
             "message": f"强制刷新失败: {str(e)}"

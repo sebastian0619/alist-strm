@@ -413,77 +413,34 @@ const refreshEmbyStatus = async () => {
     lastRequestTime.value = new Date().toLocaleString();
     console.log('[Emby刷库] API响应:', response.data);
     
-    if (response.data.success) {
-      // 更新Emby启用状态 - 修复判断逻辑
-      // 如果API返回了队列信息，就认为刷库功能已启用
-      if (response.data.data?.enabled !== undefined) {
-        embyStatus.enabled = response.data.data.enabled;
-      } else {
-        // 如果没有明确的enabled字段，但有队列数据，也认为是启用的
-        embyStatus.enabled = true;
-      }
+    // 直接使用后端返回的数据
+    if (response.data) {
+      // 更新Emby启用状态
+      embyStatus.enabled = response.data.enabled === true;
       
-      // 处理统计数据 - 适应多种可能的数据结构
-      const statsData = response.data.data?.stats || 
-                       response.data.data?.queue_stats || 
-                       response.data.data || {};
-      
-      embyStatus.queue_stats = {
-        total: statsData.total || 
-               (statsData.pending_count + statsData.success_count + statsData.failed_count) || 0,
-        pending: statsData.pending || statsData.pending_count || 0,
-        success: statsData.success || statsData.success_count || 0,
-        failed: statsData.failed || statsData.failed_count || 0
+      // 更新统计数据
+      embyStatus.queue_stats = response.data.queue_stats || {
+        total: 0,
+        pending: 0,
+        processing: 0,
+        success: 0,
+        failed: 0
       };
       
-      // 处理队列数据
-      if (response.data.data?.items) {
-        // 如果返回的是完整列表，需要自己分类
-        const allItems = response.data.data.items || [];
-        embyStatus.all_items = allItems;
-        
-        // 按状态分类
-        embyStatus.queue.pending = allItems.filter(item => item.status === 'pending' || !item.status);
-        embyStatus.queue.success = allItems.filter(item => item.status === 'success');
-        embyStatus.queue.failed = allItems.filter(item => item.status === 'failed');
-      } else if (response.data.data?.queue) {
-        // 如果直接返回了分类后的队列
-        embyStatus.queue = response.data.data.queue;
-        embyStatus.all_items = [
-          ...(embyStatus.queue.pending || []),
-          ...(embyStatus.queue.success || []),
-          ...(embyStatus.queue.failed || [])
-        ];
-      } else if (response.data.data?.pending && Array.isArray(response.data.data.pending)) {
-        // 另一种返回格式：直接包含各状态数组
-        embyStatus.queue.pending = response.data.data.pending || [];
-        embyStatus.queue.success = response.data.data.success || [];
-        embyStatus.queue.failed = response.data.data.failed || [];
-        
-        embyStatus.all_items = [
-          ...embyStatus.queue.pending,
-          ...embyStatus.queue.success,
-          ...embyStatus.queue.failed
-        ];
-      }
+      // 更新队列数据
+      embyStatus.queue.pending = response.data.queue_items?.filter(item => item.status === 'pending') || [];
+      embyStatus.queue.success = response.data.recent_success || [];
+      embyStatus.queue.failed = response.data.recent_failed || [];
+      
+      // 更新所有项目
+      embyStatus.all_items = response.data.queue_items || [];
       
       // 设置下次刷新时间
-      if (response.data.data?.next_check) {
-        const timestamp = typeof response.data.data.next_check === 'number' ? 
-                          response.data.data.next_check * 1000 : 
-                          new Date(response.data.data.next_check).getTime();
-        nextRefreshTime.value = new Date(timestamp);
-      }
-      
-      // 如果队列为空但有统计数据，可能需要主动加载队列
-      if (embyStatus.queue_stats.total > 0 && embyStatus.all_items.length === 0) {
-        console.log('[Emby刷库] 统计数据显示有队列项，但返回的队列为空，将加载队列...');
-        loadEmbyQueue();
-      }
+      nextRefreshTime.value = new Date(Date.now() + 30000); // 30秒后刷新
     } else {
       notification.warning({
         message: '加载失败',
-        description: response.data.message || '获取Emby刷新队列状态失败'
+        description: '获取Emby刷新队列状态失败 - 返回数据为空'
       });
     }
   } catch (error) {
@@ -557,10 +514,11 @@ const forceRefreshEmbyItem = async (path) => {
   
   refreshingItem.value = path;
   try {
-    const response = await axios.post('/api/health/emby/refresh/force', { path });
+    // 使用查询参数而不是请求体
+    const response = await axios.post(`/api/health/emby/refresh/force?path=${encodeURIComponent(path)}`);
     console.log('[Emby刷库] 强制刷新响应:', response.data);
     
-    if (response.data.success) {
+    if (response.data) {
       notification.success({
         message: '刷新请求已发送',
         description: response.data.message || '已将项目加入刷新队列'
@@ -570,7 +528,7 @@ const forceRefreshEmbyItem = async (path) => {
     } else {
       notification.error({
         message: '刷新失败',
-        description: response.data.message || '请求成功但返回错误'
+        description: '请求成功但返回错误'
       });
     }
   } catch (error) {
