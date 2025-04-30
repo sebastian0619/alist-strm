@@ -411,16 +411,24 @@ class StrmService:
                 if os.path.basename(path) != filename:
                     full_file_path = f"{path}/{filename}" if not path.endswith('/') else f"{path}{filename}"
                 
+                # 确保路径以 / 开头
+                if not full_file_path.startswith('/'):
+                    full_file_path = '/' + full_file_path
+                
                 # 替换路径前缀：从alist_scan_path替换为output_dir
-                relative_path = full_file_path.replace(self.settings.alist_scan_path, '')
-                download_path = os.path.join(self.settings.output_dir, relative_path.lstrip('/'))
+                if not full_file_path.startswith(self.settings.alist_scan_path):
+                    logger.error(f"文件路径不是以扫描路径开头: {full_file_path}")
+                    logger.error(f"扫描路径前缀: {self.settings.alist_scan_path}")
+                    return False
+                
+                # 计算相对路径
+                relative_path = full_file_path[len(self.settings.alist_scan_path):].lstrip('/')
+                download_path = os.path.join(self.settings.output_dir, relative_path)
                 
                 # 确保目录存在
                 os.makedirs(os.path.dirname(download_path), exist_ok=True)
                 
                 # 构建下载URL
-                if not full_file_path.startswith('/'):
-                    full_file_path = '/' + full_file_path
                 download_url = f"{self.settings.alist_url}/d{quote(full_file_path)}"
                 
                 # 下载文件
@@ -449,41 +457,27 @@ class StrmService:
             if not full_file_path.startswith('/'):
                 full_file_path = '/' + full_file_path
             
-            # 计算相对路径，保持目录结构
-            logger.info(f"计算STRM文件路径, 原始路径: {full_file_path}")
+            # 简化路径转换逻辑
+            logger.info(f"原始路径: {full_file_path}")
             logger.info(f"扫描路径前缀: {self.settings.alist_scan_path}")
             
-            # 方法1: 直接替换前缀,保持完整的目录结构
-            if full_file_path.startswith(self.settings.alist_scan_path):
-                # 正确计算相对路径
-                relative_path = full_file_path[len(self.settings.alist_scan_path):].lstrip('/')
-                logger.info(f"计算得到的相对路径: {relative_path}")
+            # 如果路径不是以alist_scan_path开头，记录错误并返回
+            if not full_file_path.startswith(self.settings.alist_scan_path):
+                logger.error(f"文件路径不是以扫描路径开头: {full_file_path}")
+                logger.error(f"扫描路径前缀: {self.settings.alist_scan_path}")
+                return False
                 
-                # 更改扩展名为.strm
-                base_path, _ = os.path.splitext(relative_path)
-                strm_relative_path = f"{base_path}.strm"
-                
-                # 拼接完整的STRM文件路径
-                strm_path = os.path.join(self.settings.output_dir, strm_relative_path)
-                logger.info(f"最终STRM文件路径: {strm_path}")
-            else:
-                # 回退方案：如果前缀替换失败，尝试保留部分路径结构
-                # 提取文件所在目录结构
-                path_parts = full_file_path.strip('/').split('/')
-                # 确保至少保留最后几层目录结构
-                if len(path_parts) >= 3:
-                    # 使用最后三层路径 (通常是 [媒体类型]/[标题]/[文件名])
-                    relative_path = '/'.join(path_parts[-3:])
-                else:
-                    relative_path = '/'.join(path_parts)
-                    
-                # 更改扩展名为.strm
-                base_path, _ = os.path.splitext(relative_path)
-                strm_relative_path = f"{base_path}.strm"
-                
-                # 拼接完整的STRM文件路径
-                strm_path = os.path.join(self.settings.output_dir, strm_relative_path)
-                logger.info(f"使用备用方案的STRM文件路径: {strm_path}")
+            # 1. 计算相对路径 (从alist_scan_path之后开始)
+            relative_path = full_file_path[len(self.settings.alist_scan_path):].lstrip('/')
+            logger.info(f"相对路径: {relative_path}")
+            
+            # 2. 将扩展名修改为.strm
+            base_path, _ = os.path.splitext(relative_path)
+            strm_relative_path = f"{base_path}.strm"
+            
+            # 3. 根据output_dir构建STRM文件存放路径
+            strm_path = os.path.join(self.settings.output_dir, strm_relative_path)
+            logger.info(f"STRM文件路径: {strm_path}")
             
             # 确保STRM文件所在目录存在
             os.makedirs(os.path.dirname(strm_path), exist_ok=True)
@@ -494,7 +488,7 @@ class StrmService:
                 base_url = self.settings.alist_external_url
             base_url = base_url.rstrip('/')
             
-            # 构建STRM文件内容（即原始文件的URL）
+            # 4. 构建STRM文件内容 - 原始文件的URL (base_url + /d + 原始路径)
             if self.settings.encode:
                 # 进行URL编码，但保留路径分隔符
                 encoded_path = quote(full_file_path)
@@ -507,6 +501,7 @@ class StrmService:
             logger.info(f"处理视频文件: {filename}")
             logger.info(f"源路径: {full_file_path}")
             logger.info(f"STRM文件路径: {strm_path}")
+            logger.info(f"STRM内容URL: {strm_url}")
             
             # 检查文件是否已存在且内容相同
             if os.path.exists(strm_path):
@@ -519,9 +514,6 @@ class StrmService:
             # 写入strm文件
             with open(strm_path, 'w', encoding='utf-8') as f:
                 f.write(strm_url)
-                # 写入额外的元数据行，帮助后续查找
-                # 这里可以考虑添加特殊注释或隐藏字段用于记录路径信息
-                # f.write(f"\n#META:{base_name}")
             
             self._processed_files += 1
             self._total_size += file_info.get('size', 0)
@@ -607,27 +599,27 @@ class StrmService:
             with open(src_strm, 'r', encoding='utf-8') as f:
                 content = f.read().strip()
             
-            # 从URL中提取云盘路径 - 需要考虑可能使用了不同的base_url
-            cloud_path = None
-            
-            # 尝试用alist_url提取
-            if content.startswith(f"{self.settings.alist_url}/d"):
-                cloud_path = content.replace(f"{self.settings.alist_url}/d", "")
-            # 尝试用external_url提取
-            elif hasattr(self.settings, 'alist_external_url') and self.settings.alist_external_url and content.startswith(f"{self.settings.alist_external_url}/d"):
-                cloud_path = content.replace(f"{self.settings.alist_external_url}/d", "")
-            # 如果都不匹配，尝试直接提取/d后面的部分
-            elif "/d" in content:
-                cloud_path = content.split("/d", 1)[1]
-            else:
+            # 从URL中提取云盘路径 - 简化提取逻辑
+            if "/d" not in content:
                 return {"success": False, "message": f"无法从STRM文件中提取云盘路径: {content}"}
+                
+            # 直接提取/d后面的部分作为云盘路径
+            cloud_path = content.split("/d", 1)[1]
             
             # 如果编码了，需要解码
             if self.settings.encode:
                 cloud_path = unquote(cloud_path)
             
-            # 构建目标云盘路径
-            dest_cloud_path = self.settings.alist_scan_path + dest_path[:-5]  # 移除.strm后缀
+            logger.info(f"提取的源云盘路径: {cloud_path}")
+            
+            # 从源文件路径中提取相对路径（去掉.strm后缀）
+            src_relative = src_path[:-5] if src_path.endswith('.strm') else src_path
+            dest_relative = dest_path[:-5] if dest_path.endswith('.strm') else dest_path
+            
+            # 构建目标云盘路径 - 简单替换alist_scan_path后的相对路径部分
+            dest_cloud_path = self.settings.alist_scan_path + dest_relative.lstrip('/')
+            
+            logger.info(f"构建的目标云盘路径: {dest_cloud_path}")
             
             # 移动云盘文件
             if os.path.isdir(src_strm):
