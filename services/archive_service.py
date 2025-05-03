@@ -709,9 +709,20 @@ class ArchiveService:
                 
                 # 3. 构建完整的输出路径，保留原始目录结构
                 # 首先检查是否需要保留媒体类型目录
-                if media_dir_prefix and not rel_file_path.startswith(media_dir_prefix):
-                    # 如果相对路径不包含媒体类型目录，添加它
-                    rel_strm_path = f"{media_dir_prefix}/{rel_file_path}" if media_dir_prefix else rel_file_path
+                if media_dir_prefix:
+                    # 检查相对路径是否已经包含媒体类型目录
+                    # 使用更精确的检查，避免误判子目录名包含媒体类型名的情况
+                    rel_path_parts = rel_file_path.split('/')
+                    media_dir_parts = media_dir_prefix.split('/')
+                    
+                    # 检查第一级目录是否匹配媒体类型目录
+                    if len(rel_path_parts) > 0 and rel_path_parts[0] == media_dir_parts[-1]:
+                        logger.debug(f"相对路径已包含媒体类型目录: {rel_path_parts[0]}")
+                        rel_strm_path = rel_file_path
+                    else:
+                        # 相对路径不包含媒体类型目录，需要添加
+                        logger.debug(f"相对路径不包含媒体类型目录，添加: {media_dir_prefix}")
+                        rel_strm_path = f"{media_dir_prefix}/{rel_file_path}"
                 else:
                     rel_strm_path = rel_file_path
                 
@@ -728,8 +739,16 @@ class ArchiveService:
                 os.makedirs(os.path.dirname(strm_path), exist_ok=True)
                 
                 # 构建完整的目标Alist路径
+                # 参考strm_service的做法:
+                # 1. 确保目标路径以/开头
+                # 2. 确保路径拼接时没有多余的/
+                target_alist_path = target_alist_path.rstrip('/')
+                rel_file_path = rel_file_path.lstrip('/')
+                
+                # 构建完整的文件路径
                 target_file_path = f"{target_alist_path}/{rel_file_path}"
-                # 确保路径以 / 开头
+                
+                # 确保路径以/开头
                 if not target_file_path.startswith('/'):
                     target_file_path = '/' + target_file_path
                 
@@ -743,8 +762,12 @@ class ArchiveService:
                 
                 # 根据全局设置决定是否进行URL编码
                 if strm_service.settings.encode:
-                    # 进行URL编码，但保留路径分隔符
-                    encoded_path = quote(target_file_path)
+                    # 使用与strm_service相同的URL编码方法
+                    # 进行URL编码，保留路径分隔符
+                    path_parts = target_file_path.split('/')
+                    # 对路径部分分别编码，保留斜杠结构
+                    encoded_parts = [quote(part) for part in path_parts if part]
+                    encoded_path = '/' + '/'.join(encoded_parts)
                     strm_url = f"{base_url}/d{encoded_path}"
                 else:
                     # 不进行URL编码
@@ -783,9 +806,16 @@ class ArchiveService:
             if generated_strm_files and hasattr(service_manager, 'emby_service') and service_manager.emby_service:
                 for strm_path in generated_strm_files:
                     # 使用增强的add_to_refresh_queue方法，传递额外的媒体信息
+                    # 从STRM文件路径提取有用的媒体信息
+                    file_basename = os.path.basename(strm_path)
+                    filename_no_ext = os.path.splitext(file_basename)[0]
+                    
+                    # 构建与strm_service一致的媒体信息结构
                     media_info = {
-                        "source_path": strm_path.replace('.strm', '.mkv'),  # 近似源文件路径
-                        "title": os.path.splitext(os.path.basename(strm_path))[0],
+                        "path": strm_path,
+                        "source_path": target_file_path,  # 使用实际的目标Alist路径
+                        "filename": file_basename,
+                        "title": filename_no_ext,
                         "created_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     }
                     service_manager.emby_service.add_to_refresh_queue(strm_path, media_info=media_info)
