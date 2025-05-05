@@ -611,40 +611,30 @@ class ArchiveService:
                     result["success"] = True
                     result["moved_files"] = len(files_info)
                     result["total_size"] = total_size
+                else:
+                    # 正常复制成功情况 - 简化逻辑，不再等待任务完成和验证文件
+                    logger.info("目录复制请求成功，任务已创建")
+                    result["total_size"] = total_size
+                    result["moved_files"] = len(files_info)
                     
-                    # 无论文件是否已存在，都确保STRM文件存在
-                    try:
-                        strm_generated = await self.generate_strm_for_target(dest_alist_path, directory, files_info)
-                        if strm_generated:
-                            logger.info(f"已生成指向目标目录的STRM文件: {dest_alist_path}")
-                    except Exception as e:
-                        logger.error(f"生成STRM文件失败: {str(e)}")
-                        
-                    return result
+                    # 添加到删除队列
+                    if self.settings.archive_delete_source:
+                        self._add_to_pending_deletion(directory)
+                        logger.info(f"已将原目录添加到待删除队列: {directory}")
+                    
+                    result["message"] = (
+                        f"[归档] {full_folder_name}\n"
+                        f"文件数: {len(files_info)}\n"
+                        f"总大小: {total_size / 1024 / 1024 / 1024:.2f} GB"
+                    )
                 
-                # 正常复制成功情况 - 简化逻辑，不再等待任务完成和验证文件
-                logger.info("目录复制请求成功，任务已创建")
-                result["total_size"] = total_size
-                result["moved_files"] = len(files_info)
-                
-                # 立即生成STRM文件，不等待复制完成
+                # 无论是已存在还是正常复制成功，都生成STRM文件
                 try:
                     strm_generated = await self.generate_strm_for_target(dest_alist_path, directory, files_info)
                     if strm_generated:
                         logger.info(f"已生成指向目标目录的STRM文件: {dest_alist_path}")
                 except Exception as e:
                     logger.error(f"生成STRM文件失败: {str(e)}")
-                
-                # 添加到删除队列
-                if self.settings.archive_delete_source:
-                    self._add_to_pending_deletion(directory)
-                    logger.info(f"已将原目录添加到待删除队列: {directory}")
-                
-                result["message"] = (
-                    f"[归档] {full_folder_name}\n"
-                    f"文件数: {len(files_info)}\n"
-                    f"总大小: {total_size / 1024 / 1024 / 1024:.2f} GB"
-                )
                 
                 result["success"] = True
                 return result
@@ -699,49 +689,18 @@ class ArchiveService:
                 rel_file_path = str(file_info["relative_path"]).replace('\\', '/')
                 logger.info(f"原始相对路径: {rel_file_path}")
                 
-                # 2. 获取当前媒体类型的目录前缀
-                media_type = self._current_media_type
-                media_dir_prefix = ""
-                if media_type and media_type in self._media_types:
-                    media_dir_prefix = self._media_types[media_type].get('dir', '').strip('/')
-                
-                logger.debug(f"媒体类型: {media_type}, 扫描路径前缀: {media_dir_prefix}")
-                
-                # 3. 构建完整的输出路径，保留原始目录结构
-                # 首先检查是否需要保留媒体类型目录
-                if media_dir_prefix:
-                    # 检查相对路径是否已经包含媒体类型目录
-                    # 使用更精确的检查，避免误判子目录名包含媒体类型名的情况
-                    rel_path_parts = rel_file_path.split('/')
-                    media_dir_parts = media_dir_prefix.split('/')
-                    
-                    # 检查第一级目录是否匹配媒体类型目录
-                    if len(rel_path_parts) > 0 and rel_path_parts[0] == media_dir_parts[-1]:
-                        logger.debug(f"相对路径已包含媒体类型目录: {rel_path_parts[0]}")
-                        rel_strm_path = rel_file_path
-                    else:
-                        # 相对路径不包含媒体类型目录，需要添加
-                        logger.debug(f"相对路径不包含媒体类型目录，添加: {media_dir_prefix}")
-                        rel_strm_path = f"{media_dir_prefix}/{rel_file_path}"
-                else:
-                    rel_strm_path = rel_file_path
-                
-                logger.debug(f"处理后的相对路径: {rel_strm_path}")
-                
-                # 4. 分离文件名和扩展名，替换为.strm
-                rel_path_no_ext, _ = os.path.splitext(rel_strm_path)
+                # 2. 直接构建输出路径，保持相对路径不变，只替换扩展名为.strm
+                rel_path_no_ext, _ = os.path.splitext(rel_file_path)
                 strm_rel_path = f"{rel_path_no_ext}.strm"
                 
-                # 5. 拼接输出目录，创建完整的STRM文件路径
+                # 3. 拼接输出目录，创建完整的STRM文件路径
                 strm_path = os.path.join(strm_service.settings.output_dir, strm_rel_path)
                 
                 # 确保STRM文件所在目录存在
                 os.makedirs(os.path.dirname(strm_path), exist_ok=True)
                 
-                # 构建完整的目标Alist路径
-                # 参考strm_service的做法:
-                # 1. 确保目标路径以/开头
-                # 2. 确保路径拼接时没有多余的/
+                # 4. 构建完整的目标Alist路径
+                # 确保路径没有多余的斜杠
                 target_alist_path = target_alist_path.rstrip('/')
                 rel_file_path = rel_file_path.lstrip('/')
                 
@@ -754,18 +713,16 @@ class ArchiveService:
                 
                 logger.debug(f"完整目标文件路径: {target_file_path}")
                 
-                # 确定使用的URL基础地址（根据use_external_url开关决定是否使用外部地址）
+                # 5. 确定使用的URL基础地址
                 base_url = strm_service.settings.alist_url
                 if hasattr(strm_service.settings, 'use_external_url') and strm_service.settings.use_external_url and strm_service.settings.alist_external_url:
                     base_url = strm_service.settings.alist_external_url
                 base_url = base_url.rstrip('/')
                 
-                # 根据全局设置决定是否进行URL编码
+                # 6. 构建STRM文件内容 - 与strm_service相同的方式
                 if strm_service.settings.encode:
-                    # 使用与strm_service相同的URL编码方法
-                    # 进行URL编码，保留路径分隔符
+                    # 分段进行URL编码，保留路径分隔符
                     path_parts = target_file_path.split('/')
-                    # 对路径部分分别编码，保留斜杠结构
                     encoded_parts = [quote(part) for part in path_parts if part]
                     encoded_path = '/' + '/'.join(encoded_parts)
                     strm_url = f"{base_url}/d{encoded_path}"
@@ -800,25 +757,24 @@ class ArchiveService:
                 service_manager.health_service.add_strm_file(strm_path, target_file_path)
                 
                 # 记录生成的STRM文件路径，用于后续添加到刷新队列
-                generated_strm_files.append(strm_path)
+                generated_strm_files.append({
+                    "path": strm_path,
+                    "source_path": target_file_path,
+                    "filename": filename
+                })
             
             # 将生成的STRM文件添加到Emby刷新队列
             if generated_strm_files and hasattr(service_manager, 'emby_service') and service_manager.emby_service:
-                for strm_path in generated_strm_files:
-                    # 使用增强的add_to_refresh_queue方法，传递额外的媒体信息
-                    # 从STRM文件路径提取有用的媒体信息
-                    file_basename = os.path.basename(strm_path)
-                    filename_no_ext = os.path.splitext(file_basename)[0]
-                    
+                for strm_file in generated_strm_files:
                     # 构建与strm_service一致的媒体信息结构
                     media_info = {
-                        "path": strm_path,
-                        "source_path": target_file_path,  # 使用实际的目标Alist路径
-                        "filename": file_basename,
-                        "title": filename_no_ext,
+                        "path": strm_file["path"],
+                        "source_path": strm_file["source_path"],
+                        "filename": strm_file["filename"],
+                        "title": os.path.splitext(strm_file["filename"])[0],
                         "created_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     }
-                    service_manager.emby_service.add_to_refresh_queue(strm_path, media_info=media_info)
+                    service_manager.emby_service.add_to_refresh_queue(strm_file["path"], media_info=media_info)
                 logger.info(f"已将 {len(generated_strm_files)} 个STRM文件添加到Emby刷新队列")
             
             logger.info(f"成功生成 {strm_count} 个STRM文件，指向目标路径: {target_alist_path}")
