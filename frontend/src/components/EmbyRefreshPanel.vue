@@ -35,6 +35,15 @@
             >
               查看最近刷新
             </a-button>
+            <a-tooltip title="扫描最新添加到Emby的项目">
+              <a-button 
+                type="primary" 
+                @click="scanLatestItems" 
+                :loading="scanningLatest"
+              >
+                扫描最新项目
+              </a-button>
+            </a-tooltip>
             <a-tooltip title="手动触发所有待处理项的刷新">
               <a-button type="primary" @click="processAllPendingItems" :loading="processingAll">
                 处理所有待处理项
@@ -263,6 +272,7 @@ const embyLoading = ref(false);
 const refreshingItem = ref('');
 const removingItem = ref('');
 const processingAll = ref(false);
+const scanningLatest = ref(false);
 const nextRefreshTime = ref(null);
 const embyActiveTab = ref('pending');
 const manualRefresh = reactive({
@@ -477,6 +487,67 @@ const processAllPendingItems = async () => {
     });
   } finally {
     processingAll.value = false;
+  }
+};
+
+// 扫描最新添加到Emby的项目
+const scanLatestItems = async () => {
+  scanningLatest.value = true;
+  try {
+    const response = await axios.post('/api/health/emby/scan?hours=12');
+    console.log('[Emby刷库] 扫描最新项目响应:', response.data);
+    
+    if (response.data.success) {
+      notification.success({
+        message: '扫描完成',
+        description: response.data.message || '已扫描Emby最新项目'
+      });
+      
+      // 刷新队列状态
+      setTimeout(() => refreshEmbyStatus(), 800);
+      
+      // 如果有结果，显示详细信息
+      if (response.data.added_items && response.data.added_items.length > 0) {
+        Modal.info({
+          title: '扫描结果',
+          width: 700,
+          content: h => {
+            return h('div', [
+              h('p', `发现 ${response.data.total_found} 个新项目，添加 ${response.data.added_to_queue} 个到刷新队列`),
+              h('div', { style: { maxHeight: '400px', overflow: 'auto' } }, [
+                h('a-list', { 
+                  size: 'small',
+                  dataSource: response.data.added_items,
+                  renderItem: (item) => {
+                    return h('a-list-item', [
+                      h('a-space', [
+                        h('a-tag', { color: getEmbyTypeColor(item.type ? item.type.toLowerCase() : 'unknown') }, 
+                          getEmbyTypeLabel(item.type ? item.type.toLowerCase() : 'unknown')),
+                        h('span', item.name),
+                        item.year ? h('span', `(${item.year})`) : null
+                      ])
+                    ]);
+                  }
+                })
+              ])
+            ]);
+          }
+        });
+      }
+    } else {
+      notification.error({
+        message: '扫描失败',
+        description: response.data.message || '请求成功但返回错误'
+      });
+    }
+  } catch (error) {
+    console.error('[Emby刷库] 扫描最新项目错误:', error);
+    notification.error({
+      message: '请求错误',
+      description: `扫描Emby最新项目时出错: ${error.message}`
+    });
+  } finally {
+    scanningLatest.value = false;
   }
 };
 

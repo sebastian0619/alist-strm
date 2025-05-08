@@ -1235,14 +1235,6 @@ class ArchiveService:
                     success_message = "归档成功的文件夹（仅显示前20个）:\n\n" + "\n".join(formatted_results)
                 await service_manager.telegram_service.send_message(success_message)
             
-            # 获取EmbyService并启动归档后刷新任务
-            if not test_mode and total_processed > 0:
-                try:
-                    logger.info("准备启动归档后的Emby媒体库刷新任务")
-                    asyncio.create_task(service_manager.emby_service.archive_post_refresh())
-                except Exception as e:
-                    logger.error(f"启动归档后的Emby刷新任务失败: {str(e)}")
-            
             return {
                 "summary": summary,
                 "total_processed": total_processed,

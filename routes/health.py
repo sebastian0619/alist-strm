@@ -1560,4 +1560,24 @@ async def batch_replace_strm_content(request: ReplaceRequest):
             
     except Exception as e:
         logger.error(f"批量替换STRM文件内容失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"批量替换失败: {str(e)}") 
+        raise HTTPException(status_code=500, detail=f"批量替换失败: {str(e)}")
+
+@router.post("/emby/scan")
+async def scan_emby_latest_items(hours: int = Query(12, description="扫描最近多少小时的项目")):
+    """手动触发扫描最新Emby项目并添加到刷新队列"""
+    try:
+        # 检查服务是否开启
+        if not service_manager.emby_service.emby_enabled:
+            return {
+                "success": False,
+                "message": "Emby刷库功能未启用"
+            }
+            
+        # 执行扫描
+        result = await service_manager.emby_service.scan_latest_items(hours=hours)
+        logger.info(f"手动触发Emby扫描完成: {result['message']}")
+        
+        return result
+    except Exception as e:
+        logger.error(f"手动触发Emby扫描失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"扫描失败: {str(e)}") 
