@@ -22,8 +22,18 @@
         </div>
         <div class="emby-actions">
           <a-space>
-            <a-button type="primary" @click="refreshEmbyStatus" :loading="embyLoading">
+            <a-button 
+              type="primary" 
+              @click="refreshEmbyStatus" 
+              :loading="embyLoading"
+            >
               刷新状态
+            </a-button>
+            <a-button 
+              @click="getLastRefreshInfo" 
+              :loading="lastRefreshLoading"
+            >
+              查看最近刷新
             </a-button>
             <a-tooltip title="手动触发所有待处理项的刷新">
               <a-button type="primary" @click="processAllPendingItems" :loading="processingAll">
@@ -110,249 +120,112 @@
         </a-row>
       </div>
       
-      <!-- 队列列表 -->
-      <a-tabs v-model:activeKey="embyActiveTab">
-        <!-- 待处理项目 -->
-        <a-tab-pane key="pending" tab="待处理项目">
-          <div v-if="embyStatus.queue && embyStatus.queue.pending && embyStatus.queue.pending.length > 0">
-            <a-list
-              size="small"
-              :data-source="embyStatus.queue.pending"
-              :pagination="{ pageSize: 10 }"
-            >
-              <template #renderItem="{ item }">
-                <a-list-item>
-                  <a-card style="width: 100%; margin-bottom: 8px" :bodyStyle="{ padding: '12px' }">
-                    <a-row>
-                      <a-col :span="16">
-                        <div>
-                          <a-space>
-                            <clock-circle-outlined style="color: #1890ff" />
-                            <a-tag :color="getEmbyTypeColor(item.type)">{{ getEmbyTypeLabel(item.type) }}</a-tag>
-                            <span style="font-weight: bold">{{ item.display_name || formatPath(item.path) }}</span>
-                          </a-space>
-                        </div>
-                        <div style="margin-top: 4px; color: #666;">
-                          <span>路径: {{ item.path }}</span>
-                        </div>
-                      </a-col>
-                      <a-col :span="8" style="text-align: right">
-                        <div style="margin-bottom: 4px;">添加时间: {{ formatTime(item.added_time) }}</div>
-                        <div style="display: flex; justify-content: flex-end; align-items: center;">
-                          <span style="margin-right: 16px;">
-                            预计处理: {{ formatTime(item.scheduled_time) }}
-                          </span>
-                          <a-button 
-                            type="primary" 
-                            size="small"
-                            @click="forceRefreshEmbyItem(item.path)"
-                            :loading="refreshingItem === item.path"
-                          >
-                            立即刷新
-                          </a-button>
-                        </div>
-                      </a-col>
-                    </a-row>
-                  </a-card>
-                </a-list-item>
-              </template>
-            </a-list>
-          </div>
-          <a-empty v-else description="暂无待处理项目" />
-        </a-tab-pane>
-        
-        <!-- 最近成功刷新项目 -->
-        <a-tab-pane key="success" tab="成功项目">
-          <div v-if="embyStatus.queue && embyStatus.queue.success && embyStatus.queue.success.length > 0">
-            <a-list
-              size="small"
-              :data-source="embyStatus.queue.success"
-              :pagination="{ pageSize: 10 }"
-            >
-              <template #renderItem="{ item }">
-                <a-list-item>
-                  <a-row style="width: 100%">
-                    <a-col :span="16">
-                      <a-space>
-                        <check-circle-outlined style="color: #52c41a" />
-                        <a-tag :color="getEmbyTypeColor(item.type)">{{ getEmbyTypeLabel(item.type) }}</a-tag>
-                        <span>{{ item.display_name || formatPath(item.path) }}</span>
-                      </a-space>
-                      <div style="margin-top: 4px; color: #666;">
-                        <span>路径: {{ item.path }}</span>
-                      </div>
-                    </a-col>
-                    <a-col :span="8" style="text-align: right">
-                      <div>刷新时间: {{ formatTime(item.refresh_time) }}</div>
-                      <div>添加时间: {{ formatTime(item.added_time) }}</div>
-                    </a-col>
-                  </a-row>
-                </a-list-item>
-              </template>
-            </a-list>
-          </div>
-          <a-empty v-else description="暂无成功刷新项目" />
-        </a-tab-pane>
-        
-        <!-- 失败项目 -->
-        <a-tab-pane key="failed" tab="失败项目">
-          <div v-if="embyStatus.queue && embyStatus.queue.failed && embyStatus.queue.failed.length > 0">
-            <a-list
-              size="small"
-              :data-source="embyStatus.queue.failed"
-              :pagination="{ pageSize: 10 }"
-            >
-              <template #renderItem="{ item }">
-                <a-list-item>
-                  <a-card style="width: 100%; margin-bottom: 8px" :bodyStyle="{ padding: '12px' }">
-                    <a-row>
-                      <a-col :span="16">
-                        <div>
-                          <a-space>
-                            <warning-outlined style="color: #fa8c16" />
-                            <a-tag :color="getEmbyTypeColor(item.type)">{{ getEmbyTypeLabel(item.type) }}</a-tag>
-                            <span style="font-weight: bold">{{ item.display_name || formatPath(item.path) }}</span>
-                          </a-space>
-                        </div>
-                        <div style="margin-top: 4px; color: #666;">
-                          <span>路径: {{ item.path }}</span>
-                        </div>
-                        <div style="margin-top: 4px; color: #cf1322;">
-                          <span>错误: {{ item.error }}</span>
-                        </div>
-                      </a-col>
-                      <a-col :span="8" style="text-align: right">
-                        <div style="margin-bottom: 4px;">失败时间: {{ formatTime(item.failed_time) }}</div>
-                        <div style="display: flex; justify-content: flex-end; align-items: center;">
-                          <span style="margin-right: 16px;">
-                            重试次数: {{ item.retry_count }}/{{ item.max_retries }}
-                            <br />
-                            下次重试: {{ formatTime(item.next_retry) }}
-                          </span>
-                          <a-button 
-                            type="primary" 
-                            size="small"
-                            @click="forceRefreshEmbyItem(item.path)"
-                            :loading="refreshingItem === item.path"
-                          >
-                            立即刷新
-                          </a-button>
-                        </div>
-                      </a-col>
-                    </a-row>
-                  </a-card>
-                </a-list-item>
-              </template>
-            </a-list>
-          </div>
-          <a-empty v-else description="暂无失败刷新项目" />
-        </a-tab-pane>
-
-        <!-- 所有队列项 -->
-        <a-tab-pane key="all" tab="所有项目">
-          <div v-if="embyStatus.queue && embyStatus.all_items && embyStatus.all_items.length > 0">
-            <a-list
-              size="small"
-              :data-source="embyStatus.all_items"
-              :pagination="{ pageSize: 10 }"
-            >
-              <template #renderItem="{ item }">
-                <a-list-item>
-                  <a-card style="width: 100%; margin-bottom: 8px" :bodyStyle="{ padding: '12px' }">
-                    <a-row>
-                      <a-col :span="16">
-                        <div>
-                          <a-space>
-                            <a-tag :color="getStatusColor(item.status)">{{ getStatusLabel(item.status) }}</a-tag>
-                            <a-tag :color="getEmbyTypeColor(item.type)">{{ getEmbyTypeLabel(item.type) }}</a-tag>
-                            <span style="font-weight: bold">{{ item.display_name || formatPath(item.path) }}</span>
-                          </a-space>
-                        </div>
-                        <div style="margin-top: 4px; color: #666;">
-                          <span>路径: {{ item.path }}</span>
-                        </div>
-                        <div v-if="item.error" style="margin-top: 4px; color: #cf1322;">
-                          <span>错误: {{ item.error }}</span>
-                        </div>
-                      </a-col>
-                      <a-col :span="8" style="text-align: right">
-                        <div style="margin-bottom: 4px;">
-                          添加时间: {{ formatTime(item.added_time) }}
-                          <br/>
-                          {{ getTimeLabel(item) }}: {{ formatTime(getTimeValue(item)) }}
-                        </div>
-                        <div style="display: flex; justify-content: flex-end; align-items: center;">
-                          <a-button 
-                            v-if="item.status !== 'success'"
-                            type="primary" 
-                            size="small"
-                            @click="forceRefreshEmbyItem(item.path)"
-                            :loading="refreshingItem === item.path"
-                          >
-                            立即刷新
-                          </a-button>
-                          <a-button
-                            v-if="item.status === 'failed' || item.status === 'success'"
-                            type="danger"
-                            size="small"
-                            @click="removeQueueItem(item.path)"
-                            :loading="removingItem === item.path"
-                            style="margin-left: 8px;"
-                          >
-                            移除
-                          </a-button>
-                        </div>
-                      </a-col>
-                    </a-row>
-                  </a-card>
-                </a-list-item>
-              </template>
-            </a-list>
-          </div>
-          <a-empty v-else description="暂无队列项目" />
-        </a-tab-pane>
-      </a-tabs>
-
-      <!-- 手动刷新 -->
-      <a-card title="手动刷新" style="margin-top: 20px;">
-        <a-form layout="vertical">
-          <a-form-item label="STRM文件路径">
-            <a-textarea
-              v-model:value="manualRefresh.path"
-              placeholder="输入STRM文件的绝对路径，例如: /media/strm/movies/film.strm"
-              :rows="3"
-            />
-          </a-form-item>
-
-          <a-form-item>
-            <a-button
-              type="primary"
-              @click="forceRefreshEmbyItem(manualRefresh.path)"
-              :loading="refreshingItem === manualRefresh.path"
-              :disabled="!manualRefresh.path"
-            >
-              立即刷新
-            </a-button>
-          </a-form-item>
-        </a-form>
+      <!-- Emby刷新队列主体内容 -->
+      <a-card class="emby-card" v-if="embyStatus.enabled">
+        <!-- Tab内容 -->
+        <a-tabs v-model:activeKey="embyActiveTab">
+          <!-- 待处理项目 -->
+          <a-tab-pane key="pending" tab="待处理项目">
+            <div v-if="embyStatus.queue && embyStatus.queue.pending && embyStatus.queue.pending.length > 0">
+              <a-list
+                size="small"
+                :data-source="embyStatus.queue.pending"
+                :pagination="{ pageSize: 10 }"
+              >
+                <template #renderItem="{ item }">
+                  <a-list-item>
+                    <a-card style="width: 100%; margin-bottom: 8px" :bodyStyle="{ padding: '12px' }">
+                      <a-row>
+                        <a-col :span="16">
+                          <div>
+                            <a-space>
+                              <clock-circle-outlined style="color: #1890ff" />
+                              <a-tag :color="getEmbyTypeColor(item.type)">{{ getEmbyTypeLabel(item.type) }}</a-tag>
+                              <span style="font-weight: bold">{{ item.display_name || formatPath(item.path) }}</span>
+                            </a-space>
+                          </div>
+                          <div style="margin-top: 4px; color: #666;">
+                            <span>路径: {{ item.path }}</span>
+                          </div>
+                        </a-col>
+                        <a-col :span="8" style="text-align: right">
+                          <div style="margin-bottom: 4px;">添加时间: {{ formatTime(item.added_time) }}</div>
+                          <div style="display: flex; justify-content: flex-end; align-items: center;">
+                            <span style="margin-right: 16px;">
+                              预计处理: {{ formatTime(item.scheduled_time) }}
+                            </span>
+                            <a-button 
+                              type="primary" 
+                              size="small"
+                              @click="forceRefreshEmbyItem(item.path)"
+                              :loading="refreshingItem === item.path"
+                            >
+                              立即刷新
+                            </a-button>
+                          </div>
+                        </a-col>
+                      </a-row>
+                    </a-card>
+                  </a-list-item>
+                </template>
+              </a-list>
+            </div>
+            <a-empty v-else description="暂无待处理项目" />
+          </a-tab-pane>
+          
+          <!-- 成功项目 -->
+          <a-tab-pane key="success" tab="成功项目">
+            <a-card class="emby-card">
+              <a-collapse v-model:activeKey="activeCollapseKey">
+                <!-- 刷新成功的项目 -->
+                <a-collapse-panel key="1" :header="`刷新成功的项目 (${embyStatus.queue.success.length})`">
+                  <a-empty v-if="embyStatus.queue.success.length === 0" description="无刷新成功的项目" />
+                  <!-- 成功项目列表 -->
+                </a-collapse-panel>
+                
+                <!-- 刷新失败的项目 -->
+                <a-collapse-panel key="2" :header="`刷新失败的项目 (${embyStatus.queue.failed.length})`">
+                  <a-empty v-if="embyStatus.queue.failed.length === 0" description="无刷新失败的项目" />
+                  <!-- 失败项目列表 -->
+                </a-collapse-panel>
+              </a-collapse>
+            </a-card>
+          </a-tab-pane>
+          
+          <!-- 失败项目 -->
+          <a-tab-pane key="failed" tab="失败项目">
+            <!-- Content for failed tab -->
+          </a-tab-pane>
+        </a-tabs>
       </a-card>
       
-      <!-- 调试面板 -->
-      <a-collapse style="margin-top: 16px;">
-        <a-collapse-panel key="1" header="调试信息">
-          <a-descriptions title="API信息" bordered>
-            <a-descriptions-item label="服务状态">{{ embyStatus.enabled ? '已启用' : '未启用' }}</a-descriptions-item>
-            <a-descriptions-item label="上次请求">{{ lastRequestTime }}</a-descriptions-item>
-            <a-descriptions-item label="队列项总数">{{ embyStatus.queue_stats?.total || 0 }}</a-descriptions-item>
-            <a-descriptions-item label="API原始响应">
-              <a-button size="small" @click="showRawResponse">查看原始数据</a-button>
-            </a-descriptions-item>
-            <a-descriptions-item label="刷新队列API">
-              <a-button size="small" @click="debugRequest">测试API请求</a-button>
-            </a-descriptions-item>
-          </a-descriptions>
-        </a-collapse-panel>
-      </a-collapse>
+      <!-- 最近一次刷新结果卡片 -->
+      <a-card title="最近一次刷新信息" class="emby-card" v-if="embyStatus.enabled && lastRefreshInfo">
+        <a-spin :spinning="lastRefreshLoading">
+          <div v-if="lastRefreshInfo && lastRefreshInfo.has_refresh">
+            <p>刷新时间: {{ lastRefreshInfo.time }}</p>
+            <p>刷新项目数: {{ lastRefreshInfo.total_count }} 个</p>
+            
+            <a-divider>刷新项目列表</a-divider>
+            
+            <a-list size="small">
+              <a-list-item v-for="item in lastRefreshInfo.items" :key="item.id">
+                <a-space>
+                  <a-tag :color="getEmbyTypeColor(item.type ? item.type.toLowerCase() : 'unknown')">
+                    {{ getEmbyTypeLabel(item.type ? item.type.toLowerCase() : 'unknown') }}
+                  </a-tag>
+                  <span>{{ item.name }}</span>
+                  <a-tag :color="getStatusColor(item.status)">
+                    {{ getStatusLabel(item.status) }}
+                  </a-tag>
+                  <span v-if="item.error" style="color: #ff4d4f;">{{ item.error }}</span>
+                </a-space>
+              </a-list-item>
+            </a-list>
+          </div>
+          <a-empty v-else description="尚未执行过刷新" />
+        </a-spin>
+      </a-card>
     </a-card>
   </div>
 </template>
@@ -379,6 +252,7 @@ const embyStatus = reactive({
   queue_stats: {
     total: 0,
     pending: 0,
+    processing: 0,
     success: 0,
     failed: 0
   }
@@ -396,6 +270,8 @@ const manualRefresh = reactive({
 });
 const lastRequestTime = ref('未请求');
 const lastResponse = ref(null);
+const lastRefreshInfo = ref(null);
+const lastRefreshLoading = ref(false);
 
 // 过滤器
 const queueFilter = reactive({
@@ -764,10 +640,37 @@ const debugRequest = async () => {
   }
 };
 
+// 获取最近一次刷新的信息
+const getLastRefreshInfo = async () => {
+  lastRefreshLoading.value = true;
+  try {
+    const response = await axios.get('/api/health/emby/last_refresh');
+    console.log('[Emby刷库] 最近刷新信息:', response.data);
+    
+    if (response.data.success) {
+      lastRefreshInfo.value = response.data;
+    } else {
+      notification.warning({
+        message: '获取失败',
+        description: response.data.message || '请求成功但返回错误'
+      });
+    }
+  } catch (error) {
+    console.error('[Emby刷库] 获取最近刷新信息错误:', error);
+    notification.error({
+      message: '请求错误',
+      description: `获取最近刷新信息时出错: ${error.message}`
+    });
+  } finally {
+    lastRefreshLoading.value = false;
+  }
+};
+
 // 页面加载和卸载逻辑
 onMounted(() => {
   // 初始化时加载一次
   refreshEmbyStatus();
+  getLastRefreshInfo();
   
   // 设置自动刷新（每30秒刷新一次状态）
   const interval = setInterval(() => {

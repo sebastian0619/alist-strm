@@ -1235,18 +1235,19 @@ class ArchiveService:
                     success_message = "归档成功的文件夹（仅显示前20个）:\n\n" + "\n".join(formatted_results)
                 await service_manager.telegram_service.send_message(success_message)
             
-            # 如果配置了自动运行STRM扫描且不是测试模式
-            if not test_mode and self.settings.archive_auto_strm and total_processed > 0:
-                logger.info("开始自动STRM扫描...")
-                await service_manager.telegram_service.send_message("🔄 开始自动STRM扫描...")
-                await service_manager.strm_service.strm()
+            # 获取EmbyService并启动归档后刷新任务
+            if not test_mode and total_processed > 0:
+                try:
+                    logger.info("准备启动归档后的Emby媒体库刷新任务")
+                    asyncio.create_task(service_manager.emby_service.archive_post_refresh())
+                except Exception as e:
+                    logger.error(f"启动归档后的Emby刷新任务失败: {str(e)}")
             
-            # 返回结果
             return {
                 "summary": summary,
                 "total_processed": total_processed,
                 "total_size": total_size,
-                "results": all_results  # 修改：无论是测试模式还是正常模式，都返回完整结果
+                "results": all_results
             }
             
         except Exception as e:

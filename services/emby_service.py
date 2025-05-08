@@ -97,6 +97,12 @@ class EmbyService:
         self.path_to_id_cache = {}
         self.cache_file = Path(os.path.join(cache_dir, "emby_path_cache.json"))
         self._load_path_cache()
+        
+        # 跟踪最近一次刷新的项目
+        self.last_refresh_items = []
+        self.last_refresh_time = None
+        self.last_refresh_file = Path(os.path.join(cache_dir, "emby_last_refresh.json"))
+        self._load_last_refresh()
     
     def _load_refresh_queue(self):
         """从文件加载刷新队列"""
@@ -1481,6 +1487,43 @@ class EmbyService:
         self._save_path_cache()
         logger.info("已清空路径缓存")
 
+    def _load_last_refresh(self):
+        """从文件加载最近一次刷新记录"""
+        try:
+            if self.last_refresh_file.exists():
+                with open(self.last_refresh_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    self.last_refresh_time = data.get('time')
+                    self.last_refresh_items = data.get('items', [])
+                logger.info(f"已加载最近刷新记录，共{len(self.last_refresh_items)}个项目")
+            else:
+                self.last_refresh_time = None
+                self.last_refresh_items = []
+                logger.info("最近刷新记录文件不存在，使用空记录")
+        except Exception as e:
+            logger.error(f"加载最近刷新记录失败: {e}")
+            self.last_refresh_time = None
+            self.last_refresh_items = []
+    
+    def _save_last_refresh(self, items=None):
+        """保存最近一次刷新记录到文件"""
+        try:
+            # 如果提供了新的项目列表，更新记录
+            if items is not None:
+                self.last_refresh_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                self.last_refresh_items = items
+                
+            data = {
+                'time': self.last_refresh_time,
+                'items': self.last_refresh_items
+            }
+            
+            with open(self.last_refresh_file, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            logger.debug(f"已保存最近刷新记录，共{len(self.last_refresh_items)}个项目")
+        except Exception as e:
+            logger.error(f"保存最近刷新记录失败: {e}")
+
     async def test_search(self, query: str, mode: str = "name") -> dict:
         """测试搜索功能
         
@@ -1718,3 +1761,224 @@ class EmbyService:
                 "message": str(e),
                 "error_detail": traceback.format_exc()
             }
+            
+    async def get_last_refresh_info(self) -> dict:
+        """获取最近一次刷新的信息
+        
+        Returns:
+            dict: 最近一次刷新的信息
+        """
+        try:
+            if not self.emby_enabled:
+                return {"success": False, "message": "Emby服务未启用"}
+            
+            if not self.last_refresh_time:
+                return {
+                    "success": True,
+                    "message": "尚未执行过刷新",
+                    "has_refresh": False
+                }
+            
+            # 获取队列中这些项目的当前状态
+            item_statuses = []
+            for item in self.last_refresh_items:
+                item_id = item.get("id")
+                item_path = item.get("path")
+                
+                # 查找在队列中的状态
+                queue_item = next((q for q in self.refresh_queue if q.strm_path == item_path), None)
+                status = "unknown"
+                last_error = None
+                
+                if queue_item:
+                    status = queue_item.status
+                    last_error = queue_item.last_error
+                    
+                item_statuses.append({
+                    "id": item_id,
+                    "name": item.get("name"),
+                    "type": item.get("type"),
+                    "status": status,
+                    "error": last_error
+                })
+                
+            return {
+                "success": True,
+                "message": "获取最近刷新信息成功",
+                "has_refresh": True,
+                "time": self.last_refresh_time,
+                "items": item_statuses,
+                "total_count": len(item_statuses)
+            }
+            
+        except Exception as e:
+            logger.error(f"获取最近刷新信息失败: {str(e)}")
+            return {
+                "success": False,
+                "message": f"获取失败: {str(e)}"
+            }
+
+    async def get_latest_items(self, limit: int = 10, item_type: str = None) -> List[Dict]:
+        """获取最新入库的媒体项
+        
+        Args:
+            limit: 返回的最大项目数量
+            item_type: 媒体类型过滤（Movie, Series, Episode等）
+            
+        Returns:
+            List[Dict]: 最新入库的媒体项列表
+        """
+        try:
+            if not self.emby_enabled:
+                logger.warning("Emby服务未启用，无法获取最新项目")
+                return []
+            
+            # 构建API URL
+            base_url = self.emby_url.rstrip('/')
+            url = f"{base_url}/Items/Latest"
+            
+            # 构建查询参数
+            params = {
+                "api_key": self.api_key,
+                "Limit": limit,
+                "Fields": "Path,ParentId,Overview,ProductionYear",
+                "EnableTotalRecordCount": "false",
+                "HasTmdbId": "false"  # 只获取没有TMDB ID的项目，避免刷新已有元数据的文件
+            }
+            
+            # 如果指定了媒体类型，添加过滤
+            if item_type:
+                params["IncludeItemTypes"] = item_type
+            
+            logger.info(f"获取最新入库项目: 类型={item_type}, 数量={limit}, 仅未识别={params['HasTmdbId']}")
+            
+            # 发送请求
+            async with httpx.AsyncClient() as client:
+                response = await client.get(url, params=params, timeout=30)
+                
+                if response.status_code == 200:
+                    items = response.json()
+                    logger.info(f"成功获取 {len(items)} 个最新项目")
+                    return items
+                else:
+                    logger.error(f"获取最新项目失败: 状态码={response.status_code}")
+                    return []
+                    
+        except Exception as e:
+            logger.error(f"获取最新项目时出错: {str(e)}")
+            return []
+
+    async def scan_latest_items(self, hours: int = 24, force_refresh: bool = False) -> dict:
+        """扫描指定时间范围内新入库的项目并添加到刷新队列
+        
+        Args:
+            hours: 扫描最近多少小时的项目
+            force_refresh: 是否强制刷新(忽略HasTmdbId)
+            
+        Returns:
+            dict: 扫描结果
+        """
+        try:
+            if not self.emby_enabled:
+                return {"success": False, "message": "Emby服务未启用"}
+            
+            # 计算时间范围
+            current_time = time.time()
+            start_time = current_time - (hours * 3600)
+            
+            # 获取最新项目
+            latest_items = await self.get_latest_items(limit=100)  # 获取较多项目以确保覆盖
+            
+            # 过滤时间范围内的项目
+            new_items = []
+            for item in latest_items:
+                # 获取项目的添加时间
+                date_created = item.get("DateCreated")
+                if date_created:
+                    try:
+                        # 解析ISO格式的时间
+                        from datetime import datetime
+                        created_time = datetime.fromisoformat(date_created.replace('Z', '+00:00'))
+                        created_timestamp = created_time.timestamp()
+                        
+                        if created_timestamp >= start_time:
+                            new_items.append(item)
+                    except Exception as e:
+                        logger.warning(f"解析项目时间出错: {str(e)}")
+            
+            # 添加到刷新队列
+            added_count = 0
+            added_items = []  # 记录添加的项目信息
+            for item in new_items:
+                item_path = item.get("Path")
+                if item_path:
+                    # 检查是否已在队列中
+                    if not any(q_item.strm_path == item_path for q_item in self.refresh_queue):
+                        # 添加到队列
+                        media_info = {
+                            "title": item.get("Name"),
+                            "type": item.get("Type"),
+                            "year": item.get("ProductionYear"),
+                            "source_path": item_path
+                        }
+                        self.add_to_refresh_queue(item_path, media_info)
+                        added_count += 1
+                        
+                        # 记录添加的项目简要信息
+                        added_items.append({
+                            "id": item.get("Id"),
+                            "name": item.get("Name"),
+                            "type": item.get("Type"),
+                            "path": item_path,
+                            "year": item.get("ProductionYear")
+                        })
+            
+            # 保存本次刷新记录
+            if added_items:
+                self._save_last_refresh(added_items)
+            
+            return {
+                "success": True,
+                "message": f"扫描完成，发现 {len(new_items)} 个新项目，添加 {added_count} 个到刷新队列",
+                "total_found": len(new_items),
+                "added_to_queue": added_count,
+                "added_items": added_items
+            }
+            
+        except Exception as e:
+            logger.error(f"扫描最新项目失败: {str(e)}")
+            return {
+                "success": False,
+                "message": f"扫描失败: {str(e)}"
+            }
+
+    async def archive_post_refresh(self):
+        """在归档完成后执行刷新任务（45分钟后）"""
+        try:
+            logger.info("归档后刷新任务已安排，将在45分钟后执行")
+            
+            # 等待45分钟
+            await asyncio.sleep(45 * 60)
+            
+            # 扫描最近2小时内的新项目
+            logger.info("执行归档后的媒体库刷新任务")
+            result = await self.scan_latest_items(hours=2)
+            
+            if result["success"]:
+                logger.info(f"归档后刷新任务完成: {result['message']}")
+                # 尝试获取Telegram服务发送通知
+                try:
+                    service_manager = self._get_service_manager()
+                    await service_manager.telegram_service.send_message(
+                        f"📚 归档后刷新任务完成\n{result['message']}"
+                    )
+                except Exception as e:
+                    logger.error(f"发送Telegram通知失败: {str(e)}")
+            else:
+                logger.error(f"归档后刷新任务失败: {result['message']}")
+            
+        except Exception as e:
+            logger.error(f"归档后刷新任务出错: {str(e)}")
+
+    # 注意: 不再需要auto_scan_task，因为将通过归档后触发
+    # 旧的start_auto_scan_task方法可以删除
