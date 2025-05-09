@@ -422,6 +422,21 @@
         </a-tooltip>
       </a-form-item>
 
+      <!-- TMDB元数据配置 -->
+      <a-divider>TMDB 元数据配置</a-divider>
+      <a-form-item label="TMDB缓存目录">
+        <a-input
+          v-model:value="config.tmdb_cache_dir"
+          placeholder="cache/tmdb"
+        />
+        <a-tooltip>
+          <template #title>
+            TMDB元数据缓存文件存储目录
+          </template>
+          <info-circle-outlined style="margin-left: 8px" />
+        </a-tooltip>
+      </a-form-item>
+
       <!-- 按钮组 -->
       <div class="button-group">
         <a-button 
