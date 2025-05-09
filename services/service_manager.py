@@ -99,7 +99,7 @@ class ServiceManager:
             await self.archive_service.initialize()
             
             # 启动Emby刷新任务
-            asyncio.create_task(self.emby_service.start_refresh_task())
+            asyncio.create_task(self.emby_service.start_background_tasks())
             logger.info("Emby刷新任务已启动")
             
             # 如果启用了定时任务，启动定时任务
@@ -214,7 +214,7 @@ class ServiceManager:
                 await self.monitor_service.stop()
             
             if self.emby_service:
-                self.emby_service.stop_refresh_task()
+                self.emby_service.stop_background_tasks()
             
             logger.info("所有服务已关闭")
         except Exception as e:

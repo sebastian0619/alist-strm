@@ -65,7 +65,14 @@ class EmbyService:
         logger.info("Emby服务已启动")
         
         # 启动自动扫描任务
-        asyncio.create_task(self._auto_scan_task())
+        self._task = asyncio.create_task(self._auto_scan_task())
+    
+    def stop_background_tasks(self):
+        """停止后台任务"""
+        if hasattr(self, '_task') and self._task is not None:
+            logger.info("停止Emby后台任务")
+            self._task.cancel()
+            self._task = None
     
     async def _auto_scan_task(self):
         """定期执行扫描最新项目的任务，每6小时执行一次"""
