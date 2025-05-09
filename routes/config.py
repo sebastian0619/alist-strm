@@ -140,3 +140,26 @@ async def test_emby_connection(config: EmbyTestConfig):
     
     except Exception as e:
         return {"success": False, "message": f"测试失败: {str(e)}"} 
+
+@router.get("/api/config/emby")
+async def get_emby_config():
+    """获取Emby配置状态"""
+    try:
+        # 获取Emby当前配置
+        config = {
+            "emby_enabled": emby_service.emby_enabled,
+            "emby_api_url": emby_service.emby_url,
+            "emby_api_key": "******" if emby_service.api_key else None,  # 不返回实际密钥
+            "strm_root_path": emby_service.strm_root_path,
+            "emby_root_path": emby_service.emby_root_path
+        }
+        
+        return {
+            "success": True,
+            "data": config
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"获取Emby配置失败: {str(e)}"
+        } 

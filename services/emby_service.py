@@ -28,6 +28,9 @@ class EmbyService:
         self.emby_root_path = self.settings.emby_root_path
         self.emby_enabled = self.settings.emby_enabled
         
+        # 打印日志，方便调试
+        logger.debug(f"Emby初始化 - emby_enabled: {self.emby_enabled}, emby_url: {self.emby_url}, api_key set: {bool(self.api_key)}")
+        
         # 验证必要的配置
         if not self.emby_url or not self.api_key:
             logger.warning("Emby配置不完整，服务将不可用")
@@ -269,7 +272,7 @@ class EmbyService:
                         created_timestamp = created_time.timestamp()
                         
                         if created_timestamp >= start_time:
-                            new_items.append(item)
+                                new_items.append(item)
                     except Exception as e:
                         logger.debug(f"解析项目时间出错: {str(e)}")
             
