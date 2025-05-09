@@ -7,11 +7,10 @@ import httpx
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Dict, List, Optional, Any
 from config import Settings
 import importlib
-from urllib.parse import urlencode, quote
-import aiohttp
+from urllib.parse import quote
 
 # 设置日志
 logger = logging.getLogger(__name__)
@@ -45,7 +44,7 @@ class EmbyService:
         
         # 加载最近刷新记录
         self._load_last_refresh()
-
+    
     def add_to_refresh_queue(self, strm_path: str, media_info: dict = None):
         """兼容方法 - 不再使用刷新队列，但保留此方法以兼容现有调用
         
@@ -56,18 +55,18 @@ class EmbyService:
         logger.debug(f"已废弃的add_to_refresh_queue被调用: {strm_path}")
         # 这个方法不再做任何事情
         return
-        
+            
     async def start_background_tasks(self):
         """启动后台任务 - 启动自动扫描任务"""
         if not self.emby_enabled:
             logger.info("Emby服务未启用，跳过启动后台任务")
             return
-            
+        
         logger.info("Emby服务已启动")
         
         # 启动自动扫描任务
         asyncio.create_task(self._auto_scan_task())
-        
+    
     async def _auto_scan_task(self):
         """定期执行扫描最新项目的任务，每6小时执行一次"""
         logger.info("启动自动扫描Emby最新项目任务")
@@ -96,7 +95,7 @@ class EmbyService:
             
             # 等待6小时
             await asyncio.sleep(6 * 60 * 60)  # 6小时
-        
+
     def _load_last_refresh(self):
         """从文件加载最近一次刷新记录"""
         try:
@@ -114,7 +113,7 @@ class EmbyService:
             logger.error(f"加载最近刷新记录失败: {e}")
             self.last_refresh_time = None
             self.last_refresh_items = []
-            
+    
     def _save_last_refresh(self, items=None):
         """保存最近一次刷新记录到文件"""
         try:
@@ -133,7 +132,7 @@ class EmbyService:
             logger.debug(f"已保存最近刷新记录，共{len(self.last_refresh_items)}个项目")
         except Exception as e:
             logger.error(f"保存最近刷新记录失败: {e}")
-    
+
     def _get_service_manager(self):
         """动态获取service_manager以避免循环依赖"""
         module = importlib.import_module('services.service_manager')
@@ -179,7 +178,7 @@ class EmbyService:
         except Exception as e:
             logger.error(f"刷新Emby项目失败: {item_id}, 错误: {str(e)}")
             return False
-    
+
     async def get_latest_items(self, limit: int = 200, item_type: str = None) -> List[Dict]:
         """获取最新入库的媒体项
         
