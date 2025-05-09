@@ -671,6 +671,11 @@ class ArchiveService:
             strm_count = 0
             generated_strm_files = []
             
+            # 从target_alist_path提取基础网盘路径部分
+            # 例如：如果target_alist_path是"movies/2023/movie_name"
+            # 我们需要保留这个结构而不仅仅是相对于source_directory的结构
+            target_base_path = target_alist_path.strip('/')
+            
             # 遍历文件列表，为每个视频文件生成strm
             for file_info in files_info:
                 file_path = file_info["path"]
@@ -689,9 +694,16 @@ class ArchiveService:
                 rel_file_path = str(file_info["relative_path"]).replace('\\', '/')
                 logger.info(f"原始相对路径: {rel_file_path}")
                 
-                # 2. 直接构建输出路径，保持相对路径不变，只替换扩展名为.strm
-                rel_path_no_ext, _ = os.path.splitext(rel_file_path)
-                strm_rel_path = f"{rel_path_no_ext}.strm"
+                # 2. 构建包含网盘结构的STRM相对路径
+                rel_path_no_ext, ext = os.path.splitext(rel_file_path)
+                
+                # 创建基于网盘完整路径的STRM路径
+                if rel_file_path.startswith('/'):
+                    rel_file_path = rel_file_path[1:]
+                
+                # 构建保持网盘结构的STRM路径
+                strm_rel_path = os.path.join(target_base_path, rel_path_no_ext + ".strm")
+                logger.debug(f"STRM相对路径(保持网盘结构): {strm_rel_path}")
                 
                 # 3. 拼接输出目录，创建完整的STRM文件路径
                 strm_path = os.path.join(strm_service.settings.output_dir, strm_rel_path)
@@ -712,6 +724,7 @@ class ArchiveService:
                     target_file_path = '/' + target_file_path
                 
                 logger.debug(f"完整目标文件路径: {target_file_path}")
+                logger.debug(f"STRM文件将保存到: {strm_path}")
                 
                 # 5. 确定使用的URL基础地址
                 base_url = strm_service.settings.alist_url
