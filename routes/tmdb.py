@@ -115,4 +115,42 @@ async def reload_tmdb_metadata():
         return {"success": True, "data": stats, "message": "元数据已重新加载"}
     except Exception as e:
         logger.error(f"重新加载TMDB元数据失败: {str(e)}")
-        return {"success": False, "message": f"重新加载失败: {str(e)}"} 
+        return {"success": False, "message": f"重新加载失败: {str(e)}"}
+
+@router.post("/check_directories")
+async def check_tmdb_directories():
+    """检查并创建TMDB元数据目录结构"""
+    try:
+        cache_path = service_manager.strm_assistant_service.cache_path
+        
+        # 确保主缓存目录存在
+        if not cache_path:
+            return {
+                "success": False, 
+                "message": "未设置缓存目录路径，请先在配置页面设置TMDB缓存目录"
+            }
+        
+        # 确保缓存目录存在
+        os.makedirs(cache_path, exist_ok=True)
+        
+        # 检查并创建子目录
+        directories = {}
+        for data_type in ["tmdb-tv", "tmdb-movies2", "tmdb-collections"]:
+            subdir_path = os.path.join(cache_path, data_type)
+            existed = os.path.exists(subdir_path)
+            os.makedirs(subdir_path, exist_ok=True)
+            directories[data_type] = {
+                "path": subdir_path,
+                "existed_before": existed,
+                "exists_now": True
+            }
+        
+        return {
+            "success": True,
+            "message": f"TMDB缓存目录检查完成，所有必要目录已创建",
+            "cache_path": cache_path,
+            "directories": directories
+        }
+    except Exception as e:
+        logger.error(f"检查TMDB目录失败: {str(e)}")
+        return {"success": False, "message": f"检查目录失败: {str(e)}"} 

@@ -27,6 +27,12 @@ class StrmAssistantService:
         if self.cache_path:
             os.makedirs(self.cache_path, exist_ok=True)
             logger.info(f"已设置缓存目录: {self.cache_path}")
+            
+            # 确保各类型子目录存在
+            for data_type in ["tmdb-tv", "tmdb-movies2", "tmdb-collections"]:
+                subdir_path = os.path.join(self.cache_path, data_type)
+                os.makedirs(subdir_path, exist_ok=True)
+                logger.info(f"已创建子目录: {subdir_path}")
     
     def set_cache_directory(self, cache_path: str) -> bool:
         """设置缓存目录路径
@@ -43,6 +49,13 @@ class StrmAssistantService:
             
         self.cache_path = cache_path
         logger.info(f"已设置缓存目录: {self.cache_path}")
+        
+        # 确保各类型子目录存在
+        for data_type in ["tmdb-tv", "tmdb-movies2", "tmdb-collections"]:
+            subdir_path = os.path.join(self.cache_path, data_type)
+            os.makedirs(subdir_path, exist_ok=True)
+            logger.info(f"已创建子目录: {subdir_path}")
+        
         return True
     
     def load_all_metadata(self) -> Dict[str, int]:
@@ -54,6 +67,15 @@ class StrmAssistantService:
         if not self.cache_path:
             logger.error("未设置缓存目录，无法加载元数据")
             return {"tmdb-tv": 0, "tmdb-movies2": 0, "tmdb-collections": 0}
+        
+        # 确保缓存目录存在
+        os.makedirs(self.cache_path, exist_ok=True)
+        
+        # 确保子目录存在
+        for data_type in ["tmdb-tv", "tmdb-movies2", "tmdb-collections"]:
+            subdir_path = os.path.join(self.cache_path, data_type)
+            os.makedirs(subdir_path, exist_ok=True)
+            logger.info(f"确保子目录存在: {subdir_path}")
         
         # 初始化搜索缓存
         self.all_items = {

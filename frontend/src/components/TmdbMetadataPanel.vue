@@ -19,6 +19,9 @@
             <a-button @click="reloadMetadata">
               刷新
             </a-button>
+            <a-button @click="checkDirectories">
+              检查目录
+            </a-button>
           </a-space>
         </div>
       </div>
@@ -376,6 +379,29 @@ const reloadMetadata = async () => {
     }
   } catch (error) {
     message.error('重新加载出错: ' + (error.message || '未知错误'));
+  } finally {
+    loading.value = false;
+  }
+};
+
+// 检查并创建TMDB目录结构
+const checkDirectories = async () => {
+  loading.value = true;
+  try {
+    const response = await axios.post('/api/tmdb/check_directories');
+    if (response.data && response.data.success) {
+      message.success(response.data.message);
+      // 显示目录信息
+      const directories = response.data.directories;
+      console.log('TMDB缓存目录信息:', directories);
+      
+      // 自动重新加载元数据
+      await reloadMetadata();
+    } else {
+      message.error('目录检查失败: ' + (response.data?.message || '未知错误'));
+    }
+  } catch (error) {
+    message.error('目录检查出错: ' + (error.message || '未知错误'));
   } finally {
     loading.value = false;
   }
