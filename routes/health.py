@@ -1181,27 +1181,12 @@ async def force_refresh_emby_item(path: str = Query(..., description="STRM文件
 
 @router.post("/emby/test_search")
 async def emby_test_search(query: str = Query(..., description="搜索文本"), mode: str = Query("name", description="搜索模式: name, path")):
-    """测试Emby搜索功能"""
-    try:
-        # 检查服务是否开启
-        if not service_manager.emby_service.emby_enabled:
-            return {
-                "success": False,
-                "message": "Emby刷库功能未启用"
-            }
-            
-        # 记录搜索请求
-        logger.info(f"Emby搜索测试: 查询={query}, 模式={mode}")
-        
-        # 执行搜索
-        result = await service_manager.emby_service.test_search(query, mode)
-        return result
-    except Exception as e:
-        logger.error(f"Emby搜索测试失败: {str(e)}")
-        return {
-            "success": False,
-            "message": str(e)
-        }
+    """测试Emby搜索功能（已弃用）"""
+    return {
+        "success": False,
+        "message": "搜索功能已弃用，请使用新的Emby刷库流程",
+        "info": "现在可以通过/api/health/emby/scan端点直接扫描并刷新最新Emby项目"
+    }
 
 @router.get("/emby/last_refresh")
 async def get_emby_last_refresh():

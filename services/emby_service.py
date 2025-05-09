@@ -93,11 +93,6 @@ class EmbyService:
         self.retry_delays = [3600, 7200, 14400, 28800]  # 1小时, 2小时, 4小时, 8小时
         self.max_retries = len(self.retry_delays)
         
-        # 媒体路径到Emby ID的映射缓存
-        self.path_to_id_cache = {}
-        self.cache_file = Path(os.path.join(cache_dir, "emby_path_cache.json"))
-        self._load_path_cache()
-        
         # 跟踪最近一次刷新的项目
         self.last_refresh_items = []
         self.last_refresh_time = None
@@ -579,7 +574,9 @@ class EmbyService:
             return None
     
     async def find_emby_item(self, strm_path: str) -> Optional[Dict]:
-        """查找Emby中对应于STRM文件的媒体项"""
+        """查找Emby中对应于STRM文件的媒体项
+           此方法已简化，主要用于兼容现有代码
+        """
         try:
             # 保存原始路径用于备用方案
             original_path = strm_path
@@ -596,11 +593,11 @@ class EmbyService:
             
             # 尝试方案2：从STRM提取媒体信息并搜索
             try:
-                media_info = await self.extract_media_name_from_strm(strm_path)
+                media_info = self.parse_media_info_from_path(strm_path)
                 
-                if media_info.get("type") == "Episode" and media_info.get("series_name"):
+                if media_info.get("type") == "episode" and media_info.get("title"):
                     episode = await self.find_episode_by_info(
-                        media_info.get("series_name", ""),
+                        media_info.get("title", ""),
                         media_info.get("season", 1),
                         media_info.get("episode", 1)
                     )
@@ -608,7 +605,7 @@ class EmbyService:
                     if episode:
                         return episode
                     
-                elif media_info.get("type") == "Movie" and media_info.get("title"):
+                elif media_info.get("type") == "movie" and media_info.get("title"):
                     title = media_info.get("title", "")
                     year = media_info.get("year", None)
                     search_text = f"{title}" if not year else f"{title} {year}"
@@ -630,64 +627,13 @@ class EmbyService:
             except Exception as e:
                 pass
             
-            # 尝试方案3：使用文件名和目录名进行多种组合搜索
-            try:
-                filename = os.path.basename(strm_path)
-                name_without_ext = os.path.splitext(filename)[0]
-                parent_dir = os.path.dirname(strm_path)
-                parent_name = os.path.basename(parent_dir)
-                
-                # 尝试多种搜索组合
-                search_terms = [
-                    name_without_ext,  # 文件名
-                    parent_name,       # 父目录名
-                ]
-                
-                # 如果文件名包含 S00E00 格式，提取系列名
-                series_match = re.search(r'^(.+?)\s*-\s*S\d+E\d+', name_without_ext)
-                if series_match:
-                    search_terms.append(series_match.group(1).strip())
-                
-                # 如果父目录是季目录，使用祖父目录作为系列名
-                if re.search(r'^(?:Season\s*\d+|S\d+|第.+?季)$', parent_name, re.IGNORECASE):
-                    grandparent_dir = os.path.dirname(parent_dir)
-                    grandparent_name = os.path.basename(grandparent_dir)
-                    search_terms.append(grandparent_name)
-                
-                # 搜索不同的名称组合
-                for term in search_terms:
-                    if not term or len(term) < 2:
-                        continue
-                        
-                    items = await self.search_by_name(term)
-                    if items:
-                        return items[0]
-            except Exception as e:
-                pass
-            
-            # 尝试方案4：使用路径的相似性搜索
-            try:
-                # 将strm路径分解为目录和文件名
-                filename = os.path.basename(strm_path)
-                dirname = os.path.dirname(strm_path)
-            except Exception as e:
-                pass
-            
-            # 如果上述所有方法都失败，尝试最后的方法：使用正则表达式提取简化名称进行搜索
+            # 使用简化的文件名搜索作为最后手段
             try:
                 filename = os.path.basename(strm_path)
                 name_without_ext = os.path.splitext(filename)[0]
                 
-                # 移除常见的格式标记和无关字符，只保留关键标题
-                simplified_name = re.sub(r'\s*-\s*.*$', '', name_without_ext)  # 移除 - 之后的内容
-                simplified_name = re.sub(r'\s*\(.*\)', '', simplified_name)    # 移除括号内容
-                simplified_name = re.sub(r'\s*\[.*\]', '', simplified_name)    # 移除方括号内容
-                simplified_name = re.sub(r'\s*\d+p\s*', '', simplified_name)   # 移除分辨率
-                simplified_name = re.sub(r'\s+', ' ', simplified_name)         # 合并空格
-                simplified_name = simplified_name.strip()
-                
-                if simplified_name and len(simplified_name) >= 3 and simplified_name != name_without_ext:
-                    items = await self.search_by_name(simplified_name)
+                if name_without_ext and len(name_without_ext) >= 3:
+                    items = await self.search_by_name(name_without_ext)
                     if items:
                         return items[0]
             except Exception as e:
@@ -777,31 +723,16 @@ class EmbyService:
                     self._save_refresh_queue()
                     
                     try:
-                        # 优先使用已有的item_id（新方法直接获取了ID）
+                        # 优先使用已有的item_id
                         item_id = item.item_id
                         
-                        # 如果没有item_id，再尝试从缓存或通过查找获取
+                        # 如果没有item_id，尝试通过搜索获取
                         if not item_id:
-                            # 从缓存中查找
-                            cached_id = self.get_from_path_cache(item.strm_path)
-                            if cached_id:
-                                logger.debug(f"从缓存找到ItemID: {cached_id}")
-                                item_id = cached_id
+                            logger.debug(f"尝试搜索Emby项目: {item.strm_path}")
+                            emby_item = await self.find_emby_item(item.strm_path)
+                            if emby_item:
+                                item_id = emby_item.get("Id")
                                 item.item_id = item_id
-                            else:
-                                # 只有在缓存中找不到时才使用find_emby_item
-                                logger.debug(f"缓存中未找到，尝试搜索Emby项目: {item.strm_path}")
-                                emby_item = await self.find_emby_item(item.strm_path)
-                                if emby_item:
-                                    item_id = emby_item.get("Id")
-                                    item.item_id = item_id
-                                    # 添加到缓存
-                                    self.add_to_path_cache(
-                                        item.strm_path, 
-                                        item_id,
-                                        emby_item.get("Type"),
-                                        emby_item.get("Name")
-                                    )
                         
                         # 刷新Emby项目
                         if item_id:
@@ -1005,96 +936,6 @@ class EmbyService:
             logger.error(f"处理item_id时出错: {item_id}, 错误: {str(e)}")
             return {"Id": item_id, "Name": "处理出错", "Error": str(e)}
 
-    def _load_path_cache(self):
-        """加载路径缓存"""
-        try:
-            # 确保缓存目录存在
-            os.makedirs(os.path.dirname(self.cache_file), exist_ok=True)
-            
-            if self.cache_file.exists():
-                with open(self.cache_file, 'r', encoding='utf-8') as f:
-                    self.path_to_id_cache = json.load(f)
-                logger.info(f"已加载路径缓存，共{len(self.path_to_id_cache)}个记录")
-            else:
-                self.path_to_id_cache = {}
-                logger.info("路径缓存文件不存在，创建新缓存")
-        except Exception as e:
-            logger.error(f"加载路径缓存失败: {e}")
-            self.path_to_id_cache = {}
-    
-    def _save_path_cache(self):
-        """保存路径缓存到文件"""
-        try:
-            # 确保缓存目录存在
-            os.makedirs(os.path.dirname(self.cache_file), exist_ok=True)
-            
-            with open(self.cache_file, 'w', encoding='utf-8') as f:
-                json.dump(self.path_to_id_cache, f, ensure_ascii=False, indent=2)
-            logger.debug(f"已保存路径缓存，共{len(self.path_to_id_cache)}个记录")
-        except Exception as e:
-            logger.error(f"保存路径缓存失败: {e}")
-            
-    def add_to_path_cache(self, path: str, item_id: str, media_type: str = None, title: str = None):
-        """添加路径到ID的映射
-        
-        Args:
-            path: 路径（可以是STRM路径或源文件路径）
-            item_id: Emby媒体项ID
-            media_type: 媒体类型（如Movie, Episode）
-            title: 媒体标题
-        """
-        if not path or not item_id:
-            return
-            
-        # 标准化路径
-        path = str(path).replace('\\', '/').rstrip('/')
-        
-        # 创建或更新缓存条目
-        cache_entry = {
-            "item_id": item_id,
-            "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        }
-        
-        if media_type:
-            cache_entry["media_type"] = media_type
-            
-        if title:
-            cache_entry["title"] = title
-            
-        # 添加到缓存
-        self.path_to_id_cache[path] = cache_entry
-        self._save_path_cache()
-        logger.debug(f"添加路径映射到缓存: {path} -> {item_id}")
-        
-    def get_from_path_cache(self, path: str) -> Optional[str]:
-        """从路径缓存中获取Emby媒体项ID
-        
-        Args:
-            path: 路径（可以是STRM路径或源文件路径）
-            
-        Returns:
-            Optional[str]: Emby媒体项ID，如果不存在则返回None
-        """
-        if not path:
-            return None
-            
-        # 标准化路径
-        path = str(path).replace('\\', '/').rstrip('/')
-        
-        # 从缓存中获取
-        cache_entry = self.path_to_id_cache.get(path)
-        if cache_entry:
-            logger.debug(f"从缓存中找到路径映射: {path} -> {cache_entry.get('item_id')}")
-            return cache_entry.get("item_id")
-        
-        return None
-        
-    def clear_path_cache(self):
-        """清空路径缓存"""
-        self.path_to_id_cache = {}
-        self._save_path_cache()
-        logger.info("已清空路径缓存")
-
     def _load_last_refresh(self):
         """从文件加载最近一次刷新记录"""
         try:
@@ -1131,74 +972,7 @@ class EmbyService:
             logger.debug(f"已保存最近刷新记录，共{len(self.last_refresh_items)}个项目")
         except Exception as e:
             logger.error(f"保存最近刷新记录失败: {e}")
-
-    async def test_search(self, query: str, mode: str = "name") -> dict:
-        """测试搜索功能
-        
-        Args:
-            query: 搜索查询
-            mode: 搜索模式 (name: 按名称, path: 按路径)
-            
-        Returns:
-            dict: 搜索结果
-        """
-        try:
-            if not self.emby_enabled:
-                return {"success": False, "message": "Emby服务未启用"}
-            
-            results = []
-            
-            if mode == "path":
-                # 转换路径
-                emby_path = self.convert_to_emby_path(query)
-                logger.info(f"测试按路径搜索: 原始路径={query}, 转换后={emby_path}")
-                
-                # 查询媒体项
-                item = await self.query_item_by_path(emby_path)
-                if item:
-                    results.append({
-                        "id": item.get("Id"),
-                        "name": item.get("Name"),
-                        "type": item.get("Type"),
-                        "path": item.get("Path"),
-                        "year": item.get("ProductionYear")
-                    })
-                
-            else:  # 默认按名称搜索
-                logger.info(f"测试按名称搜索: {query}")
-                items = await self.search_by_name(query)
-                
-                # 提取结果
-                for item in items[:10]:  # 最多返回10个结果
-                    results.append({
-                        "id": item.get("Id"),
-                        "name": item.get("Name"),
-                        "type": item.get("Type"),
-                        "path": item.get("Path"),
-                        "year": item.get("ProductionYear")
-                    })
-            
-            # 缓存状态
-            cache_count = len(self.path_to_id_cache)
-            
-            return {
-                "success": True,
-                "query": query,
-                "mode": mode,
-                "result_count": len(results),
-                "results": results,
-                "cache_count": cache_count
-            }
-            
-        except Exception as e:
-            logger.error(f"测试搜索失败: {str(e)}")
-            import traceback
-            return {
-                "success": False,
-                "message": str(e),
-                "error_detail": traceback.format_exc()
-            }
-
+    
     async def force_refresh(self, path: str) -> dict:
         """强制刷新指定文件
         
@@ -1215,37 +989,11 @@ class EmbyService:
             # 标准化路径
             path = str(path).replace('\\', '/')
             
-            # 首先检查是否存在于缓存中
-            emby_id = self.get_from_path_cache(path)
-            
-            if emby_id:
-                logger.info(f"从缓存中找到路径 {path} 对应的Emby项目ID: {emby_id}")
-                # 直接刷新
-                refresh_result = await self.refresh_emby_item(emby_id)
-                if refresh_result:
-                    return {
-                        "success": True,
-                        "message": f"成功刷新Emby项目ID: {emby_id}",
-                        "refresh_method": "cache"
-                    }
-                else:
-                    return {
-                        "success": False,
-                        "message": f"刷新Emby项目失败: {emby_id}",
-                        "refresh_method": "cache"
-                    }
-            
-            # 如果不在缓存中，尝试搜索
-            logger.info(f"在缓存中未找到路径 {path}，尝试搜索Emby")
-            
             # 尝试通过路径查询
             emby_path = self.convert_to_emby_path(path)
             item = await self.query_item_by_path(emby_path)
             
             if item:
-                # 添加到缓存
-                self.add_to_path_cache(path, item.get("Id"), item.get("Type"), item.get("Name"))
-                
                 # 刷新
                 refresh_result = await self.refresh_emby_item(item.get("Id"))
                 if refresh_result:
@@ -1268,9 +1016,6 @@ class EmbyService:
             items = await self.search_by_name(name_without_ext)
             if items:
                 item = items[0]  # 使用第一个匹配结果
-                
-                # 添加到缓存
-                self.add_to_path_cache(path, item.get("Id"), item.get("Type"), item.get("Name"))
                 
                 # 刷新
                 refresh_result = await self.refresh_emby_item(item.get("Id"))
@@ -1342,9 +1087,6 @@ class EmbyService:
                     "error": item.last_error
                 })
             
-            # 缓存状态
-            cache_count = len(self.path_to_id_cache)
-            
             return {
                 "success": True,
                 "queue_status": {
@@ -1355,10 +1097,7 @@ class EmbyService:
                     "failed": failed,
                     "next_time": next_time
                 },
-                "recent_items": recent_items,
-                "cache_status": {
-                    "total": cache_count
-                }
+                "recent_items": recent_items
             }
             
         except Exception as e:
@@ -1528,28 +1267,43 @@ class EmbyService:
             added_count = 0
             added_items = []  # 记录添加的项目信息
             for item in new_items:
+                item_id = item.get("Id")
                 item_path = item.get("Path")
-                if item_path:
+                
+                if item_id and item_path:
                     # 检查是否已在队列中
-                    if not any(q_item.strm_path == item_path for q_item in self.refresh_queue):
-                        # 添加到队列
+                    if not any(q_item.item_id == item_id for q_item in self.refresh_queue):
+                        # 创建媒体信息
                         media_info = {
                             "title": item.get("Name"),
                             "type": item.get("Type"),
                             "year": item.get("ProductionYear"),
                             "source_path": item_path
                         }
-                        self.add_to_refresh_queue(item_path, media_info)
+                        
+                        # 创建刷新项并直接设置item_id
+                        refresh_item = EmbyRefreshItem(
+                            strm_path=item_path, 
+                            timestamp=time.time() + self.initial_delay,
+                            media_info=media_info
+                        )
+                        refresh_item.item_id = item_id
+                        
+                        # 添加到队列
+                        self.refresh_queue.append(refresh_item)
                         added_count += 1
                         
                         # 记录添加的项目简要信息
                         added_items.append({
-                            "id": item.get("Id"),
+                            "id": item_id,
                             "name": item.get("Name"),
                             "type": item.get("Type"),
                             "path": item_path,
                             "year": item.get("ProductionYear")
                         })
+                        
+            # 保存队列
+            self._save_refresh_queue()
             
             # 保存本次刷新记录
             if added_items:
