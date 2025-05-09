@@ -57,7 +57,7 @@ class EmbyService:
         """
         logger.debug(f"已废弃的add_to_refresh_queue被调用: {strm_path}")
         # 这个方法不再做任何事情
-                return
+        return
             
     async def start_background_tasks(self):
         """启动后台任务 - 启动自动扫描任务"""
@@ -335,7 +335,7 @@ class EmbyService:
                         logger.debug(f"检查项目: ID={item_id}, 名称={item_name}, 类型={item_type}, 添加时间={created_time.strftime('%Y-%m-%d %H:%M:%S')} ({time_ago:.1f}小时前)")
                         
                         if created_timestamp >= start_time:
-                                new_items.append(item)
+                            new_items.append(item)
                             logger.info(f"找到符合条件的项目: ID={item_id}, 名称={item_name}, 类型={item_type}, 添加时间={created_time.strftime('%Y-%m-%d %H:%M:%S')}")
                     except Exception as e:
                         logger.warning(f"解析项目时间出错: {str(e)}, 项目: ID={item_id}, 名称={item_name}, 原始时间值: {date_created}")
