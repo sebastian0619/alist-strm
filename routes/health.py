@@ -1042,6 +1042,43 @@ async def scan_emby_latest_items(hours: int = Query(12, description="扫描最�
         result = await service_manager.emby_service.scan_latest_items(hours=hours)
         logger.info(f"手动触发Emby扫描完成: {result['message']}")
         
+        # 发送通知
+        try:
+            if result["success"] and result["refreshed_count"] > 0:
+                # 构建详细的通知消息
+                message = f"🔄 Emby手动扫描完成\n\n" \
+                         f"- 发现 {result['total_found']} 个新项目\n" \
+                         f"- 成功刷新 {result['refreshed_count']} 个项目\n\n"
+                
+                # 添加刷新项目列表
+                if len(result["added_items"]) > 0:
+                    message += "刷新项目：\n"
+                    
+                    # 按类型分组项目
+                    items_by_type = {}
+                    for item in result["added_items"]:
+                        item_type = item.get("type", "未知")
+                        if item_type not in items_by_type:
+                            items_by_type[item_type] = []
+                        items_by_type[item_type].append(item)
+                    
+                    # 添加每种类型的项目列表
+                    for item_type, items in items_by_type.items():
+                        message += f"\n{item_type} ({len(items)}个):\n"
+                        # 限制每种类型最多显示5个项目
+                        for i, item in enumerate(items[:5]):
+                            name = item.get("name", "未知")
+                            year = f" ({item.get('year')})" if item.get("year") else ""
+                            message += f"  • {name}{year}\n"
+                        
+                        # 如果该类型有超过5个项目，添加省略提示
+                        if len(items) > 5:
+                            message += f"  • ... 等{len(items)-5}个项目\n"
+                
+                await service_manager.telegram_service.send_message(message)
+        except Exception as e:
+            logger.error(f"发送手动扫描通知失败: {str(e)}")
+        
         return result
     except Exception as e:
         logger.error(f"手动触发Emby扫描失败: {str(e)}")

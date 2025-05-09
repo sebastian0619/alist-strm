@@ -5,7 +5,7 @@ from config import Settings
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from routes import config, strm, health, archive
+from routes import config, strm, health, archive, tmdb
 from contextlib import asynccontextmanager
 from services.service_manager import service_manager, scheduler_service, strm_service
 from services.strm_monitor_service import StrmMonitorService
@@ -31,6 +31,13 @@ async def lifespan(app: FastAPI):
         encoding="utf-8",
         level=settings.log_level
     )
+    
+    # 设置更详细的日志 - 针对特定模块
+    import logging
+    # 设置Emby服务日志为更详细级别
+    logging.getLogger("services.emby_service").setLevel(logging.DEBUG if settings.log_level == "DEBUG" else logging.INFO)
+    # 设置HTTP客户端日志
+    logging.getLogger("httpx").setLevel(logging.INFO)
     
     # 初始化和启动服务管理器
     await service_manager.initialize()
@@ -71,6 +78,7 @@ app.include_router(config.router)
 app.include_router(strm.router)
 app.include_router(health.router)
 app.include_router(archive.router)
+app.include_router(tmdb.router)
 
 # 挂载静态文件
 app.mount("/", StaticFiles(directory="static", html=True), name="static")

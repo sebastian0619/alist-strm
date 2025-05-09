@@ -135,6 +135,9 @@ class Settings(BaseSettings):
     # 下载元数据文件配置
     download_metadata: bool = Field(default=False, alias="DOWNLOAD_METADATA")
     
+    # TMDB元数据配置
+    tmdb_cache_dir: str = Field(default="cache/tmdb", alias="TMDB_CACHE_DIR", description="TMDB元数据缓存目录")
+    
     # 定时任务配置
 
     model_config = ConfigDict(

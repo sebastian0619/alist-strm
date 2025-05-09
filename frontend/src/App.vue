@@ -23,6 +23,9 @@
         <a-tab-pane key="emby-refresh" tab="Emby刷库队列">
           <emby-refresh-panel />
         </a-tab-pane>
+        <a-tab-pane key="tmdb-metadata" tab="TMDB元数据">
+          <tmdb-metadata-panel />
+        </a-tab-pane>
       </a-tabs>
     </a-layout-content>
   </a-layout>
@@ -36,6 +39,7 @@ import PendingDeletionPanel from './components/PendingDeletionPanel.vue'
 import StrmHealthPanel from './components/StrmHealthPanel.vue'
 import StrmReplacePanel from './components/StrmReplacePanel.vue'
 import EmbyRefreshPanel from './components/EmbyRefreshPanel.vue'
+import TmdbMetadataPanel from './components/TmdbMetadataPanel.vue'
 
 const activeKey = ref('config')
 </script>

@@ -93,9 +93,37 @@ class EmbyService:
                     try:
                         service_manager = self._get_service_manager()
                         if result["refreshed_count"] > 0:
-                            await service_manager.telegram_service.send_message(
-                                f"🔄 Emby自动扫描完成\n{result['message']}"
-                            )
+                            # 构建详细的通知消息
+                            message = f"🔄 Emby自动扫描完成\n\n" \
+                                     f"- 发现 {result['total_found']} 个新项目\n" \
+                                     f"- 成功刷新 {result['refreshed_count']} 个项目\n\n"
+                            
+                            # 添加刷新项目列表
+                            if len(result["added_items"]) > 0:
+                                message += "刷新项目：\n"
+                                
+                                # 按类型分组项目
+                                items_by_type = {}
+                                for item in result["added_items"]:
+                                    item_type = item.get("type", "未知")
+                                    if item_type not in items_by_type:
+                                        items_by_type[item_type] = []
+                                    items_by_type[item_type].append(item)
+                                
+                                # 添加每种类型的项目列表
+                                for item_type, items in items_by_type.items():
+                                    message += f"\n{item_type} ({len(items)}个):\n"
+                                    # 限制每种类型最多显示5个项目
+                                    for i, item in enumerate(items[:5]):
+                                        name = item.get("name", "未知")
+                                        year = f" ({item.get('year')})" if item.get("year") else ""
+                                        message += f"  • {name}{year}\n"
+                                    
+                                    # 如果该类型有超过5个项目，添加省略提示
+                                    if len(items) > 5:
+                                        message += f"  • ... 等{len(items)-5}个项目\n"
+                            
+                            await service_manager.telegram_service.send_message(message)
                     except Exception as e:
                         logger.error(f"发送Telegram通知失败: {str(e)}")
                 else:
@@ -171,22 +199,34 @@ class EmbyService:
                 "ImageRefreshMode": "FullRefresh"
             }
             
-            logger.debug(f"刷新Emby项目: ID={item_id}")
+            logger.info(f"正在刷新Emby项目: ID={item_id}, 请求URL={url}")
+            logger.debug(f"请求参数: {params}")
             
             # 发送请求
             async with httpx.AsyncClient() as client:
+                start_time = time.time()
                 response = await client.post(url, params=params, timeout=30)
+                duration = time.time() - start_time
                 
                 if response.status_code in (200, 204):
-                    logger.debug(f"成功刷新Emby项目: {item_id}")
+                    logger.info(f"成功刷新Emby项目: ID={item_id}, 状态码: {response.status_code}, 耗时: {duration:.2f}秒")
+                    
+                    try:
+                        # 尝试解析响应内容（如果有）
+                        if response.text:
+                            logger.debug(f"响应内容: {response.text[:500]}")
+                    except Exception:
+                        pass
+                        
                     return True
                 else:
-                    logger.error(f"刷新Emby项目失败: {item_id}, 状态码: {response.status_code}")
+                    logger.error(f"刷新Emby项目失败: ID={item_id}, 状态码: {response.status_code}, 耗时: {duration:.2f}秒")
+                    logger.error(f"响应内容: {response.text[:500] if response.text else '无响应内容'}")
                     return False
             
             return False
         except Exception as e:
-            logger.error(f"刷新Emby项目失败: {item_id}, 错误: {str(e)}")
+            logger.error(f"刷新Emby项目失败: ID={item_id}, 错误: {str(e)}", exc_info=True)
             return False
 
     async def get_latest_items(self, limit: int = 200, item_type: str = None) -> List[Dict]:
@@ -221,23 +261,35 @@ class EmbyService:
             if item_type:
                 params["IncludeItemTypes"] = item_type
             
-            logger.debug(f"获取最新入库项目: 类型={item_type}, 数量={limit}, 排序={params['SortBy']}")
+            logger.info(f"获取最新入库项目: URL={url}, 类型={item_type or '全部'}, 数量={limit}")
+            logger.debug(f"请求参数: {params}")
             
             # 发送请求
             async with httpx.AsyncClient() as client:
+                start_time = time.time()
                 response = await client.get(url, params=params, timeout=30)
+                duration = time.time() - start_time
                 
                 if response.status_code == 200:
                     data = response.json()
                     items = data.get("Items", [])
-                    logger.debug(f"成功获取 {len(items)} 个最新项目")
+                    total_items = data.get("TotalRecordCount", 0)
+                    logger.info(f"成功获取最新项目: 返回{len(items)}个项目 (总计{total_items}个), 耗时: {duration:.2f}秒")
+                    
+                    # 记录一些项目信息用于调试
+                    if items:
+                        logger.debug("获取到的部分项目:")
+                        for i, item in enumerate(items[:5]):  # 只记录前5个项目
+                            logger.debug(f"  {i+1}. ID={item.get('Id')}, 名称={item.get('Name')}, 类型={item.get('Type')}")
+                    
                     return items
                 else:
-                    logger.error(f"获取最新项目失败: 状态码={response.status_code}")
+                    logger.error(f"获取最新项目失败: 状态码={response.status_code}, 耗时: {duration:.2f}秒")
+                    logger.error(f"响应内容: {response.text[:500] if response.text else '无响应内容'}")
                     return []
                     
         except Exception as e:
-            logger.error(f"获取最新项目时出错: {str(e)}")
+            logger.error(f"获取最新项目时出错: {str(e)}", exc_info=True)
             return []
 
     async def scan_latest_items(self, hours: int = 24) -> dict:
@@ -251,30 +303,42 @@ class EmbyService:
         """
         try:
             if not self.emby_enabled:
+                logger.warning(f"Emby服务未启用，无法执行扫描，当前emby_enabled={self.emby_enabled}, emby_url={self.emby_url}")
                 return {"success": False, "message": "Emby服务未启用"}
             
             # 计算时间范围
             current_time = time.time()
             start_time = current_time - (hours * 3600)
+            logger.info(f"开始扫描Emby项目 - 时间范围: 最近{hours}小时 (开始时间: {datetime.fromtimestamp(start_time).strftime('%Y-%m-%d %H:%M:%S')})")
             
             # 获取最新项目
+            logger.info(f"正在从Emby服务器获取最新项目，API URL: {self.emby_url}")
             latest_items = await self.get_latest_items(limit=300)
+            logger.info(f"Emby服务器返回项目总数: {len(latest_items)}")
             
             # 过滤时间范围内的项目
             new_items = []
             for item in latest_items:
                 # 获取项目的添加时间
                 date_created = item.get("DateCreated")
+                item_id = item.get("Id")
+                item_name = item.get("Name", "未知")
+                item_type = item.get("Type", "未知")
+                
                 if date_created:
                     try:
                         # 解析ISO格式的时间
                         created_time = datetime.fromisoformat(date_created.replace('Z', '+00:00'))
                         created_timestamp = created_time.timestamp()
+                        time_ago = (current_time - created_timestamp) / 3600
+                        
+                        logger.debug(f"检查项目: ID={item_id}, 名称={item_name}, 类型={item_type}, 添加时间={created_time.strftime('%Y-%m-%d %H:%M:%S')} ({time_ago:.1f}小时前)")
                         
                         if created_timestamp >= start_time:
-                                new_items.append(item)
+                            new_items.append(item)
+                            logger.info(f"找到符合条件的项目: ID={item_id}, 名称={item_name}, 类型={item_type}, 添加时间={created_time.strftime('%Y-%m-%d %H:%M:%S')}")
                     except Exception as e:
-                        logger.debug(f"解析项目时间出错: {str(e)}")
+                        logger.warning(f"解析项目时间出错: {str(e)}, 项目: ID={item_id}, 名称={item_name}, 原始时间值: {date_created}")
             
             logger.info(f"找到 {len(new_items)} 个最近 {hours} 小时内的新项目")
             
@@ -282,29 +346,43 @@ class EmbyService:
             refreshed_count = 0
             refreshed_items = []
             
+            if new_items:
+                logger.info("开始刷新新项目元数据...")
+            else:
+                logger.info("没有找到需要刷新的新项目")
+            
             for item in new_items:
                 item_id = item.get("Id")
+                item_name = item.get("Name", "未知")
+                item_type = item.get("Type", "未知")
+                item_path = item.get("Path", "未知")
                 
                 if item_id:
                     # 执行刷新
+                    logger.info(f"正在刷新项目: ID={item_id}, 名称={item_name}, 类型={item_type}, 路径={item_path}")
                     success = await self.refresh_emby_item(item_id)
                     
                     if success:
                         refreshed_count += 1
+                        logger.info(f"成功刷新项目: ID={item_id}, 名称={item_name}")
+                        
                         # 记录刷新的项目信息
                         refreshed_items.append({
                             "id": item_id,
-                            "name": item.get("Name"),
-                            "type": item.get("Type"),
-                            "path": item.get("Path"),
+                            "name": item_name,
+                            "type": item_type,
+                            "path": item_path,
                             "year": item.get("ProductionYear")
                         })
+                    else:
+                        logger.warning(f"刷新项目失败: ID={item_id}, 名称={item_name}")
             
             # 保存本次刷新记录
             if refreshed_items:
                 self._save_last_refresh(refreshed_items)
+                logger.info(f"已保存刷新记录，共 {len(refreshed_items)} 个项目")
             
-            return {
+            result = {
                 "success": True,
                 "message": f"扫描完成，发现 {len(new_items)} 个新项目，成功刷新 {refreshed_count} 个项目",
                 "total_found": len(new_items),
@@ -312,8 +390,11 @@ class EmbyService:
                 "added_items": refreshed_items
             }
             
+            logger.info(f"扫描结果: {result['message']}")
+            return result
+            
         except Exception as e:
-            logger.error(f"扫描最新项目失败: {str(e)}")
+            logger.error(f"扫描最新项目失败: {str(e)}", exc_info=True)
             return {
                 "success": False,
                 "message": f"扫描失败: {str(e)}"
