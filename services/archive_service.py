@@ -671,6 +671,20 @@ class ArchiveService:
             strm_count = 0
             generated_strm_files = []
             
+            # 确保路径格式一致
+            target_alist_path = target_alist_path.rstrip('/')
+            if not target_alist_path.startswith('/'):
+                target_alist_path = '/' + target_alist_path
+                
+            logger.info(f"规范化后的目标路径: {target_alist_path}")
+            logger.info(f"Alist扫描路径前缀: {strm_service.settings.alist_scan_path}")
+            
+            # 先检查目标路径是否在alist_scan_path下
+            if not target_alist_path.startswith(strm_service.settings.alist_scan_path):
+                logger.error(f"目标路径不在扫描路径下: {target_alist_path}")
+                logger.error(f"扫描路径: {strm_service.settings.alist_scan_path}")
+                return False
+            
             # 遍历文件列表，为每个视频文件生成strm
             for file_info in files_info:
                 file_path = file_info["path"]
@@ -684,60 +698,62 @@ class ArchiveService:
                 if file_info.get("size", 0) < strm_service.settings.min_file_size * 1024 * 1024:
                     logger.debug(f"跳过小视频文件: {filename}")
                     continue
-                    
-                # 1. 获取相对于源目录的路径部分
+                
+                # 获取相对路径，用于构建目标路径
                 rel_file_path = str(file_info["relative_path"]).replace('\\', '/')
-                logger.info(f"原始相对路径: {rel_file_path}")
+                if rel_file_path.startswith('/'):
+                    rel_file_path = rel_file_path[1:]
+                    
+                logger.info(f"文件相对路径: {rel_file_path}")
                 
-                # 2. 构建STRM文件路径
-                rel_path_no_ext, ext = os.path.splitext(rel_file_path)
+                # 构建完整的目标文件路径（目标Alist路径 + 相对文件路径）
+                full_file_path = f"{target_alist_path}/{rel_file_path}"
                 
-                # 3. 直接使用相对路径构建STRM文件路径，不加入网盘前缀
-                strm_rel_path = f"{rel_path_no_ext}.strm"
-                logger.debug(f"STRM相对路径: {strm_rel_path}")
+                # 确保路径以/开头
+                if not full_file_path.startswith('/'):
+                    full_file_path = '/' + full_file_path
+                    
+                logger.info(f"完整目标文件路径: {full_file_path}")
                 
-                # 创建完整的STRM文件路径
-                strm_path = os.path.join(strm_service.settings.output_dir, strm_rel_path)
+                # 按照strm_service中的逻辑计算相对路径和STRM文件路径
+                # 1. 计算相对于alist_scan_path的路径
+                if not full_file_path.startswith(strm_service.settings.alist_scan_path):
+                    logger.error(f"文件路径不在扫描路径下: {full_file_path}")
+                    continue
+                    
+                relative_path = full_file_path[len(strm_service.settings.alist_scan_path):].lstrip('/')
+                logger.info(f"相对于扫描路径的路径: {relative_path}")
+                
+                # 2. 将扩展名修改为.strm
+                base_path, _ = os.path.splitext(relative_path)
+                strm_relative_path = f"{base_path}.strm"
+                
+                # 3. 根据output_dir构建STRM文件存放路径
+                strm_path = os.path.join(strm_service.settings.output_dir, strm_relative_path)
                 
                 # 确保STRM文件所在目录存在
                 os.makedirs(os.path.dirname(strm_path), exist_ok=True)
                 
-                # 4. 构建完整的目标Alist路径
-                # 确保路径没有多余的斜杠
-                target_alist_path = target_alist_path.rstrip('/')
-                rel_file_path = rel_file_path.lstrip('/')
-                
-                # 构建完整的文件路径
-                target_file_path = f"{target_alist_path}/{rel_file_path}"
-                
-                # 确保路径以/开头
-                if not target_file_path.startswith('/'):
-                    target_file_path = '/' + target_file_path
-                
-                logger.debug(f"完整目标文件路径: {target_file_path}")
-                logger.debug(f"STRM文件将保存到: {strm_path}")
-                
-                # 5. 确定使用的URL基础地址
+                # 4. 确定使用的URL基础地址
                 base_url = strm_service.settings.alist_url
                 if hasattr(strm_service.settings, 'use_external_url') and strm_service.settings.use_external_url and strm_service.settings.alist_external_url:
                     base_url = strm_service.settings.alist_external_url
                 base_url = base_url.rstrip('/')
                 
-                # 6. 构建STRM文件内容 - 与strm_service相同的方式
+                # 5. 构建STRM文件内容
                 if strm_service.settings.encode:
-                    # 分段进行URL编码，保留路径分隔符
-                    path_parts = target_file_path.split('/')
-                    encoded_parts = [quote(part) for part in path_parts if part]
-                    encoded_path = '/' + '/'.join(encoded_parts)
+                    # 进行URL编码，但保留路径分隔符
+                    encoded_path = quote(full_file_path)
                     strm_url = f"{base_url}/d{encoded_path}"
                 else:
                     # 不进行URL编码
-                    strm_url = f"{base_url}/d{target_file_path}"
+                    strm_url = f"{base_url}/d{full_file_path}"
                 
                 # 记录详细日志
                 logger.info(f"处理视频文件: {filename}")
-                logger.info(f"源路径: {target_file_path}")
+                logger.info(f"源路径: {full_file_path}")
                 logger.info(f"STRM文件路径: {strm_path}")
+                logger.info(f"STRM内容URL: {strm_url}")
                 
                 # 检查文件是否已存在且内容相同
                 if os.path.exists(strm_path):
@@ -758,12 +774,12 @@ class ArchiveService:
                 strm_count += 1
                 
                 # 将STRM文件添加到健康状态服务
-                service_manager.health_service.add_strm_file(strm_path, target_file_path)
+                service_manager.health_service.add_strm_file(strm_path, full_file_path)
                 
                 # 记录生成的STRM文件路径，用于后续添加到刷新队列
                 generated_strm_files.append({
                     "path": strm_path,
-                    "source_path": target_file_path,
+                    "source_path": full_file_path,
                     "filename": filename
                 })
             
