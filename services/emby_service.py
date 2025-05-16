@@ -389,7 +389,15 @@ class EmbyService:
                 "message": f"扫描完成，发现 {len(new_items)} 个新项目，成功刷新 {refreshed_count} 个项目",
                 "total_found": len(new_items),
                 "refreshed_count": refreshed_count,
-                "added_items": refreshed_items
+                "added_items": refreshed_items,
+                "logs": [
+                    f"开始扫描Emby项目 - 时间范围: 最近{hours}小时",
+                    f"从Emby服务器获取最新项目 URL: {self.emby_url}",
+                    f"API参数: limit=300, item_types=Series,Movie, recursive=true",
+                    f"Emby服务器返回项目总数: {len(latest_items)}",
+                    f"找到 {len(new_items)} 个最近 {hours} 小时内的新项目",
+                    f"成功刷新 {refreshed_count} 个项目"
+                ]
             }
             
             logger.info(f"扫描结果: {result['message']}")
@@ -399,5 +407,6 @@ class EmbyService:
             logger.error(f"扫描最新项目失败: {str(e)}", exc_info=True)
             return {
                 "success": False,
-                "message": f"扫描失败: {str(e)}"
+                "message": f"扫描失败: {str(e)}",
+                "logs": [f"扫描过程中出错: {str(e)}"]
             }

@@ -1035,12 +1035,20 @@ async def scan_emby_latest_items(hours: int = Query(12, description="扫描最�
         if not service_manager.emby_service.emby_enabled:
             return {
                 "success": False,
-                "message": "Emby刷库功能未启用"
+                "message": "Emby刷库功能未启用",
+                "logs": ["Emby刷库功能未启用，请检查配置"]
             }
             
         # 执行扫描
         result = await service_manager.emby_service.scan_latest_items(hours=hours)
         logger.info(f"手动触发Emby扫描完成: {result['message']}")
+        
+        # 确保日志信息显示在响应中
+        if "logs" not in result:
+            result["logs"] = []
+        
+        # 添加API处理的日志信息
+        result["logs"].append(f"手动触发Emby扫描完成: {result['message']}")
         
         # 发送通知
         try:
@@ -1082,4 +1090,46 @@ async def scan_emby_latest_items(hours: int = Query(12, description="扫描最�
         return result
     except Exception as e:
         logger.error(f"手动触发Emby扫描失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"扫描失败: {str(e)}") 
+        raise HTTPException(status_code=500, detail=f"扫描失败: {str(e)}")
+
+@router.get("/emby/logs")
+async def get_emby_logs(limit: int = Query(100, description="返回的日志条数")):
+    """获取Emby操作相关的日志"""
+    try:
+        # 获取应用日志处理器
+        log_file = "/app/logs/app.log"
+        
+        # 检查日志文件是否存在
+        if not os.path.exists(log_file):
+            return {
+                "success": False,
+                "message": "日志文件不存在",
+                "logs": []
+            }
+            
+        # 读取日志文件并过滤Emby相关日志
+        emby_logs = []
+        
+        # 使用grep类似功能读取最后N行并过滤包含"Emby"的行
+        try:
+            # 读取文件的最后limit*10行（因为不是所有行都会包含Emby关键字）
+            cmd = f"tail -n {limit * 10} {log_file} | grep -i 'emby' | tail -n {limit}"
+            import subprocess
+            output = subprocess.check_output(cmd, shell=True, text=True)
+            emby_logs = output.strip().split('\n') if output.strip() else []
+        except Exception as e:
+            logger.error(f"读取Emby日志失败: {str(e)}")
+            emby_logs = [f"读取日志失败: {str(e)}"]
+            
+        return {
+            "success": True,
+            "message": f"获取到 {len(emby_logs)} 条Emby相关日志",
+            "logs": emby_logs
+        }
+    except Exception as e:
+        logger.error(f"获取Emby日志失败: {str(e)}")
+        return {
+            "success": False,
+            "message": f"获取日志失败: {str(e)}",
+            "logs": []
+        } 
