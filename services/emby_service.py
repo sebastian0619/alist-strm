@@ -229,12 +229,13 @@ class EmbyService:
             logger.error(f"刷新Emby项目失败: ID={item_id}, 错误: {str(e)}", exc_info=True)
             return False
 
-    async def get_latest_items(self, limit: int = 200, item_type: str = None) -> List[Dict]:
+    async def get_latest_items(self, limit: int = 30, item_types: str = "Series,Movie", recursive: bool = True) -> List[Dict]:
         """获取最新入库的媒体项
         
         Args:
             limit: 返回的最大项目数量
-            item_type: 媒体类型过滤（Movie, Series, Episode等）
+            item_types: 媒体类型过滤（如 "Series,Movie"）
+            recursive: 是否递归查询
             
         Returns:
             List[Dict]: 最新入库的媒体项列表
@@ -253,15 +254,16 @@ class EmbyService:
                 "api_key": self.api_key,
                 "Limit": limit,
                 "Fields": "Path,ParentId,Overview,ProductionYear",
-                "SortBy": "DateCreated,SortName",
-                "SortOrder": "Descending"
+                "SortBy": "DateCreated",
+                "SortOrder": "Descending",
+                "Recursive": str(recursive).lower()
             }
             
             # 如果指定了媒体类型，添加过滤
-            if item_type:
-                params["IncludeItemTypes"] = item_type
+            if item_types:
+                params["IncludeItemTypes"] = item_types
             
-            logger.info(f"获取最新入库项目: URL={url}, 类型={item_type or '全部'}, 数量={limit}")
+            logger.info(f"获取最新入库项目: URL={url}, 类型={item_types or '全部'}, 数量={limit}, 递归={recursive}")
             logger.debug(f"请求参数: {params}")
             
             # 发送请求
@@ -313,7 +315,7 @@ class EmbyService:
             
             # 获取最新项目
             logger.info(f"正在从Emby服务器获取最新项目，API URL: {self.emby_url}")
-            latest_items = await self.get_latest_items(limit=300)
+            latest_items = await self.get_latest_items(limit=300, item_types="Series,Movie", recursive=True)
             logger.info(f"Emby服务器返回项目总数: {len(latest_items)}")
             
             # 过滤时间范围内的项目
