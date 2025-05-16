@@ -44,6 +44,9 @@ class ReplaceRequest(BaseModel):
     target_paths: Optional[List[str]] = Body(None, description="指定要处理的STRM文件路径（为空则处理所有STRM文件）")
     preview_only: bool = Body(False, description="是否仅预览更改而不实际执行")
 
+class TagRemoveRequest(BaseModel):
+    tag_name: str = Body(..., description="要删除的标签名称")
+
 # 存储最近一次扫描状态
 _is_scanning: bool = False
 _scan_progress: int = 0
@@ -1177,4 +1180,64 @@ async def get_emby_logs(limit: int = Query(100, description="返回的日志条�
             "success": False,
             "message": f"获取日志失败: {str(e)}",
             "logs": []
+        }
+
+@router.post("/emby/tags/remove")
+async def remove_emby_tag(request: TagRemoveRequest):
+    """从所有Emby项目中删除指定标签"""
+    try:
+        # 检查服务是否开启
+        if not service_manager.emby_service.emby_enabled:
+            return {
+                "success": False,
+                "message": "Emby功能未启用",
+                "logs": ["Emby功能未启用，请检查配置"]
+            }
+        
+        # 检查标签名是否有效
+        tag_name = request.tag_name.strip()
+        if not tag_name:
+            return {
+                "success": False,
+                "message": "标签名称不能为空",
+                "logs": ["标签名称不能为空"]
+            }
+            
+        # 调用Service执行标签删除
+        logger.info(f"开始删除标签: {tag_name}")
+        print(f"[Emby标签] 开始从所有项目中删除标签: {tag_name}")
+        
+        result = await service_manager.emby_service.remove_tag_from_all_items(tag_name)
+        
+        # 发送通知
+        try:
+            if result["success"] and result["success_count"] > 0:
+                # 构建通知消息
+                message = f"🏷️ Emby标签删除完成\n\n" \
+                         f"- 标签: {tag_name}\n" \
+                         f"- 成功: {result['success_count']}/{result['total']} 个项目\n"
+                
+                # 如果有失败项目，添加到消息中
+                if result["failed_count"] > 0:
+                    message += f"- 失败: {result['failed_count']} 个项目\n"
+                
+                await service_manager.telegram_service.send_message(message)
+        except Exception as e:
+            logger.error(f"发送标签删除通知失败: {str(e)}")
+        
+        # 返回结果
+        return {
+            "success": result["success"],
+            "message": result["message"],
+            "total": result["total"],
+            "success_count": result["success_count"],
+            "failed_count": result["failed_count"],
+            "items": result["items"][:20]  # 限制返回的项目数量
+        }
+    except Exception as e:
+        logger.error(f"删除Emby标签失败: {str(e)}")
+        return {
+            "success": False,
+            "message": f"删除标签失败: {str(e)}",
+            "logs": [f"删除标签过程中出错: {str(e)}"]
         } 

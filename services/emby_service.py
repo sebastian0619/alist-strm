@@ -713,3 +713,209 @@ class EmbyService:
         except Exception as e:
             logger.error(f"获取项目详情时出错: ID={item_id}, 错误: {str(e)}")
             return None
+
+    async def find_items_with_tag(self, tag_name: str) -> List[Dict]:
+        """查找包含指定标签的所有项目
+        
+        Args:
+            tag_name: 要查找的标签名称
+            
+        Returns:
+            List[Dict]: 包含该标签的项目列表
+        """
+        try:
+            if not self.emby_enabled:
+                logger.warning("Emby服务未启用，无法查找带标签的项目")
+                print(f"[Emby标签] 错误: Emby服务未启用，请检查配置")
+                return []
+            
+            # 构建API URL
+            base_url = self.emby_url.rstrip('/')
+            url = f"{base_url}/Items"
+            
+            # 构建查询参数 - 基于标签搜索
+            params = {
+                "api_key": self.api_key,
+                "Recursive": "true",
+                "Fields": "Path,DateCreated,Tags,Overview",
+                "IncludeItemTypes": "Movie,Series",  # 只包含电影和剧集
+                "Tags": tag_name,                    # 按标签过滤
+                "Limit": 1000                        # 设置一个较大的限制
+            }
+            
+            logger.info(f"查找带标签 '{tag_name}' 的项目")
+            print(f"[Emby标签] 查找带标签 '{tag_name}' 的项目")
+            
+            # 发送请求
+            async with httpx.AsyncClient() as client:
+                response = await client.get(url, params=params, timeout=30)
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    items = data.get("Items", [])
+                    total_items = data.get("TotalRecordCount", 0)
+                    
+                    logger.info(f"找到 {len(items)} 个带标签 '{tag_name}' 的项目")
+                    print(f"[Emby标签] 找到 {len(items)} 个带标签 '{tag_name}' 的项目")
+                    
+                    # 记录找到的项目
+                    for i, item in enumerate(items[:10]):  # 只记录前10个项目
+                        logger.debug(f"  {i+1}. ID={item.get('Id')}, 名称={item.get('Name')}, 类型={item.get('Type')}")
+                        print(f"[Emby标签]   {i+1}. ID={item.get('Id')}, 名称={item.get('Name')}, 类型={item.get('Type')}")
+                    
+                    if len(items) > 10:
+                        logger.debug(f"  ... 以及 {len(items) - 10} 个其他项目")
+                        print(f"[Emby标签]   ... 以及 {len(items) - 10} 个其他项目")
+                    
+                    return items
+                else:
+                    logger.error(f"查找带标签的项目失败: 状态码={response.status_code}")
+                    logger.error(f"响应内容: {response.text[:500] if response.text else '无响应内容'}")
+                    print(f"[Emby标签] 错误: 查找带标签的项目失败, 状态码={response.status_code}")
+                    return []
+        
+        except Exception as e:
+            logger.error(f"查找带标签的项目时出错: {str(e)}")
+            print(f"[Emby标签] 错误: 查找带标签的项目时出错: {str(e)}")
+            return []
+    
+    async def remove_tag_from_item(self, item_id: str, tag_to_remove: str) -> bool:
+        """从项目中删除指定标签
+        
+        Args:
+            item_id: 项目ID
+            tag_to_remove: 要删除的标签名称
+            
+        Returns:
+            bool: 操作是否成功
+        """
+        try:
+            if not self.emby_enabled:
+                logger.warning("Emby服务未启用，无法删除标签")
+                print(f"[Emby标签] 错误: Emby服务未启用，请检查配置")
+                return False
+            
+            # 首先获取项目当前标签
+            item_details = await self.get_item_details(item_id)
+            if not item_details:
+                logger.error(f"无法获取项目详情: ID={item_id}")
+                print(f"[Emby标签] 错误: 无法获取项目详情: ID={item_id}")
+                return False
+            
+            current_tags = item_details.get("Tags", [])
+            item_name = item_details.get("Name", "未知")
+            
+            # 检查标签是否存在
+            if tag_to_remove not in current_tags:
+                logger.info(f"项目没有该标签: ID={item_id}, 名称={item_name}, 标签={tag_to_remove}")
+                print(f"[Emby标签] 项目 '{item_name}' 没有标签 '{tag_to_remove}'")
+                return True  # 不需要删除
+            
+            # 移除标签
+            new_tags = [tag for tag in current_tags if tag != tag_to_remove]
+            
+            # 构建API URL
+            base_url = self.emby_url.rstrip('/')
+            url = f"{base_url}/Items/{item_id}/Tags"
+            
+            # 构建请求参数
+            params = {
+                "api_key": self.api_key
+            }
+            
+            # 构建请求体
+            data = {
+                "Tags": new_tags
+            }
+            
+            logger.info(f"从项目中删除标签: ID={item_id}, 名称={item_name}, 标签={tag_to_remove}")
+            print(f"[Emby标签] 从项目 '{item_name}' 中删除标签 '{tag_to_remove}'")
+            
+            # 发送请求
+            async with httpx.AsyncClient() as client:
+                response = await client.post(url, params=params, json=data, timeout=30)
+                
+                if response.status_code == 200 or response.status_code == 204:
+                    logger.info(f"成功删除标签: ID={item_id}, 名称={item_name}, 标签={tag_to_remove}")
+                    print(f"[Emby标签] ✓ 成功从 '{item_name}' 删除标签 '{tag_to_remove}'")
+                    return True
+                else:
+                    logger.error(f"删除标签失败: ID={item_id}, 名称={item_name}, 标签={tag_to_remove}, 状态码={response.status_code}")
+                    logger.error(f"响应内容: {response.text[:500] if response.text else '无响应内容'}")
+                    print(f"[Emby标签] ✗ 删除标签失败: ID={item_id}, 名称={item_name}, 状态码={response.status_code}")
+                    return False
+        
+        except Exception as e:
+            logger.error(f"删除标签时出错: ID={item_id}, 标签={tag_to_remove}, 错误: {str(e)}")
+            print(f"[Emby标签] 错误: 删除标签时出错: ID={item_id}, 错误: {str(e)}")
+            return False
+    
+    async def remove_tag_from_all_items(self, tag_name: str) -> dict:
+        """从所有项目中删除指定标签
+        
+        Args:
+            tag_name: 要删除的标签名称
+            
+        Returns:
+            dict: 操作结果统计
+        """
+        if not tag_name or not tag_name.strip():
+            return {
+                "success": False,
+                "message": "标签名称不能为空",
+                "total": 0,
+                "success_count": 0,
+                "failed_count": 0,
+                "items": []
+            }
+        
+        # 查找带有该标签的所有项目
+        items = await self.find_items_with_tag(tag_name)
+        
+        if not items:
+            return {
+                "success": True,
+                "message": f"未找到带标签 '{tag_name}' 的项目",
+                "total": 0,
+                "success_count": 0,
+                "failed_count": 0,
+                "items": []
+            }
+        
+        # 初始化统计
+        total = len(items)
+        success_count = 0
+        failed_count = 0
+        processed_items = []
+        
+        # 遍历所有项目，删除标签
+        for item in items:
+            item_id = item.get("Id")
+            item_name = item.get("Name", "未知")
+            item_type = item.get("Type", "未知")
+            
+            success = await self.remove_tag_from_item(item_id, tag_name)
+            
+            item_result = {
+                "id": item_id,
+                "name": item_name,
+                "type": item_type,
+                "success": success
+            }
+            
+            processed_items.append(item_result)
+            
+            if success:
+                success_count += 1
+            else:
+                failed_count += 1
+        
+        # 返回结果
+        return {
+            "success": True,
+            "message": f"从 {success_count}/{total} 个项目中删除了标签 '{tag_name}'",
+            "total": total,
+            "success_count": success_count,
+            "failed_count": failed_count,
+            "items": processed_items
+        }

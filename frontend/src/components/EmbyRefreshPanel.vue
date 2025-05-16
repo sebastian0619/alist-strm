@@ -26,9 +26,86 @@
                 扫描最新项目
               </a-button>
             </a-tooltip>
+            
+            <a-dropdown>
+              <template #overlay>
+                <a-menu>
+                  <a-menu-item key="1" @click="showTagRemoveModal">
+                    删除标签
+                  </a-menu-item>
+                </a-menu>
+              </template>
+              <a-button>
+                更多功能
+                <down-outlined />
+              </a-button>
+            </a-dropdown>
           </a-space>
         </div>
       </div>
+
+      <!-- 标签删除模态框 -->
+      <a-modal
+        v-model:visible="tagRemoveModalVisible"
+        title="删除Emby标签"
+        :confirm-loading="removingTag"
+        @ok="removeTag"
+        okText="删除"
+        cancelText="取消"
+      >
+        <a-form :model="tagRemoveForm" layout="vertical">
+          <a-form-item
+            label="标签名称"
+            name="tagName"
+            help="输入要删除的标签名称，将从所有电影和剧集中删除此标签"
+            :rules="[{ required: true, message: '请输入标签名称' }]"
+          >
+            <a-input 
+              v-model:value="tagRemoveForm.tagName" 
+              placeholder="输入要删除的标签名称"
+              allow-clear
+            />
+          </a-form-item>
+          
+          <a-alert
+            type="warning"
+            message="此操作不可逆，将删除所有项目中包含此标签的记录"
+            style="margin-bottom: 16px"
+          />
+        </a-form>
+      </a-modal>
+      
+      <!-- 标签删除结果模态框 -->
+      <a-modal
+        v-model:visible="tagRemoveResultVisible"
+        title="标签删除结果"
+        @ok="closeTagRemoveResult"
+        okText="确定"
+        :footer="tagRemoveResultFooter"
+        width="700px"
+      >
+        <a-result
+          :status="tagRemoveResult.success ? 'success' : 'error'"
+          :title="tagRemoveResult.message"
+          :sub-title="`共处理 ${tagRemoveResult.total} 个项目，成功 ${tagRemoveResult.success_count} 个，失败 ${tagRemoveResult.failed_count} 个`"
+        >
+          <template #extra v-if="tagRemoveResult.items && tagRemoveResult.items.length > 0">
+            <a-divider>处理的项目</a-divider>
+            <a-list size="small">
+              <a-list-item v-for="item in tagRemoveResult.items" :key="item.id">
+                <a-space>
+                  <check-circle-outlined v-if="item.success" style="color: #52c41a" />
+                  <close-circle-outlined v-else style="color: #f5222d" />
+                  <a-tag :color="getEmbyTypeColor(item.type ? item.type.toLowerCase() : 'unknown')">
+                    {{ getEmbyTypeLabel(item.type ? item.type.toLowerCase() : 'unknown') }}
+                  </a-tag>
+                  <span>{{ item.name }}</span>
+                </a-space>
+              </a-list-item>
+            </a-list>
+          </template>
+        </a-result>
+      </a-modal>
 
       <!-- 扫描结果显示 -->
       <a-card 
@@ -170,6 +247,11 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue';
 import { notification, Modal } from 'ant-design-vue';
+import { 
+  DownOutlined, 
+  CheckCircleOutlined, 
+  CloseCircleOutlined 
+} from '@ant-design/icons-vue';
 import axios from 'axios';
 
 // 控制状态
@@ -253,6 +335,94 @@ const deselectAllItems = () => {
 // 重置刷新结果
 const resetRefreshResults = () => {
   refreshResults.value = { refreshed_items: [] };
+};
+
+// 标签删除相关
+const tagRemoveModalVisible = ref(false);
+const removingTag = ref(false);
+const tagRemoveForm = ref({
+  tagName: ''
+});
+const tagRemoveResult = ref({
+  success: false,
+  message: '',
+  total: 0,
+  success_count: 0,
+  failed_count: 0,
+  items: []
+});
+const tagRemoveResultVisible = ref(false);
+const tagRemoveResultFooter = ref([]);
+
+// 显示标签删除模态框
+const showTagRemoveModal = () => {
+  tagRemoveModalVisible.value = true;
+};
+
+// 关闭标签删除结果模态框
+const closeTagRemoveResult = () => {
+  tagRemoveResultVisible.value = false;
+};
+
+// 删除标签
+const removeTag = async () => {
+  // 验证表单
+  if (!tagRemoveForm.value.tagName || !tagRemoveForm.value.tagName.trim()) {
+    notification.error({
+      message: '输入错误',
+      description: '请输入要删除的标签名称'
+    });
+    return;
+  }
+  
+  removingTag.value = true;
+  
+  try {
+    const response = await axios.post('/api/health/emby/tags/remove', {
+      tag_name: tagRemoveForm.value.tagName.trim()
+    });
+    
+    // 保存结果
+    tagRemoveResult.value = response.data;
+    
+    // 关闭输入模态框，显示结果模态框
+    tagRemoveModalVisible.value = false;
+    tagRemoveResultVisible.value = true;
+    
+    // 根据结果显示通知
+    if (response.data.success) {
+      if (response.data.total > 0) {
+        notification.success({
+          message: '删除标签成功',
+          description: `从 ${response.data.success_count}/${response.data.total} 个项目中删除了标签 "${tagRemoveForm.value.tagName}"`,
+          duration: 4
+        });
+      } else {
+        notification.info({
+          message: '没有找到项目',
+          description: `未找到带有标签 "${tagRemoveForm.value.tagName}" 的项目`,
+          duration: 4
+        });
+      }
+    } else {
+      notification.error({
+        message: '删除标签失败',
+        description: response.data.message || '请求成功但返回错误'
+      });
+    }
+    
+    // 重置表单
+    tagRemoveForm.value.tagName = '';
+    
+  } catch (error) {
+    console.error('[Emby标签] 删除标签错误:', error);
+    notification.error({
+      message: '请求错误',
+      description: `删除标签时出错: ${error.message}`
+    });
+  } finally {
+    removingTag.value = false;
+  }
 };
 
 // 扫描最新添加到Emby的项目
