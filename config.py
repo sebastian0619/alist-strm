@@ -134,6 +134,7 @@ class Settings(BaseSettings):
     
     # 下载元数据文件配置
     download_metadata: bool = Field(default=False, alias="DOWNLOAD_METADATA")
+    metadata_extensions: str = Field(default=".ass,.ssa,.srt,.png,.nfo,.jpg,.jpeg,.json,.bif", alias="METADATA_EXTENSIONS", description="支持的元数据文件扩展名，以逗号分隔")
     
     # TMDB元数据配置
     tmdb_cache_dir: str = Field(default="cache/tmdb", alias="TMDB_CACHE_DIR", description="TMDB元数据缓存目录")
@@ -161,6 +162,11 @@ class Settings(BaseSettings):
     def skip_extensions_list(self) -> List[str]:
         """获取跳过扩展名列表"""
         return [item.strip() for item in self.skip_extensions.split(",") if item.strip()]
+    
+    @property
+    def metadata_extensions_list(self) -> List[str]:
+        """获取元数据扩展名列表"""
+        return [item.strip() for item in self.metadata_extensions.split(",") if item.strip()]
     
     @model_validator(mode='before')
     def parse_booleans(cls, values):

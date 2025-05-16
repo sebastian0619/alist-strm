@@ -208,13 +208,27 @@
 
       <a-form-item label="下载元数据">
         <a-switch
-          v-model:checked="config.is_down_meta"
+          v-model:checked="config.download_metadata"
           :checked-children="'开启'"
           :un-checked-children="'关闭'"
         />
         <a-tooltip>
           <template #title>
             下载NFO、海报等媒体元数据文件
+          </template>
+          <info-circle-outlined style="margin-left: 8px" />
+        </a-tooltip>
+      </a-form-item>
+
+      <a-form-item label="元数据文件扩展名" v-if="config.download_metadata">
+        <a-input
+          v-model:value="config.metadata_extensions"
+          placeholder=".ass,.ssa,.srt,.png,.nfo,.jpg,.jpeg,.json,.bif"
+        />
+        <a-tooltip>
+          <template #title>
+            支持的元数据文件扩展名，多个用逗号分隔（包含点号）
+            例如：.ass,.ssa,.srt,.png,.nfo,.jpg,.jpeg,.json,.bif
           </template>
           <info-circle-outlined style="margin-left: 8px" />
         </a-tooltip>

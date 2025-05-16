@@ -208,8 +208,8 @@ class StrmService:
         # 检查文件扩展名
         ext = os.path.splitext(filename)[1].lower()
         
-        # 定义元数据文件扩展名
-        metadata_extensions = {'.ass', '.ssa', '.srt', '.png', '.nfo', '.jpg', '.jpeg'}
+        # 从配置中获取元数据文件扩展名
+        metadata_extensions = set(self.settings.metadata_extensions_list)
         
         # 如果是元数据文件且开启了下载元数据，不跳过
         if self.settings.download_metadata and ext in metadata_extensions:
@@ -402,7 +402,7 @@ class StrmService:
                 return False
                 
             ext = os.path.splitext(filename)[1].lower()
-            metadata_extensions = {'.ass', '.ssa', '.srt', '.png', '.nfo', '.jpg', '.jpeg'}
+            metadata_extensions = set(self.settings.metadata_extensions_list)
             
             # 如果是元数据文件且开启了下载元数据
             if self.settings.download_metadata and ext in metadata_extensions:
