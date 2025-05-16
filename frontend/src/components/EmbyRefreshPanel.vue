@@ -30,8 +30,118 @@
         </div>
       </div>
 
+      <!-- 扫描结果显示 -->
+      <a-card 
+        v-if="scanResults.items && scanResults.items.length > 0" 
+        title="最近12小时内的新项目" 
+        class="emby-card"
+      >
+        <div class="scan-actions">
+          <a-space>
+            <a-button 
+              type="primary" 
+              @click="refreshSelectedItems" 
+              :loading="refreshing"
+              :disabled="selectedItems.length === 0"
+            >
+              刷新选中的项目
+            </a-button>
+            <a-button 
+              @click="selectAllItems" 
+              :disabled="allSelected"
+            >
+              全选
+            </a-button>
+            <a-button 
+              @click="deselectAllItems" 
+              :disabled="noneSelected"
+            >
+              取消全选
+            </a-button>
+          </a-space>
+        </div>
+
+        <a-table
+          :dataSource="scanResults.items"
+          :columns="columns"
+          :pagination="{ pageSize: 10 }"
+          :row-key="record => record.id"
+          :loading="scanningLatest"
+          size="middle"
+        >
+          <!-- 选择框列 -->
+          <template #bodyCell="{ column, record }">
+            <template v-if="column.dataIndex === 'selected'">
+              <a-checkbox 
+                v-model:checked="record.selected" 
+                @change="updateSelectedCount"
+              />
+            </template>
+            <template v-if="column.dataIndex === 'year'">
+              {{ record.year || '-' }}
+            </template>
+            <template v-if="column.dataIndex === 'created'">
+              <div>
+                {{ record.created }}
+                <a-tag color="blue" style="margin-left: 8px">{{ record.hoursAgo }}小时前</a-tag>
+              </div>
+            </template>
+            <template v-if="column.dataIndex === 'path'">
+              <div style="width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" :title="record.path">
+                {{ record.path }}
+              </div>
+              <a-tag v-if="record.is_strm" color="green">STRM</a-tag>
+              <a-tag v-else color="orange">普通</a-tag>
+            </template>
+            <template v-if="column.dataIndex === 'type'">
+              <a-tag :color="getEmbyTypeColor(record.type ? record.type.toLowerCase() : 'unknown')">
+                {{ getEmbyTypeLabel(record.type ? record.type.toLowerCase() : 'unknown') }}
+              </a-tag>
+            </template>
+          </template>
+        </a-table>
+      </a-card>
+
+      <!-- 没有扫描结果时显示 -->
+      <a-empty 
+        v-else-if="scanningLatest === false && scanCompleted" 
+        description="没有找到最近12小时内的新项目" 
+      />
+
+      <!-- 刷新结果显示 -->
+      <a-card 
+        v-if="refreshResults.refreshed_items && refreshResults.refreshed_items.length > 0" 
+        title="刷新结果" 
+        class="emby-card"
+      >
+        <a-result
+          status="success"
+          :title="`成功刷新 ${refreshResults.refreshed_count} 个项目`"
+          :sub-title="refreshResults.message"
+        >
+          <template #extra>
+            <a-button type="primary" @click="resetRefreshResults">
+              确定
+            </a-button>
+          </template>
+        </a-result>
+
+        <a-divider>刷新项目列表</a-divider>
+          
+        <a-list size="small">
+          <a-list-item v-for="item in refreshResults.refreshed_items" :key="item.id">
+            <a-space>
+              <a-tag :color="getEmbyTypeColor(item.type ? item.type.toLowerCase() : 'unknown')">
+                {{ getEmbyTypeLabel(item.type ? item.type.toLowerCase() : 'unknown') }}
+              </a-tag>
+              <span>{{ item.name }}</span>
+            </a-space>
+          </a-list-item>
+        </a-list>
+      </a-card>
+
       <!-- 最近一次刷新结果卡片 -->
-      <a-card title="最近一次刷新信息" class="emby-card" v-if="lastRefreshInfo">
+      <a-card title="最近一次刷新信息" class="emby-card" v-if="lastRefreshInfo && !refreshResults.refreshed_items">
         <a-spin :spinning="lastRefreshLoading">
           <div v-if="lastRefreshInfo && lastRefreshInfo.has_refresh">
             <p>刷新时间: {{ lastRefreshInfo.time }}</p>
@@ -58,7 +168,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { notification, Modal } from 'ant-design-vue';
 import axios from 'axios';
 
@@ -67,60 +177,104 @@ const embyEnabled = ref(true); // 默认认为已启用
 const scanningLatest = ref(false);
 const lastRefreshInfo = ref(null);
 const lastRefreshLoading = ref(false);
+const scanCompleted = ref(false);
+const refreshing = ref(false);
+
+// 扫描结果和选择状态
+const scanResults = ref({ items: [] });
+const refreshResults = ref({ refreshed_items: [] });
+const selectedItems = ref([]);
+
+// 计算属性
+const allSelected = computed(() => {
+  return scanResults.value.items.length > 0 && 
+         scanResults.value.items.every(item => item.selected);
+});
+
+const noneSelected = computed(() => {
+  return scanResults.value.items.length === 0 || 
+         scanResults.value.items.every(item => !item.selected);
+});
+
+// 表格列定义
+const columns = [
+  {
+    title: '选择',
+    dataIndex: 'selected',
+    width: 60
+  },
+  {
+    title: '类型',
+    dataIndex: 'type',
+    width: 100
+  },
+  {
+    title: '名称',
+    dataIndex: 'name'
+  },
+  {
+    title: '年份',
+    dataIndex: 'year',
+    width: 100
+  },
+  {
+    title: '路径',
+    dataIndex: 'path',
+    width: 300
+  },
+  {
+    title: '添加时间',
+    dataIndex: 'created',
+    width: 240
+  }
+];
+
+// 更新选择计数
+const updateSelectedCount = () => {
+  selectedItems.value = scanResults.value.items.filter(item => item.selected);
+};
+
+// 全选
+const selectAllItems = () => {
+  scanResults.value.items.forEach(item => {
+    item.selected = true;
+  });
+  updateSelectedCount();
+};
+
+// 取消全选
+const deselectAllItems = () => {
+  scanResults.value.items.forEach(item => {
+    item.selected = false;
+  });
+  updateSelectedCount();
+};
+
+// 重置刷新结果
+const resetRefreshResults = () => {
+  refreshResults.value = { refreshed_items: [] };
+};
 
 // 扫描最新添加到Emby的项目
 const scanLatestItems = async () => {
   scanningLatest.value = true;
+  scanResults.value = { items: [] };
+  refreshResults.value = { refreshed_items: [] };
+  scanCompleted.value = false;
+  
   try {
     const response = await axios.post('/api/health/emby/scan?hours=12');
-    console.log('[Emby刷库] 扫描最新项目响应:', response.data);
     
     if (response.data.success) {
-      notification.success({
-        message: '扫描完成',
-        description: response.data.message || '已扫描Emby最新项目'
-      });
+      scanResults.value = response.data;
+      updateSelectedCount();
+      scanCompleted.value = true;
       
-      // 如果有结果，显示详细信息
-      if (response.data.added_items && response.data.added_items.length > 0) {
-        // 更新最近刷新信息
-        lastRefreshInfo.value = {
-          time: new Date().toLocaleString(),
-          has_refresh: true,
-          items: response.data.added_items
-        };
-        
-        Modal.info({
-          title: '扫描结果',
-          width: 700,
-          content: h => {
-            return h('div', [
-              h('p', `发现 ${response.data.total_found} 个新项目，已刷新 ${response.data.added_items.length} 个项目`),
-              h('div', { style: { maxHeight: '400px', overflow: 'auto' } }, [
-                h('a-list', { 
-                  size: 'small',
-                  dataSource: response.data.added_items,
-                  renderItem: (item) => {
-                    return h('a-list-item', [
-                      h('a-space', [
-                        h('a-tag', { color: getEmbyTypeColor(item.type ? item.type.toLowerCase() : 'unknown') }, 
-                          getEmbyTypeLabel(item.type ? item.type.toLowerCase() : 'unknown')),
-                        h('span', item.name),
-                        item.year ? h('span', `(${item.year})`) : null
-                      ])
-                    ]);
-                  }
-                })
-              ])
-            ]);
-          }
-        });
-      } else {
-        notification.info({
-          message: '扫描完成',
-          description: '未发现新项目需要刷新'
-        });
-      }
+      notification.success({
+        message: '扫描成功',
+        description: `发现 ${scanResults.value.items.length} 个最近添加的项目`,
+        duration: 4
+      });
     } else {
       notification.error({
         message: '扫描失败',
@@ -135,6 +289,54 @@ const scanLatestItems = async () => {
     });
   } finally {
     scanningLatest.value = false;
+  }
+};
+
+// 刷新选中的项目
+const refreshSelectedItems = async () => {
+  if (selectedItems.value.length === 0) {
+    notification.warning({
+      message: '未选择项目',
+      description: '请至少选择一个项目进行刷新'
+    });
+    return;
+  }
+  
+  refreshing.value = true;
+  
+  try {
+    // 获取选中项目的ID列表
+    const itemIds = selectedItems.value.map(item => item.id);
+    
+    const response = await axios.post('/api/health/emby/refresh', {
+      item_ids: itemIds
+    });
+    
+    if (response.data.success) {
+      refreshResults.value = response.data;
+      
+      notification.success({
+        message: '刷新成功',
+        description: `成功刷新 ${refreshResults.value.refreshed_count} 个项目`,
+        duration: 4
+      });
+      
+      // 清空扫描结果，避免重复刷新
+      scanResults.value = { items: [] };
+    } else {
+      notification.error({
+        message: '刷新失败',
+        description: response.data.message || '请求成功但返回错误'
+      });
+    }
+  } catch (error) {
+    console.error('[Emby刷库] 刷新项目错误:', error);
+    notification.error({
+      message: '请求错误',
+      description: `刷新Emby项目时出错: ${error.message}`
+    });
+  } finally {
+    refreshing.value = false;
   }
 };
 
@@ -199,5 +401,9 @@ onMounted(() => {
 .emby-title {
   display: flex;
   flex-direction: column;
+}
+
+.scan-actions {
+  margin-bottom: 16px;
 }
 </style> 

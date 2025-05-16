@@ -1029,7 +1029,7 @@ async def batch_replace_strm_content(request: ReplaceRequest):
 
 @router.post("/emby/scan")
 async def scan_emby_latest_items(hours: int = Query(12, description="扫描最近多少小时的项目")):
-    """手动触发扫描最新Emby项目并添加到刷新队列"""
+    """扫描最新Emby项目（仅扫描，不刷新）"""
     try:
         # 检查服务是否开启
         if not service_manager.emby_service.emby_enabled:
@@ -1039,32 +1039,73 @@ async def scan_emby_latest_items(hours: int = Query(12, description="扫描最�
                 "logs": ["Emby刷库功能未启用，请检查配置"]
             }
             
-        # 执行扫描
-        result = await service_manager.emby_service.scan_latest_items(hours=hours)
-        logger.info(f"手动触发Emby扫描完成: {result['message']}")
+        # 执行仅扫描，不刷新
+        # 调用修改后的scan_latest_items方法，只获取项目列表不刷新
+        result = await service_manager.emby_service.scan_without_refresh(hours=hours)
         
-        # 确保日志信息显示在响应中
-        if "logs" not in result:
-            result["logs"] = []
+        # 打印更详细的统计信息
+        strm_count = result.get("strm_count", 0)
+        total_found = result.get("total_found", 0)
+        logger.info(f"手动扫描Emby项目完成: 发现 {total_found} 个新项目，其中 {strm_count} 个是STRM文件")
+        print(f"[Emby扫描] 手动扫描完成: 发现 {total_found} 个新项目，其中 {strm_count} 个是STRM文件")
         
-        # 添加API处理的日志信息
-        result["logs"].append(f"手动触发Emby扫描完成: {result['message']}")
+        return {
+            "success": True,
+            "message": f"扫描完成，发现 {total_found} 个新项目，其中 {strm_count} 个是STRM文件",
+            "total_found": total_found,
+            "strm_count": strm_count,
+            "items": result['items'],
+            "logs": result['logs']
+        }
+    except Exception as e:
+        logger.error(f"手动扫描Emby项目失败: {str(e)}")
+        return {
+            "success": False,
+            "message": f"扫描失败: {str(e)}",
+            "logs": [f"扫描过程中出错: {str(e)}"]
+        }
+
+@router.post("/emby/refresh")
+async def refresh_emby_items(item_ids: List[str] = Body(..., description="要刷新的项目ID列表")):
+    """刷新指定的Emby项目"""
+    try:
+        # 检查服务是否开启
+        if not service_manager.emby_service.emby_enabled:
+            return {
+                "success": False,
+                "message": "Emby刷库功能未启用",
+                "logs": ["Emby刷库功能未启用，请检查配置"]
+            }
+        
+        # 如果没有提供项目ID，则返回错误
+        if not item_ids:
+            return {
+                "success": False,
+                "message": "未提供要刷新的项目ID",
+                "logs": ["未提供要刷新的项目ID"]
+            }
+            
+        # 执行刷新
+        logger.info(f"开始刷新 {len(item_ids)} 个Emby项目")
+        print(f"[Emby刷新] 开始刷新 {len(item_ids)} 个Emby项目")
+        
+        # 刷新项目
+        result = await service_manager.emby_service.refresh_items(item_ids)
         
         # 发送通知
         try:
             if result["success"] and result["refreshed_count"] > 0:
                 # 构建详细的通知消息
-                message = f"🔄 Emby手动扫描完成\n\n" \
-                         f"- 发现 {result['total_found']} 个新项目\n" \
+                message = f"🔄 Emby手动刷新完成\n\n" \
                          f"- 成功刷新 {result['refreshed_count']} 个项目\n\n"
                 
                 # 添加刷新项目列表
-                if len(result["added_items"]) > 0:
+                if len(result["refreshed_items"]) > 0:
                     message += "刷新项目：\n"
                     
                     # 按类型分组项目
                     items_by_type = {}
-                    for item in result["added_items"]:
+                    for item in result["refreshed_items"]:
                         item_type = item.get("type", "未知")
                         if item_type not in items_by_type:
                             items_by_type[item_type] = []
@@ -1085,12 +1126,16 @@ async def scan_emby_latest_items(hours: int = Query(12, description="扫描最�
                 
                 await service_manager.telegram_service.send_message(message)
         except Exception as e:
-            logger.error(f"发送手动扫描通知失败: {str(e)}")
+            logger.error(f"发送手动刷新通知失败: {str(e)}")
         
         return result
     except Exception as e:
-        logger.error(f"手动触发Emby扫描失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"扫描失败: {str(e)}")
+        logger.error(f"手动刷新Emby项目失败: {str(e)}")
+        return {
+            "success": False,
+            "message": f"刷新失败: {str(e)}",
+            "logs": [f"刷新过程中出错: {str(e)}"]
+        }
 
 @router.get("/emby/logs")
 async def get_emby_logs(limit: int = Query(100, description="返回的日志条数")):
