@@ -182,6 +182,7 @@ class EmbyService:
             # 确保emby_url是合法的URL
             if not self.emby_url or not self.emby_url.startswith(('http://', 'https://')):
                 logger.error(f"无效的Emby API URL: {self.emby_url}")
+                print(f"[Emby刷新] 错误: 无效的API URL: {self.emby_url}")
                 return False
             
             # 构建API URL - 修复路径重复问题
@@ -200,7 +201,7 @@ class EmbyService:
             }
             
             logger.info(f"正在刷新Emby项目: ID={item_id}, 请求URL={url}")
-            logger.debug(f"请求参数: {params}")
+            print(f"[Emby刷新] 发送刷新请求: ID={item_id}, URL={url}")
             
             # 发送请求
             async with httpx.AsyncClient() as client:
@@ -210,23 +211,19 @@ class EmbyService:
                 
                 if response.status_code in (200, 204):
                     logger.info(f"成功刷新Emby项目: ID={item_id}, 状态码: {response.status_code}, 耗时: {duration:.2f}秒")
-                    
-                    try:
-                        # 尝试解析响应内容（如果有）
-                        if response.text:
-                            logger.debug(f"响应内容: {response.text[:500]}")
-                    except Exception:
-                        pass
-                        
+                    print(f"[Emby刷新] 成功: ID={item_id}, 状态码: {response.status_code}, 耗时: {duration:.2f}秒")
                     return True
                 else:
                     logger.error(f"刷新Emby项目失败: ID={item_id}, 状态码: {response.status_code}, 耗时: {duration:.2f}秒")
                     logger.error(f"响应内容: {response.text[:500] if response.text else '无响应内容'}")
+                    print(f"[Emby刷新] 失败: ID={item_id}, 状态码: {response.status_code}, 耗时: {duration:.2f}秒")
+                    print(f"[Emby刷新] 响应内容: {response.text[:200] if response.text else '无响应内容'}")
                     return False
             
             return False
         except Exception as e:
             logger.error(f"刷新Emby项目失败: ID={item_id}, 错误: {str(e)}", exc_info=True)
+            print(f"[Emby刷新] 出错: ID={item_id}, 错误: {str(e)}")
             return False
 
     async def get_latest_items(self, limit: int = 30, item_types: str = "Series,Movie", recursive: bool = True) -> List[Dict]:
@@ -243,6 +240,7 @@ class EmbyService:
         try:
             if not self.emby_enabled:
                 logger.warning("Emby服务未启用，无法获取最新项目")
+                print("[Emby] 错误: Emby服务未启用，无法获取最新项目")
                 return []
             
             # 构建API URL
@@ -264,11 +262,13 @@ class EmbyService:
                 params["IncludeItemTypes"] = item_types
             
             logger.info(f"获取最新入库项目: URL={url}, 类型={item_types or '全部'}, 数量={limit}, 递归={recursive}")
-            logger.debug(f"请求参数: {params}")
+            print(f"[Emby] 请求最新项目: URL={url}")
+            print(f"[Emby] 参数: 类型={item_types}, 数量={limit}, 递归={recursive}")
             
             # 发送请求
             async with httpx.AsyncClient() as client:
                 start_time = time.time()
+                print(f"[Emby] 正在发送请求...")
                 response = await client.get(url, params=params, timeout=30)
                 duration = time.time() - start_time
                 
@@ -277,17 +277,22 @@ class EmbyService:
                     items = data.get("Items", [])
                     total_items = data.get("TotalRecordCount", 0)
                     logger.info(f"成功获取最新项目: 返回{len(items)}个项目 (总计{total_items}个), 耗时: {duration:.2f}秒")
+                    print(f"[Emby] 成功获取最新项目: 返回{len(items)}个项目 (总计{total_items}个), 耗时: {duration:.2f}秒")
                     
                     # 记录一些项目信息用于调试
                     if items:
                         logger.debug("获取到的部分项目:")
+                        print("[Emby] 获取到的部分项目:")
                         for i, item in enumerate(items[:5]):  # 只记录前5个项目
                             logger.debug(f"  {i+1}. ID={item.get('Id')}, 名称={item.get('Name')}, 类型={item.get('Type')}")
+                            print(f"[Emby]   {i+1}. ID={item.get('Id')}, 名称={item.get('Name')}, 类型={item.get('Type')}")
                     
                     return items
                 else:
                     logger.error(f"获取最新项目失败: 状态码={response.status_code}, 耗时: {duration:.2f}秒")
                     logger.error(f"响应内容: {response.text[:500] if response.text else '无响应内容'}")
+                    print(f"[Emby] 错误: 获取最新项目失败, 状态码={response.status_code}")
+                    print(f"[Emby] 响应内容: {response.text[:200] if response.text else '无响应内容'}")
                     return []
                     
         except Exception as e:
@@ -306,17 +311,22 @@ class EmbyService:
         try:
             if not self.emby_enabled:
                 logger.warning(f"Emby服务未启用，无法执行扫描，当前emby_enabled={self.emby_enabled}, emby_url={self.emby_url}")
+                print(f"[Emby扫描] 错误: Emby服务未启用，请检查配置")
                 return {"success": False, "message": "Emby服务未启用"}
             
             # 计算时间范围
             current_time = time.time()
             start_time = current_time - (hours * 3600)
             logger.info(f"开始扫描Emby项目 - 时间范围: 最近{hours}小时 (开始时间: {datetime.fromtimestamp(start_time).strftime('%Y-%m-%d %H:%M:%S')})")
+            print(f"[Emby扫描] 开始扫描最近{hours}小时的Emby项目...")
             
             # 获取最新项目
             logger.info(f"正在从Emby服务器获取最新项目，API URL: {self.emby_url}")
+            print(f"[Emby扫描] 正在从服务器获取最新项目: {self.emby_url}")
+            print(f"[Emby扫描] 参数: limit=300, item_types=Series,Movie, recursive=true")
             latest_items = await self.get_latest_items(limit=300, item_types="Series,Movie", recursive=True)
             logger.info(f"Emby服务器返回项目总数: {len(latest_items)}")
+            print(f"[Emby扫描] 服务器返回项目总数: {len(latest_items)}")
             
             # 过滤时间范围内的项目
             new_items = []
@@ -339,10 +349,13 @@ class EmbyService:
                         if created_timestamp >= start_time:
                             new_items.append(item)
                             logger.info(f"找到符合条件的项目: ID={item_id}, 名称={item_name}, 类型={item_type}, 添加时间={created_time.strftime('%Y-%m-%d %H:%M:%S')}")
+                            print(f"[Emby扫描] 找到新项目: {item_name} ({item_type}), 添加时间: {created_time.strftime('%Y-%m-%d %H:%M:%S')}")
                     except Exception as e:
                         logger.warning(f"解析项目时间出错: {str(e)}, 项目: ID={item_id}, 名称={item_name}, 原始时间值: {date_created}")
+                        print(f"[Emby扫描] 警告: 解析项目时间出错: {item_name}, 错误: {str(e)}")
             
             logger.info(f"找到 {len(new_items)} 个最近 {hours} 小时内的新项目")
+            print(f"[Emby扫描] 找到 {len(new_items)} 个最近 {hours} 小时内的新项目")
             
             # 直接刷新项目
             refreshed_count = 0
@@ -350,8 +363,10 @@ class EmbyService:
             
             if new_items:
                 logger.info("开始刷新新项目元数据...")
+                print(f"[Emby扫描] 开始刷新新项目元数据...")
             else:
                 logger.info("没有找到需要刷新的新项目")
+                print(f"[Emby扫描] 没有找到需要刷新的新项目")
             
             for item in new_items:
                 item_id = item.get("Id")
@@ -362,11 +377,13 @@ class EmbyService:
                 if item_id:
                     # 执行刷新
                     logger.info(f"正在刷新项目: ID={item_id}, 名称={item_name}, 类型={item_type}, 路径={item_path}")
+                    print(f"[Emby扫描] 正在刷新: {item_name} ({item_type})")
                     success = await self.refresh_emby_item(item_id)
                     
                     if success:
                         refreshed_count += 1
                         logger.info(f"成功刷新项目: ID={item_id}, 名称={item_name}")
+                        print(f"[Emby扫描] ✓ 成功刷新: {item_name}")
                         
                         # 记录刷新的项目信息
                         refreshed_items.append({
@@ -378,11 +395,13 @@ class EmbyService:
                         })
                     else:
                         logger.warning(f"刷新项目失败: ID={item_id}, 名称={item_name}")
+                        print(f"[Emby扫描] ✗ 刷新失败: {item_name}")
             
             # 保存本次刷新记录
             if refreshed_items:
                 self._save_last_refresh(refreshed_items)
                 logger.info(f"已保存刷新记录，共 {len(refreshed_items)} 个项目")
+                print(f"[Emby扫描] 已保存刷新记录，共 {len(refreshed_items)} 个项目")
             
             result = {
                 "success": True,
@@ -401,6 +420,7 @@ class EmbyService:
             }
             
             logger.info(f"扫描结果: {result['message']}")
+            print(f"[Emby扫描] 完成: {result['message']}")
             return result
             
         except Exception as e:
