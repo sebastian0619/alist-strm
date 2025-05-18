@@ -47,6 +47,9 @@ class ReplaceRequest(BaseModel):
 class TagRemoveRequest(BaseModel):
     tag_name: str = Body(..., description="要删除的标签名称")
 
+class EmbyRefreshRequest(BaseModel):
+    item_ids: List[str] = Body(..., description="要刷新的项目ID列表")
+
 # 存储最近一次扫描状态
 _is_scanning: bool = False
 _scan_progress: int = 0
@@ -1069,7 +1072,7 @@ async def scan_emby_latest_items(hours: int = Query(12, description="扫描最�
         }
 
 @router.post("/emby/refresh")
-async def refresh_emby_items(item_ids: List[str] = Body(..., description="要刷新的项目ID列表")):
+async def refresh_emby_items(request: EmbyRefreshRequest):
     """刷新指定的Emby项目"""
     try:
         # 检查服务是否开启
@@ -1081,7 +1084,7 @@ async def refresh_emby_items(item_ids: List[str] = Body(..., description="要刷
             }
         
         # 如果没有提供项目ID，则返回错误
-        if not item_ids:
+        if not request.item_ids:
             return {
                 "success": False,
                 "message": "未提供要刷新的项目ID",
@@ -1089,11 +1092,11 @@ async def refresh_emby_items(item_ids: List[str] = Body(..., description="要刷
             }
             
         # 执行刷新
-        logger.info(f"开始刷新 {len(item_ids)} 个Emby项目")
-        print(f"[Emby刷新] 开始刷新 {len(item_ids)} 个Emby项目")
+        logger.info(f"开始刷新 {len(request.item_ids)} 个Emby项目")
+        print(f"[Emby刷新] 开始刷新 {len(request.item_ids)} 个Emby项目")
         
         # 刷新项目
-        result = await service_manager.emby_service.refresh_items(item_ids)
+        result = await service_manager.emby_service.refresh_items(request.item_ids)
         
         # 发送通知
         try:
