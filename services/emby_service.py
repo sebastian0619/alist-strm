@@ -581,58 +581,40 @@ class EmbyService:
                     "refreshed_items": []
                 }
             
-            # 首先获取项目详情
+            # 直接循环刷新每个项目，不获取项目详情
             for item_id in item_ids:
                 try:
-                    # 获取项目详情
-                    item_details = await self.get_item_details(item_id)
+                    # 执行刷新
+                    logger.info(f"正在刷新项目: ID={item_id}")
+                    print(f"[Emby刷新] 正在刷新: ID={item_id}")
+                    success = await self.refresh_emby_item(item_id)
                     
-                    if item_details:
-                        item_name = item_details.get("Name", "未知")
-                        item_type = item_details.get("Type", "未知")
-                        item_path = item_details.get("Path", "未知")
+                    if success:
+                        refreshed_count += 1
+                        logger.info(f"成功刷新项目: ID={item_id}")
+                        print(f"[Emby刷新] ✓ 成功刷新: ID={item_id}")
                         
-                        # 执行刷新
-                        logger.info(f"正在刷新项目: ID={item_id}, 名称={item_name}, 类型={item_type}")
-                        print(f"[Emby刷新] 正在刷新: {item_name} ({item_type})")
-                        success = await self.refresh_emby_item(item_id)
-                        
-                        if success:
-                            refreshed_count += 1
-                            logger.info(f"成功刷新项目: ID={item_id}, 名称={item_name}")
-                            print(f"[Emby刷新] ✓ 成功刷新: {item_name}")
-                            
-                            # 记录刷新的项目信息
-                            refreshed_items.append({
-                                "id": item_id,
-                                "name": item_name,
-                                "type": item_type,
-                                "path": item_path,
-                                "year": item_details.get("ProductionYear")
-                            })
-                        else:
-                            logger.warning(f"刷新项目失败: ID={item_id}, 名称={item_name}")
-                            print(f"[Emby刷新] ✗ 刷新失败: {item_name}")
-                            failed_items.append({
-                                "id": item_id,
-                                "name": item_name,
-                                "type": item_type
-                            })
+                        # 记录刷新的项目信息（基本信息）
+                        refreshed_items.append({
+                            "id": item_id,
+                            "name": f"ID:{item_id}",  # 由于没有获取详情，只显示ID
+                            "type": "unknown"         # 类型未知
+                        })
                     else:
-                        logger.warning(f"找不到项目详情: ID={item_id}")
-                        print(f"[Emby刷新] ✗ 找不到项目详情: ID={item_id}")
+                        logger.warning(f"刷新项目失败: ID={item_id}")
+                        print(f"[Emby刷新] ✗ 刷新失败: ID={item_id}")
                         failed_items.append({
                             "id": item_id,
-                            "name": "未知",
-                            "type": "未知"
+                            "name": f"ID:{item_id}",
+                            "type": "unknown"
                         })
                 except Exception as e:
                     logger.error(f"刷新项目出错: ID={item_id}, 错误: {str(e)}")
                     print(f"[Emby刷新] ✗ 刷新项目出错: ID={item_id}, 错误: {str(e)}")
                     failed_items.append({
                         "id": item_id,
-                        "name": "未知",
-                        "type": "未知",
+                        "name": f"ID:{item_id}",
+                        "type": "unknown",
                         "error": str(e)
                     })
             

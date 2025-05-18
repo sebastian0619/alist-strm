@@ -685,6 +685,64 @@ class ArchiveService:
                 logger.error(f"扫描路径: {strm_service.settings.alist_scan_path}")
                 return False
             
+            # 如果启用了元数据下载，先复制元数据文件
+            if strm_service.settings.download_metadata:
+                logger.info(f"已启用元数据下载，将直接复制元数据文件到STRM目录")
+                
+                # 从配置中获取元数据文件扩展名
+                metadata_extensions = set(strm_service.settings.metadata_extensions_list)
+                logger.info(f"元数据文件扩展名: {metadata_extensions}")
+                
+                # 获取源目录相对于alist_scan_path的路径
+                source_rel_path = str(source_directory.relative_to(self.settings.archive_source_root)).replace('\\', '/')
+                if source_rel_path.startswith('/'):
+                    source_rel_path = source_rel_path[1:]
+                
+                # 计算目标STRM目录路径
+                # 主要思路：获取相对路径，然后计算STRM目录下对应的路径
+                target_strm_dir = os.path.join(strm_service.settings.output_dir, source_rel_path)
+                logger.info(f"目标STRM目录: {target_strm_dir}")
+                
+                # 确保目标目录存在
+                os.makedirs(target_strm_dir, exist_ok=True)
+                
+                # 查找源目录中的所有元数据文件
+                metadata_files = []
+                for root, _, files in os.walk(source_directory):
+                    for file in files:
+                        ext = os.path.splitext(file)[1].lower()
+                        if ext in metadata_extensions:
+                            source_file = Path(os.path.join(root, file))
+                            
+                            # 获取相对于源目录的路径
+                            rel_path = source_file.relative_to(source_directory)
+                            
+                            # 构建目标路径
+                            target_file = os.path.join(target_strm_dir, str(rel_path))
+                            
+                            metadata_files.append((source_file, target_file))
+                
+                # 复制元数据文件
+                copied_count = 0
+                if metadata_files:
+                    logger.info(f"找到 {len(metadata_files)} 个元数据文件需要复制")
+                    
+                    for source_file, target_file in metadata_files:
+                        try:
+                            # 确保目标目录存在
+                            os.makedirs(os.path.dirname(target_file), exist_ok=True)
+                            
+                            # 复制文件
+                            shutil.copy2(source_file, target_file)
+                            copied_count += 1
+                            logger.info(f"复制元数据文件: {source_file} -> {target_file}")
+                        except Exception as e:
+                            logger.error(f"复制元数据文件失败: {source_file} -> {target_file}, 错误: {str(e)}")
+                    
+                    logger.info(f"成功复制 {copied_count}/{len(metadata_files)} 个元数据文件到STRM目录")
+                else:
+                    logger.info(f"未找到元数据文件")
+            
             # 遍历文件列表，为每个视频文件生成strm
             for file_info in files_info:
                 file_path = file_info["path"]
