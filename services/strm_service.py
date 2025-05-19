@@ -368,9 +368,16 @@ class StrmService:
             path: 保存路径
         """
         try:
-            async with httpx.AsyncClient() as client:
+            # 明确启用重定向跟随
+            async with httpx.AsyncClient(follow_redirects=True, timeout=60.0) as client:
+                logger.debug(f"开始下载文件: {url}")
+                
                 async with client.stream('GET', url) as response:
                     response.raise_for_status()
+                    
+                    # 记录响应信息
+                    logger.debug(f"下载响应状态: {response.status_code}")
+                    
                     # 确保目录存在
                     os.makedirs(os.path.dirname(path), exist_ok=True)
                     # 写入文件
@@ -379,8 +386,13 @@ class StrmService:
                             f.write(chunk)
             logger.info(f"文件下载成功: {path}")
             return True
+        except httpx.HTTPStatusError as e:
+            logger.error(f"HTTP状态错误: {e.response.status_code} - {url}")
+            logger.error(f"响应内容: {e.response.text[:200]}")  # 仅记录前200个字符避免日志过大
+            return False
         except Exception as e:
             logger.error(f"文件下载失败: {str(e)}")
+            logger.error(f"下载URL: {url}")
             return False
     
     async def _process_file(self, path, file_info):
