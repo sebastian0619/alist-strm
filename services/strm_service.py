@@ -483,9 +483,10 @@ class StrmService:
             relative_path = full_file_path[len(self.settings.alist_scan_path):].lstrip('/')
             logger.info(f"相对路径: {relative_path}")
             
-            # 2. 将扩展名修改为.strm
+            # 2. 将扩展名修改为.strm，并在文件名后添加@remote(网盘)后缀
             base_path, _ = os.path.splitext(relative_path)
-            strm_relative_path = f"{base_path}.strm"
+            # 在文件名后添加@remote(网盘)后缀，然后再添加.strm扩展名
+            strm_relative_path = f"{base_path}@remote(网盘).strm"
             
             # 3. 根据output_dir构建STRM文件存放路径
             strm_path = os.path.join(self.settings.output_dir, strm_relative_path)
@@ -624,9 +625,20 @@ class StrmService:
             
             logger.info(f"提取的源云盘路径: {cloud_path}")
             
-            # 从源文件路径中提取相对路径（去掉.strm后缀）
-            src_relative = src_path[:-5] if src_path.endswith('.strm') else src_path
-            dest_relative = dest_path[:-5] if dest_path.endswith('.strm') else dest_path
+            # 从源文件路径中提取相对路径（去掉@remote(网盘).strm后缀）
+            if src_path.endswith('@remote(网盘).strm'):
+                src_relative = src_path[:-len('@remote(网盘).strm')]
+            elif src_path.endswith('.strm'):
+                src_relative = src_path[:-5]
+            else:
+                src_relative = src_path
+                
+            if dest_path.endswith('@remote(网盘).strm'):
+                dest_relative = dest_path[:-len('@remote(网盘).strm')]
+            elif dest_path.endswith('.strm'):
+                dest_relative = dest_path[:-5]
+            else:
+                dest_relative = dest_path
             
             # 构建目标云盘路径 - 简单替换alist_scan_path后的相对路径部分
             dest_cloud_path = self.settings.alist_scan_path + dest_relative.lstrip('/')

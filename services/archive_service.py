@@ -782,9 +782,10 @@ class ArchiveService:
                 relative_path = full_file_path[len(strm_service.settings.alist_scan_path):].lstrip('/')
                 logger.info(f"相对于扫描路径的路径: {relative_path}")
                 
-                # 2. 将扩展名修改为.strm
+                # 2. 将扩展名修改为.strm，并在文件名后添加@remote(网盘)后缀
                 base_path, _ = os.path.splitext(relative_path)
-                strm_relative_path = f"{base_path}.strm"
+                # 在文件名后添加@remote(网盘)后缀，然后再添加.strm扩展名
+                strm_relative_path = f"{base_path}@remote(网盘).strm"
                 
                 # 3. 根据output_dir构建STRM文件存放路径
                 strm_path = os.path.join(strm_service.settings.output_dir, strm_relative_path)

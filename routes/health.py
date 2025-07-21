@@ -465,7 +465,7 @@ async def scan_strm_files(directory):
     strm_files = []
     for root, _, files in os.walk(directory):
         for file in files:
-            if file.endswith('.strm'):
+            if file.endswith('.strm') or file.endswith('@remote(网盘).strm'):
                 strm_files.append(Path(root) / file)
     
     return strm_files
@@ -951,7 +951,7 @@ async def batch_replace_strm_content(request: ReplaceRequest):
         
         # 处理指定文件列表或扫描整个目录
         if request.target_paths and len(request.target_paths) > 0:
-            strm_files = [Path(path) for path in request.target_paths if os.path.isfile(path) and path.endswith('.strm')]
+            strm_files = [Path(path) for path in request.target_paths if os.path.isfile(path) and (path.endswith('.strm') or path.endswith('@remote(网盘).strm'))]
         else:
             strm_files = await scan_strm_files(strm_dir)
         

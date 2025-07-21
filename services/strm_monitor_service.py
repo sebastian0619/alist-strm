@@ -17,7 +17,7 @@ class StrmFileHandler(FileSystemEventHandler):
     def on_moved(self, event):
         """当文件或目录被移动时触发"""
         try:
-            if not event.src_path.endswith('.strm'):
+            if not (event.src_path.endswith('.strm') or event.src_path.endswith('@remote(网盘).strm')):
                 return
                 
             # 记录正在移动的文件
@@ -42,7 +42,7 @@ class StrmFileHandler(FileSystemEventHandler):
     def on_deleted(self, event):
         """当文件被删除时触发"""
         try:
-            if not event.src_path.endswith('.strm'):
+            if not (event.src_path.endswith('.strm') or event.src_path.endswith('@remote(网盘).strm')):
                 return
                 
             # 如果文件正在移动中，不处理删除事件
@@ -162,9 +162,15 @@ class StrmFileHandler(FileSystemEventHandler):
                 from urllib.parse import unquote
                 cloud_path = unquote(cloud_path)
                 
-            # 获取相对路径（去掉strm后缀）
+            # 获取相对路径（去掉@remote(网盘).strm后缀）
             rel_dir = os.path.dirname(rel_path)
-            rel_name = os.path.splitext(os.path.basename(rel_path))[0]
+            filename = os.path.basename(rel_path)
+            if filename.endswith('@remote(网盘).strm'):
+                rel_name = filename[:-len('@remote(网盘).strm')]
+            elif filename.endswith('.strm'):
+                rel_name = filename[:-5]
+            else:
+                rel_name = filename
             
             # 构建归档路径
             # 1. 获取相对于扫描路径的路径
