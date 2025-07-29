@@ -171,6 +171,99 @@
             批量删除无效STRM文件
           </a-button>
         </div>
+        
+        <!-- 清理非远程文件功能 -->
+        <div class="cleanup-section" style="margin-top: 20px;">
+          <a-card title="清理非远程文件" :bordered="false">
+            <template #extra>
+              <a-space>
+                <a-button
+                  type="default"
+                  @click="previewCleanup"
+                  :loading="cleanupLoading"
+                  :disabled="isScanning"
+                >
+                  预览清理
+                </a-button>
+                <a-button
+                  type="primary"
+                  danger
+                  @click="executeCleanup"
+                  :loading="cleanupLoading"
+                  :disabled="isScanning"
+                >
+                  执行清理
+                </a-button>
+              </a-space>
+            </template>
+            
+            <div class="cleanup-info">
+              <a-alert type="info" show-icon style="margin-bottom: 16px;">
+                <template #message>
+                  <span>清理功能将删除没有@remote(网盘)标识的nfo、mediainfo.json、ass、srt文件</span>
+                </template>
+                <template #description>
+                  <span>这些文件通常是本地生成的元数据文件，清理后可以释放存储空间</span>
+                </template>
+              </a-alert>
+              
+              <div v-if="cleanupResult" class="cleanup-result">
+                <a-row :gutter="16">
+                  <a-col :span="6">
+                    <a-statistic
+                      title="发现文件"
+                      :value="cleanupResult.data?.found_files?.length || 0"
+                      :value-style="{ color: '#1890ff' }"
+                    />
+                  </a-col>
+                  <a-col :span="6">
+                    <a-statistic
+                      title="删除文件"
+                      :value="cleanupResult.data?.deleted_files?.length || 0"
+                      :value-style="{ color: '#3f8600' }"
+                    />
+                  </a-col>
+                  <a-col :span="6">
+                    <a-statistic
+                      title="失败文件"
+                      :value="cleanupResult.data?.failed_files?.length || 0"
+                      :value-style="{ color: '#cf1322' }"
+                    />
+                  </a-col>
+                  <a-col :span="6">
+                    <a-statistic
+                      title="释放空间"
+                      :value="cleanupResult.data?.total_size_formatted || '0 B'"
+                      :value-style="{ color: '#722ed1' }"
+                    />
+                  </a-col>
+                </a-row>
+                
+                <div v-if="cleanupResult.data?.found_files?.length > 0" style="margin-top: 16px;">
+                  <a-collapse>
+                    <a-collapse-panel key="files" header="查看文件列表">
+                      <a-list
+                        size="small"
+                        :data-source="cleanupResult.data.found_files"
+                        :pagination="{ pageSize: 10 }"
+                      >
+                        <template #renderItem="{ item }">
+                          <a-list-item>
+                            <a-space>
+                              <file-outlined />
+                              <span>{{ item.path }}</span>
+                              <a-tag>{{ item.size_formatted }}</a-tag>
+                            </a-space>
+                          </a-list-item>
+                        </template>
+                      </a-list>
+                    </a-collapse-panel>
+                  </a-collapse>
+                </div>
+              </div>
+            </div>
+          </a-card>
+        </div>
       </div>
       
       <!-- 无问题状态 -->
@@ -501,7 +594,8 @@ import {
   WarningOutlined,
   QuestionCircleOutlined,
   LoadingOutlined,
-  ClockCircleOutlined
+  ClockCircleOutlined,
+  FileOutlined
 } from '@ant-design/icons-vue'
 
 // 扫描参数
@@ -535,6 +629,10 @@ const filteredProblems = computed(() => {
 // 删除相关状态
 const deletingAll = ref(false)
 const deletingItem = ref(null)
+
+// 清理非远程文件相关状态
+const cleanupLoading = ref(false)
+const cleanupResult = ref(null)
 
 // Emby刷新队列相关
 const embyStatus = ref({})
@@ -1224,6 +1322,75 @@ const deleteStrmFile = async (item) => {
     message.error('删除文件失败: ' + (error.message || '未知错误'))
   } finally {
     deletingItem.value = null
+  }
+}
+
+// 预览清理非远程文件
+const previewCleanup = async () => {
+  try {
+    cleanupLoading.value = true
+    cleanupResult.value = null
+    
+    const response = await fetch('/api/health/cleanup/non-remote-files', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        preview_only: true
+      }),
+    })
+    
+    const data = await response.json()
+    
+    if (data.success) {
+      cleanupResult.value = data
+      message.success(data.message)
+    } else {
+      message.error(data.message || '预览清理失败')
+    }
+  } catch (error) {
+    console.error('预览清理失败:', error)
+    message.error('预览清理失败: ' + (error.message || '未知错误'))
+  } finally {
+    cleanupLoading.value = false
+  }
+}
+
+// 执行清理非远程文件
+const executeCleanup = async () => {
+  // 确认对话框
+  if (!window.confirm('确定要删除所有没有@remote(网盘)标识的nfo、mediainfo.json、ass、srt文件吗？此操作不可撤销。')) {
+    return
+  }
+  
+  try {
+    cleanupLoading.value = true
+    cleanupResult.value = null
+    
+    const response = await fetch('/api/health/cleanup/non-remote-files', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        preview_only: false
+      }),
+    })
+    
+    const data = await response.json()
+    
+    if (data.success) {
+      cleanupResult.value = data
+      message.success(data.message)
+    } else {
+      message.error(data.message || '执行清理失败')
+    }
+  } catch (error) {
+    console.error('执行清理失败:', error)
+    message.error('执行清理失败: ' + (error.message || '未知错误'))
+  } finally {
+    cleanupLoading.value = false
   }
 }
 

@@ -569,7 +569,7 @@ def build_strm_path(video_path):
     
     name, _ = os.path.splitext(filename)
     
-    return os.path.join(output_dir, rel_path.lstrip('/'), f"{name}.strm")
+    return os.path.join(output_dir, rel_path.lstrip('/'), f"{name}@remote(网盘).strm")
 
 async def check_alist_file_exists(path):
     """检查Alist中的文件是否存在"""
@@ -860,7 +860,7 @@ async def repair_missing_strm(request: RepairRequest):
                 os.makedirs(full_output_dir, exist_ok=True)
                 
                 # 生成STRM文件
-                strm_path = os.path.join(full_output_dir, f"{name}.strm")
+                strm_path = os.path.join(full_output_dir, f"{name}@remote(网盘).strm")
                 
                 # 日志记录，便于调试
                 logger.info(f"生成STRM文件: {strm_path} -> {video_url}")
@@ -1244,3 +1244,144 @@ async def remove_emby_tag(request: TagRemoveRequest):
             "message": f"删除标签失败: {str(e)}",
             "logs": [f"删除标签过程中出错: {str(e)}"]
         } 
+
+class CleanupRequest(BaseModel):
+    preview_only: bool = Body(False, description="是否仅预览而不实际删除")
+    target_extensions: Optional[List[str]] = Body(None, description="指定要清理的文件扩展名（为空则使用默认扩展名）")
+
+@router.post("/cleanup/non-remote-files")
+async def cleanup_non_remote_files(request: CleanupRequest = None):
+    """清理没有@remote(网盘)标识的nfo、mediainfo.json、ass、srt文件"""
+    if request is None:
+        request = CleanupRequest()
+    
+    try:
+        # 默认要清理的文件扩展名
+        default_extensions = ['.nfo', '.mediainfo.json', '.ass', '.srt']
+        target_extensions = request.target_extensions or default_extensions
+        
+        # 获取STRM输出目录
+        strm_dir = service_manager.strm_service.settings.output_dir
+        
+        if not os.path.exists(strm_dir):
+            return {
+                "success": False,
+                "message": f"STRM输出目录不存在: {strm_dir}",
+                "data": {
+                    "found_files": [],
+                    "deleted_files": [],
+                    "failed_files": [],
+                    "total_size": 0
+                }
+            }
+        
+        found_files = []
+        deleted_files = []
+        failed_files = []
+        total_size = 0
+        
+        # 递归扫描目录
+        for root, dirs, files in os.walk(strm_dir):
+            for file in files:
+                file_path = os.path.join(root, file)
+                file_ext = os.path.splitext(file)[1].lower()
+                
+                # 检查是否是目标扩展名
+                if file_ext in target_extensions or file == 'mediainfo.json':
+                    # 检查文件名是否包含@remote(网盘)标识
+                    if '@remote(网盘)' not in file:
+                        try:
+                            file_size = os.path.getsize(file_path)
+                            found_files.append({
+                                "path": file_path,
+                                "size": file_size,
+                                "size_formatted": format_file_size(file_size)
+                            })
+                            
+                            # 如果不是预览模式，则删除文件
+                            if not request.preview_only:
+                                os.remove(file_path)
+                                deleted_files.append({
+                                    "path": file_path,
+                                    "size": file_size,
+                                    "size_formatted": format_file_size(file_size)
+                                })
+                                total_size += file_size
+                                logger.info(f"已删除非远程文件: {file_path}")
+                            else:
+                                total_size += file_size
+                                
+                        except Exception as e:
+                            error_msg = f"处理文件失败: {str(e)}"
+                            failed_files.append({
+                                "path": file_path,
+                                "error": error_msg
+                            })
+                            logger.error(f"处理文件 {file_path} 时出错: {str(e)}")
+        
+        # 构建返回消息
+        if request.preview_only:
+            message = f"预览模式：发现 {len(found_files)} 个非远程文件，总大小 {format_file_size(total_size)}"
+        else:
+            message = f"清理完成：删除了 {len(deleted_files)} 个非远程文件，总大小 {format_file_size(total_size)}"
+            if failed_files:
+                message += f"，失败 {len(failed_files)} 个文件"
+        
+        # 发送Telegram通知
+        try:
+            if not request.preview_only and deleted_files:
+                notification_msg = f"🧹 清理非远程文件完成\n\n" \
+                                 f"- 删除文件: {len(deleted_files)} 个\n" \
+                                 f"- 释放空间: {format_file_size(total_size)}\n" \
+                                 f"- 失败文件: {len(failed_files)} 个"
+                
+                if failed_files:
+                    notification_msg += f"\n\n失败文件:\n"
+                    for i, failed in enumerate(failed_files[:5]):  # 只显示前5个
+                        notification_msg += f"- {os.path.basename(failed['path'])}\n"
+                    if len(failed_files) > 5:
+                        notification_msg += f"- ... 还有 {len(failed_files) - 5} 个\n"
+                
+                await service_manager.telegram_service.send_message(notification_msg)
+        except Exception as e:
+            logger.error(f"发送清理通知失败: {str(e)}")
+        
+        return {
+            "success": True,
+            "message": message,
+            "data": {
+                "found_files": found_files,
+                "deleted_files": deleted_files,
+                "failed_files": failed_files,
+                "total_size": total_size,
+                "total_size_formatted": format_file_size(total_size),
+                "preview_mode": request.preview_only
+            }
+        }
+        
+    except Exception as e:
+        error_msg = f"清理非远程文件失败: {str(e)}"
+        logger.error(error_msg)
+        return {
+            "success": False,
+            "message": error_msg,
+            "data": {
+                "found_files": [],
+                "deleted_files": [],
+                "failed_files": [],
+                "total_size": 0
+            }
+        }
+
+def format_file_size(size_bytes: int) -> str:
+    """格式化文件大小"""
+    if size_bytes == 0:
+        return "0 B"
+    
+    size_names = ["B", "KB", "MB", "GB", "TB"]
+    i = 0
+    while size_bytes >= 1024 and i < len(size_names) - 1:
+        size_bytes /= 1024.0
+        i += 1
+    
+    return f"{size_bytes:.2f} {size_names[i]}" 
