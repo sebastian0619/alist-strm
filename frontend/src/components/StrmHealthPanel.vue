@@ -171,100 +171,6 @@
             批量删除无效STRM文件
           </a-button>
         </div>
-        
-      <!-- 清理非远程文件功能 - 始终显示 -->
-      <div class="cleanup-section" style="margin-top: 20px;">
-          <a-card title="清理非远程文件" :bordered="false">
-            <template #extra>
-              <a-space>
-                <a-button
-                  type="default"
-                  @click="previewCleanup"
-                  :loading="cleanupLoading"
-                  :disabled="isScanning"
-                >
-                  预览清理
-                </a-button>
-                <a-button
-                  type="primary"
-                  danger
-                  @click="executeCleanup"
-                  :loading="cleanupLoading"
-                  :disabled="isScanning"
-                >
-                  执行清理
-                </a-button>
-              </a-space>
-            </template>
-            
-            <div class="cleanup-info">
-              <a-alert type="info" show-icon style="margin-bottom: 16px;">
-                <template #message>
-                  <span>清理功能将删除没有@remote(网盘)标识的nfo、mediainfo.json、ass、srt文件</span>
-                </template>
-                <template #description>
-                  <span>这些文件通常是本地生成的元数据文件，清理后可以释放存储空间</span>
-                </template>
-              </a-alert>
-              
-              <div v-if="cleanupResult" class="cleanup-result">
-                <a-row :gutter="16">
-                  <a-col :span="6">
-                    <a-statistic
-                      title="发现文件"
-                      :value="cleanupResult.data?.found_files?.length || 0"
-                      :value-style="{ color: '#1890ff' }"
-                    />
-                  </a-col>
-                  <a-col :span="6">
-                    <a-statistic
-                      title="删除文件"
-                      :value="cleanupResult.data?.deleted_files?.length || 0"
-                      :value-style="{ color: '#3f8600' }"
-                    />
-                  </a-col>
-                  <a-col :span="6">
-                    <a-statistic
-                      title="失败文件"
-                      :value="cleanupResult.data?.failed_files?.length || 0"
-                      :value-style="{ color: '#cf1322' }"
-                    />
-                  </a-col>
-                  <a-col :span="6">
-                    <a-statistic
-                      title="释放空间"
-                      :value="cleanupResult.data?.total_size_formatted || '0 B'"
-                      :value-style="{ color: '#722ed1' }"
-                    />
-                  </a-col>
-                </a-row>
-                
-                <div v-if="cleanupResult.data?.found_files?.length > 0" style="margin-top: 16px;">
-                  <a-collapse>
-                    <a-collapse-panel key="files" header="查看文件列表">
-                      <a-list
-                        size="small"
-                        :data-source="cleanupResult.data.found_files"
-                        :pagination="{ pageSize: 10 }"
-                      >
-                        <template #renderItem="{ item }">
-                          <a-list-item>
-                            <a-space>
-                              <file-outlined />
-                              <span>{{ item.path }}</span>
-                              <a-tag>{{ item.size_formatted }}</a-tag>
-                            </a-space>
-                          </a-list-item>
-                        </template>
-                      </a-list>
-                    </a-collapse-panel>
-                  </a-collapse>
-                </div>
-              </div>
-            </div>
-          </a-card>
-        </div>
-      </div>
       
       <!-- 无问题状态 -->
       <div v-else-if="!isScanning && hasScanned" class="no-problems">
@@ -283,6 +189,99 @@
             <span>太棒了！所有STRM文件都是有效的，并且所有视频文件都有对应的STRM文件。</span>
           </template>
         </a-empty>
+      </div>
+
+      <!-- 清理非远程文件功能 - 始终显示 -->
+      <div class="cleanup-section" style="margin-top: 20px;">
+        <a-card title="清理非远程文件" :bordered="false">
+          <template #extra>
+            <a-space>
+              <a-button
+                type="default"
+                @click="previewCleanup"
+                :loading="cleanupLoading"
+                :disabled="isScanning"
+              >
+                预览清理
+              </a-button>
+              <a-button
+                type="primary"
+                danger
+                @click="executeCleanup"
+                :loading="cleanupLoading"
+                :disabled="isScanning"
+              >
+                执行清理
+              </a-button>
+            </a-space>
+          </template>
+          
+          <div class="cleanup-info">
+            <a-alert type="info" show-icon style="margin-bottom: 16px;">
+              <template #message>
+                <span>清理功能将删除没有@remote(网盘)标识的nfo、mediainfo.json、ass、srt文件</span>
+              </template>
+              <template #description>
+                <span>这些文件通常是本地生成的元数据文件，清理后可以释放存储空间</span>
+              </template>
+            </a-alert>
+            
+            <div v-if="cleanupResult" class="cleanup-result">
+              <a-row :gutter="16">
+                <a-col :span="6">
+                  <a-statistic
+                    title="发现文件"
+                    :value="cleanupResult.data?.found_files?.length || 0"
+                    :value-style="{ color: '#1890ff' }"
+                  />
+                </a-col>
+                <a-col :span="6">
+                  <a-statistic
+                    title="删除文件"
+                    :value="cleanupResult.data?.deleted_files?.length || 0"
+                    :value-style="{ color: '#3f8600' }"
+                  />
+                </a-col>
+                <a-col :span="6">
+                  <a-statistic
+                    title="失败文件"
+                    :value="cleanupResult.data?.failed_files?.length || 0"
+                    :value-style="{ color: '#cf1322' }"
+                  />
+                </a-col>
+                <a-col :span="6">
+                  <a-statistic
+                    title="释放空间"
+                    :value="cleanupResult.data?.total_size_formatted || '0 B'"
+                    :value-style="{ color: '#722ed1' }"
+                  />
+                </a-col>
+              </a-row>
+              
+              <div v-if="cleanupResult.data?.found_files?.length > 0" style="margin-top: 16px;">
+                <a-collapse>
+                  <a-collapse-panel key="files" header="查看文件列表">
+                    <a-list
+                      size="small"
+                      :data-source="cleanupResult.data.found_files"
+                      :pagination="{ pageSize: 10 }"
+                    >
+                      <template #renderItem="{ item }">
+                        <a-list-item>
+                          <a-space>
+                            <file-outlined />
+                            <span>{{ item.path }}</span>
+                            <a-tag>{{ item.size_formatted }}</a-tag>
+                          </a-space>
+                        </a-list-item>
+                      </template>
+                    </a-list>
+                  </a-collapse-panel>
+                </a-collapse>
+              </div>
+            </div>
+          </div>
+        </a-card>
       </div>
 
       <!-- 清空数据按钮 -->
