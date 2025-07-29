@@ -171,8 +171,7 @@
             批量删除无效STRM文件
           </a-button>
         </div>
-      </div>
-      
+        
       <!-- 清理非远程文件功能 - 始终显示 -->
       <div class="cleanup-section" style="margin-top: 20px;">
           <a-card title="清理非远程文件" :bordered="false">
