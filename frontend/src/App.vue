@@ -58,15 +58,21 @@
           <h1 class="page-title">{{ pageMeta.title }}</h1>
           <p class="page-desc">{{ pageMeta.description }}</p>
         </div>
-        <div class="header-pills">
-          <span class="pill pill-accent">AList</span>
-          <span class="pill pill-muted">STRM</span>
-          <span class="pill pill-muted">Emby</span>
+        <div class="header-status">
+          <span class="status-dot" />
+          <div class="status-copy">
+            <strong>Console Ready</strong>
+            <span>模块独立加载，单页故障不影响其他页面</span>
+          </div>
         </div>
       </a-layout-header>
 
       <a-layout-content class="shell-content">
-        <component :is="currentPanelComponent" @navigate="handleNavigate" />
+        <panel-frame
+          :panel-component="currentPanelComponent"
+          :panel-key="activeKey"
+          @navigate="handleNavigate"
+        />
       </a-layout-content>
     </a-layout>
   </a-layout>
@@ -84,15 +90,31 @@ import {
   SettingOutlined,
   SwapOutlined,
 } from '@ant-design/icons-vue'
+import PanelFrame from './components/PanelFrame.vue'
 
-const DashboardPanel = defineAsyncComponent(() => import('./components/DashboardPanel.vue'))
-const ConfigPanel = defineAsyncComponent(() => import('./components/ConfigPanel.vue'))
-const ArchivePanel = defineAsyncComponent(() => import('./components/ArchivePanel.vue'))
-const PendingDeletionPanel = defineAsyncComponent(() => import('./components/PendingDeletionPanel.vue'))
-const StrmHealthPanel = defineAsyncComponent(() => import('./components/StrmHealthPanel.vue'))
-const StrmReplacePanel = defineAsyncComponent(() => import('./components/StrmReplacePanel.vue'))
-const EmbyRefreshPanel = defineAsyncComponent(() => import('./components/EmbyRefreshPanel.vue'))
-const TmdbMetadataPanel = defineAsyncComponent(() => import('./components/TmdbMetadataPanel.vue'))
+const createAsyncPanel = (loader) =>
+  defineAsyncComponent({
+    loader,
+    delay: 120,
+    timeout: 15000,
+    suspensible: true,
+    onError(error, retry, fail, attempts) {
+      if (attempts <= 2) {
+        retry()
+        return
+      }
+      fail(error)
+    },
+  })
+
+const DashboardPanel = createAsyncPanel(() => import('./components/DashboardPanel.vue'))
+const ConfigPanel = createAsyncPanel(() => import('./components/ConfigPanel.vue'))
+const ArchivePanel = createAsyncPanel(() => import('./components/ArchivePanel.vue'))
+const PendingDeletionPanel = createAsyncPanel(() => import('./components/PendingDeletionPanel.vue'))
+const StrmHealthPanel = createAsyncPanel(() => import('./components/StrmHealthPanel.vue'))
+const StrmReplacePanel = createAsyncPanel(() => import('./components/StrmReplacePanel.vue'))
+const EmbyRefreshPanel = createAsyncPanel(() => import('./components/EmbyRefreshPanel.vue'))
+const TmdbMetadataPanel = createAsyncPanel(() => import('./components/TmdbMetadataPanel.vue'))
 
 const activeKey = ref('dashboard')
 const selectedKeys = ref(['dashboard'])
@@ -283,31 +305,38 @@ body,
   font-size: 15px;
 }
 
-.header-pills {
+.header-status {
   display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.pill {
-  display: inline-flex;
+  gap: 12px;
   align-items: center;
-  padding: 8px 12px;
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-}
-
-.pill-accent {
-  background: var(--accent);
-  color: #fff7ef;
-}
-
-.pill-muted {
-  background: rgba(255, 252, 246, 0.72);
-  color: var(--ink-2);
+  padding: 12px 14px;
+  border-radius: 18px;
+  background: rgba(255, 252, 246, 0.66);
   border: 1px solid rgba(52, 43, 33, 0.08);
+}
+
+.status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #6e8b44 0%, #547031 100%);
+  box-shadow: 0 0 0 6px rgba(95, 107, 63, 0.1);
+}
+
+.status-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.status-copy strong {
+  color: var(--ink-1);
+  font-size: 13px;
+}
+
+.status-copy span {
+  color: var(--ink-2);
+  font-size: 12px;
 }
 
 .shell-content {
@@ -335,6 +364,10 @@ body,
 
   .page-title {
     font-size: 28px;
+  }
+
+  .header-status {
+    width: 100%;
   }
 }
 </style>
