@@ -316,7 +316,7 @@ async def delete_all_files_now():
             }
         
         deleted_count = 0
-        failed_count = 0
+        failed_items = []
         
         # 执行删除操作
         for item in pending_items:
@@ -324,17 +324,25 @@ async def delete_all_files_now():
             # 立即删除文件
             result = await service_manager.archive_service._delete_file(path)
             if result:
-                service_manager.archive_service._pending_deletions.remove(item)
+                if item in service_manager.archive_service._pending_deletions:
+                    service_manager.archive_service._pending_deletions.remove(item)
                 deleted_count += 1
             else:
-                failed_count += 1
+                failed_items.append(str(path))
         
         # 保存更新后的列表
         service_manager.archive_service._save_pending_deletions()
         
         return {
-            "success": True,
-            "message": f"已删除 {deleted_count} 个文件，失败 {failed_count} 个"
+            "success": len(failed_items) == 0,
+            "message": (
+                f"已删除 {deleted_count} 个文件"
+                if not failed_items
+                else f"已删除 {deleted_count} 个文件，失败 {len(failed_items)} 个"
+            ),
+            "deleted_count": deleted_count,
+            "failed_count": len(failed_items),
+            "failed_items": failed_items[:20]
         }
     except Exception as e:
         return {

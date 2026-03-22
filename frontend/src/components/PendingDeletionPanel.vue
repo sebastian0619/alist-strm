@@ -266,7 +266,11 @@ const deleteAllNow = async () => {
       message.success(data.message || '已删除全部项目')
       await loadPendingItems()
     } else {
-      message.error(data.message || '删除失败')
+      const failedPreview = Array.isArray(data.failed_items) && data.failed_items.length
+        ? `\n失败项示例:\n${data.failed_items.join('\n')}`
+        : ''
+      message.error(`${data.message || '删除失败'}${failedPreview}`)
+      await loadPendingItems()
     }
   } catch (error) {
     message.error(`删除失败: ${error.message}`)
