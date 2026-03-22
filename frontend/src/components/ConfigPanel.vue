@@ -10,480 +10,338 @@
       />
     </div>
 
-    <a-card title="Alist STRM 配置" :bordered="false">
-      <!-- 运行模式配置 -->
-      <a-divider>运行模式</a-divider>
-      <a-form-item label="运行模式">
-        <a-switch
-          v-model:checked="config.run_after_startup"
-          :checked-children="'启动时执行'"
-          :un-checked-children="'手动执行'"
-        />
-        <a-tooltip>
-          <template #title>
-            启动时执行：程序启动后自动开始扫描
-            手动执行：需要手动点击开始按钮
-          </template>
-          <info-circle-outlined style="margin-left: 8px" />
-        </a-tooltip>
-      </a-form-item>
+    <a-card class="config-shell" :bordered="false">
+      <div class="config-hero">
+        <div>
+          <div class="hero-kicker">Configuration Center</div>
+          <h2>基础配置</h2>
+          <p>把运行参数按职责拆开管理，减少在长表单里来回滚动。</p>
+        </div>
+        <div class="hero-metrics">
+          <div class="metric-pill">
+            <span>变更状态</span>
+            <strong>{{ hasChanges ? '未保存' : '已同步' }}</strong>
+          </div>
+          <div class="metric-pill">
+            <span>扫描状态</span>
+            <strong>{{ scanning ? '运行中' : '空闲' }}</strong>
+          </div>
+          <div class="metric-pill">
+            <span>日志级别</span>
+            <strong>{{ config.log_level || 'INFO' }}</strong>
+          </div>
+        </div>
+      </div>
 
-      <a-form-item label="日志级别">
-        <a-select v-model:value="config.log_level" style="width: 100%">
-          <a-select-option value="INFO">INFO</a-select-option>
-          <a-select-option value="DEBUG">DEBUG</a-select-option>
-          <a-select-option value="WARNING">WARNING</a-select-option>
-          <a-select-option value="ERROR">ERROR</a-select-option>
-        </a-select>
-        <a-tooltip>
-          <template #title>
-            DEBUG: 显示所有日志
-            INFO: 显示一般信息
-            WARNING: 只显示警告和错误
-            ERROR: 只显示错误
-          </template>
-          <info-circle-outlined style="margin-left: 8px" />
-        </a-tooltip>
-      </a-form-item>
+      <a-collapse v-model:activeKey="activeSections" ghost class="config-collapse">
+        <a-collapse-panel key="runtime" header="运行与调度">
+          <div class="section-grid">
+            <a-form-item label="运行模式">
+              <a-switch
+                v-model:checked="config.run_after_startup"
+                :checked-children="'启动时执行'"
+                :un-checked-children="'手动执行'"
+              />
+              <a-tooltip>
+                <template #title>
+                  启动时执行：程序启动后自动开始扫描；手动执行：需要手动点击开始按钮。
+                </template>
+                <info-circle-outlined class="tip-icon" />
+              </a-tooltip>
+            </a-form-item>
 
-      <a-form-item label="慢速模式">
-        <a-switch
-          v-model:checked="config.slow_mode"
-          :checked-children="'开启'"
-          :un-checked-children="'关闭'"
-        />
-        <a-tooltip>
-          <template #title>
-            开启后会在处理文件之间添加延迟，减轻服务器负担
-          </template>
-          <info-circle-outlined style="margin-left: 8px" />
-        </a-tooltip>
-      </a-form-item>
+            <a-form-item label="日志级别">
+              <a-select v-model:value="config.log_level" style="width: 100%">
+                <a-select-option value="INFO">INFO</a-select-option>
+                <a-select-option value="DEBUG">DEBUG</a-select-option>
+                <a-select-option value="WARNING">WARNING</a-select-option>
+                <a-select-option value="ERROR">ERROR</a-select-option>
+              </a-select>
+            </a-form-item>
 
-      <!-- 定时任务配置 -->
-      <a-divider>定时任务配置</a-divider>
-      <a-form-item label="启用定时扫描">
-        <a-switch v-model:checked="config.schedule_enabled" />
-        <a-tooltip>
-          <template #title>
-            是否启用定时自动扫描功能
-          </template>
-          <info-circle-outlined style="margin-left: 8px" />
-        </a-tooltip>
-      </a-form-item>
-      <a-form-item 
-        label="定时表达式" 
-        :help="getCronDescription(config.schedule_cron)"
-      >
-        <a-input 
-          v-model:value="config.schedule_cron" 
-          placeholder="Cron表达式，例如: 0 */6 * * * (每6小时执行一次)"
-          :disabled="!config.schedule_enabled"
-        />
-        <a-tooltip>
-          <template #title>
-            Cron表达式格式：分 时 日 月 星期
-            例如：
-            0 */6 * * * (每6小时执行一次)
-            0 0 * * * (每天0点执行)
-            0 */12 * * * (每12小时执行一次)
-          </template>
-          <info-circle-outlined style="margin-left: 8px" />
-        </a-tooltip>
-      </a-form-item>
+            <a-form-item label="慢速模式">
+              <a-switch
+                v-model:checked="config.slow_mode"
+                :checked-children="'开启'"
+                :un-checked-children="'关闭'"
+              />
+            </a-form-item>
 
-      <!-- Alist配置 -->
-      <a-divider>Alist 配置</a-divider>
-      <a-form-item label="Alist 服务器地址" required>
-        <a-input
-          v-model:value="config.alist_url"
-          placeholder="http://localhost:5244"
-        />
-        <a-button 
-          type="link" 
-          :loading="testingConnection"
-          @click="testConnection"
-          style="margin-left: 8px"
-        >
-          测试连接
-        </a-button>
-      </a-form-item>
+            <a-form-item label="启用定时扫描">
+              <a-switch v-model:checked="config.schedule_enabled" />
+            </a-form-item>
 
-      <a-form-item label="Alist Token">
-        <a-input-password
-          v-model:value="config.alist_token"
-          placeholder="请输入Alist Token"
-        />
-        <a-tooltip>
-          <template #title>
-            在Alist管理面板中获取，用于访问需要认证的文件
-          </template>
-          <info-circle-outlined style="margin-left: 8px" />
-        </a-tooltip>
-      </a-form-item>
+            <a-form-item
+              class="span-2"
+              label="定时表达式"
+              :help="getCronDescription(config.schedule_cron)"
+            >
+              <a-input
+                v-model:value="config.schedule_cron"
+                placeholder="Cron表达式，例如: 0 */6 * * *"
+                :disabled="!config.schedule_enabled"
+              />
+            </a-form-item>
+          </div>
+        </a-collapse-panel>
 
-      <a-form-item label="Alist 外部访问地址">
-        <a-input
-          v-model:value="config.alist_external_url"
-          placeholder="https://example.com"
-        />
-        <a-tooltip>
-          <template #title>
-            外部网络可访问的Alist地址，用于在STRM文件中生成URL
-          </template>
-          <info-circle-outlined style="margin-left: 8px" />
-        </a-tooltip>
-      </a-form-item>
+        <a-collapse-panel key="alist" header="Alist 与 STRM">
+          <div class="section-grid">
+            <a-form-item class="span-2" label="Alist 服务器地址" required>
+              <div class="inline-with-action">
+                <a-input
+                  v-model:value="config.alist_url"
+                  placeholder="http://localhost:5244"
+                />
+                <a-button
+                  type="link"
+                  :loading="testingConnection"
+                  @click="testConnection"
+                >
+                  测试连接
+                </a-button>
+              </div>
+            </a-form-item>
 
-      <a-form-item label="STRM使用外部地址">
-        <a-switch
-          v-model:checked="config.use_external_url"
-          :checked-children="'开启'"
-          :un-checked-children="'关闭'"
-        />
-        <a-tooltip>
-          <template #title>
-            是否在STRM文件中使用外部访问地址。启用后，STRM文件将使用外部地址而非内网地址
-          </template>
-          <info-circle-outlined style="margin-left: 8px" />
-        </a-tooltip>
-      </a-form-item>
+            <a-form-item class="span-2" label="Alist Token">
+              <a-input-password
+                v-model:value="config.alist_token"
+                placeholder="请输入Alist Token"
+              />
+            </a-form-item>
 
-      <a-form-item label="扫描路径" required>
-        <a-input
-          v-model:value="config.alist_scan_path"
-          placeholder="/path/to/scan"
-        />
-        <a-tooltip>
-          <template #title>
-            需要生成STRM文件的Alist目录路径
-          </template>
-          <info-circle-outlined style="margin-left: 8px" />
-        </a-tooltip>
-      </a-form-item>
+            <a-form-item label="外部访问地址">
+              <a-input
+                v-model:value="config.alist_external_url"
+                placeholder="https://example.com"
+              />
+            </a-form-item>
 
-      <!-- 文件处理配置 -->
-      <a-divider>文件处理配置</a-divider>
-      <a-form-item label="URL编码">
-        <a-switch
-          v-model:checked="config.encode"
-          :checked-children="'开启'"
-          :un-checked-children="'关闭'"
-        />
-        <a-tooltip>
-          <template #title>
-            对URL进行编码，解决中文路径问题
-          </template>
-          <info-circle-outlined style="margin-left: 8px" />
-        </a-tooltip>
-      </a-form-item>
+            <a-form-item label="STRM使用外部地址">
+              <a-switch
+                v-model:checked="config.use_external_url"
+                :checked-children="'开启'"
+                :un-checked-children="'关闭'"
+              />
+            </a-form-item>
 
-      <a-form-item label="删除空文件夹">
-        <a-switch
-          v-model:checked="config.remove_empty_dirs"
-          :checked-children="'开启'"
-          :un-checked-children="'关闭'"
-        />
-        <a-tooltip>
-          <template #title>
-            扫描完成后删除不包含STRM文件的空文件夹
-          </template>
-          <info-circle-outlined style="margin-left: 8px" />
-        </a-tooltip>
-      </a-form-item>
+            <a-form-item class="span-2" label="扫描路径" required>
+              <a-input
+                v-model:value="config.alist_scan_path"
+                placeholder="/path/to/scan"
+              />
+            </a-form-item>
 
-      <a-form-item label="下载字幕">
-        <a-switch
-          v-model:checked="config.is_down_sub"
-          :checked-children="'开启'"
-          :un-checked-children="'关闭'"
-        />
-        <a-tooltip>
-          <template #title>
-            自动下载视频对应的字幕文件
-          </template>
-          <info-circle-outlined style="margin-left: 8px" />
-        </a-tooltip>
-      </a-form-item>
+            <a-form-item label="URL编码">
+              <a-switch
+                v-model:checked="config.encode"
+                :checked-children="'开启'"
+                :un-checked-children="'关闭'"
+              />
+            </a-form-item>
 
-      <a-form-item label="下载元数据">
-        <a-switch
-          v-model:checked="config.download_metadata"
-          :checked-children="'开启'"
-          :un-checked-children="'关闭'"
-        />
-        <a-tooltip>
-          <template #title>
-            下载NFO、海报等媒体元数据文件
-          </template>
-          <info-circle-outlined style="margin-left: 8px" />
-        </a-tooltip>
-      </a-form-item>
+            <a-form-item label="删除空文件夹">
+              <a-switch
+                v-model:checked="config.remove_empty_dirs"
+                :checked-children="'开启'"
+                :un-checked-children="'关闭'"
+              />
+            </a-form-item>
 
-      <a-form-item label="元数据文件扩展名" v-if="config.download_metadata">
-        <a-input
-          v-model:value="config.metadata_extensions"
-          placeholder=".ass,.ssa,.srt,.png,.nfo,.jpg,.jpeg,.json,.bif"
-        />
-        <a-tooltip>
-          <template #title>
-            支持的元数据文件扩展名，多个用逗号分隔（包含点号）
-            例如：.ass,.ssa,.srt,.png,.nfo,.jpg,.jpeg,.json,.bif
-          </template>
-          <info-circle-outlined style="margin-left: 8px" />
-        </a-tooltip>
-      </a-form-item>
+            <a-form-item label="下载字幕">
+              <a-switch
+                v-model:checked="config.is_down_sub"
+                :checked-children="'开启'"
+                :un-checked-children="'关闭'"
+              />
+            </a-form-item>
 
-      <a-form-item label="最小文件大小(MB)">
-        <a-input-number
-          v-model:value="config.min_file_size"
-          :min="0"
-          style="width: 100%"
-        />
-        <a-tooltip>
-          <template #title>
-            小于此大小的视频文件将被忽略
-          </template>
-          <info-circle-outlined style="margin-left: 8px" />
-        </a-tooltip>
-      </a-form-item>
+            <a-form-item label="下载元数据">
+              <a-switch
+                v-model:checked="config.download_metadata"
+                :checked-children="'开启'"
+                :un-checked-children="'关闭'"
+              />
+            </a-form-item>
 
-      <a-form-item label="输出目录" required>
-        <a-input
-          v-model:value="config.output_dir"
-          placeholder="data"
-        />
-        <a-tooltip>
-          <template #title>
-            生成的STRM文件保存位置
-          </template>
-          <info-circle-outlined style="margin-left: 8px" />
-        </a-tooltip>
-      </a-form-item>
+            <a-form-item v-if="config.download_metadata" class="span-2" label="元数据文件扩展名">
+              <a-input
+                v-model:value="config.metadata_extensions"
+                placeholder=".ass,.ssa,.srt,.png,.nfo,.jpg,.jpeg,.json,.bif"
+              />
+            </a-form-item>
 
-      <!-- 跳过规则配置 -->
-      <a-divider>跳过规则配置</a-divider>
-      <a-form-item label="跳过文件模式">
-        <a-input
-          v-model:value="config.skip_patterns"
-          placeholder="支持正则表达式，多个规则用逗号分隔，例如: sample,trailer,预告片"
-        />
-        <a-tooltip>
-          <template #title>
-            支持正则表达式，多个规则用逗号分隔
-            例如：sample,trailer,预告片
-          </template>
-          <info-circle-outlined style="margin-left: 8px" />
-        </a-tooltip>
-      </a-form-item>
+            <a-form-item label="最小文件大小(MB)">
+              <a-input-number
+                v-model:value="config.min_file_size"
+                :min="0"
+                style="width: 100%"
+              />
+            </a-form-item>
 
-      <a-form-item label="跳过文件夹">
-        <a-input
-          v-model:value="config.skip_folders"
-          placeholder="多个文件夹用逗号分隔，例如: extras,花絮,番外,特典"
-        />
-        <a-tooltip>
-          <template #title>
-            指定要跳过的文件夹名称，多个用逗号分隔
-            例如：extras,花絮,番外,特典
-          </template>
-          <info-circle-outlined style="margin-left: 8px" />
-        </a-tooltip>
-      </a-form-item>
+            <a-form-item label="输出目录" required>
+              <a-input
+                v-model:value="config.output_dir"
+                placeholder="data"
+              />
+            </a-form-item>
+          </div>
+        </a-collapse-panel>
 
-      <a-form-item label="跳过扩展名">
-        <a-input
-          v-model:value="config.skip_extensions"
-          placeholder="多个扩展名用逗号分隔（包含点号），例如: .iso,.mka"
-        />
-        <a-tooltip>
-          <template #title>
-            指定要跳过的文件扩展名，多个用逗号分隔（包含点号）
-            例如：.iso,.mka
-          </template>
-          <info-circle-outlined style="margin-left: 8px" />
-        </a-tooltip>
-      </a-form-item>
+        <a-collapse-panel key="rules" header="跳过规则">
+          <div class="section-grid">
+            <a-form-item class="span-2" label="跳过文件模式">
+              <a-input
+                v-model:value="config.skip_patterns"
+                placeholder="支持正则，多个规则用逗号分隔，例如: sample,trailer,预告片"
+              />
+            </a-form-item>
 
-      <!-- Telegram配置 -->
-      <a-divider>Telegram 通知配置</a-divider>
-      <a-form-item label="启用Telegram通知">
-        <a-switch
-          v-model:checked="config.tg_enabled"
-          :checked-children="'开启'"
-          :un-checked-children="'关闭'"
-        />
-        <a-tooltip>
-          <template #title>
-            是否启用Telegram通知功能
-          </template>
-          <info-circle-outlined style="margin-left: 8px" />
-        </a-tooltip>
-      </a-form-item>
+            <a-form-item label="跳过文件夹">
+              <a-input
+                v-model:value="config.skip_folders"
+                placeholder="例如: extras,花絮,番外,特典"
+              />
+            </a-form-item>
 
-      <a-form-item label="Bot Token" v-if="config.tg_enabled">
-        <a-input-password
-          v-model:value="config.tg_token"
-          placeholder="请输入Telegram Bot Token"
-        />
-        <a-tooltip>
-          <template #title>
-            从 @BotFather 获取的Bot Token
-          </template>
-          <info-circle-outlined style="margin-left: 8px" />
-        </a-tooltip>
-      </a-form-item>
+            <a-form-item label="跳过扩展名">
+              <a-input
+                v-model:value="config.skip_extensions"
+                placeholder="例如: .iso,.mka"
+              />
+            </a-form-item>
+          </div>
+        </a-collapse-panel>
 
-      <a-form-item label="Chat ID" v-if="config.tg_enabled">
-        <a-input
-          v-model:value="config.tg_chat_id"
-          placeholder="请输入Telegram Chat ID"
-        />
-        <a-tooltip>
-          <template #title>
-            接收通知的Chat ID，可以从 @userinfobot 获取
-          </template>
-          <info-circle-outlined style="margin-left: 8px" />
-        </a-tooltip>
-      </a-form-item>
+        <a-collapse-panel key="notify" header="Telegram 通知">
+          <div class="section-grid">
+            <a-form-item label="启用Telegram通知">
+              <a-switch
+                v-model:checked="config.tg_enabled"
+                :checked-children="'开启'"
+                :un-checked-children="'关闭'"
+              />
+            </a-form-item>
 
-      <a-form-item label="代理地址" v-if="config.tg_enabled">
-        <a-input
-          v-model:value="config.tg_proxy_url"
-          placeholder="代理地址，例如: http://127.0.0.1:7890"
-        />
-        <a-tooltip>
-          <template #title>
-            如果无法直接访问Telegram API，可以配置代理地址
-          </template>
-          <info-circle-outlined style="margin-left: 8px" />
-        </a-tooltip>
-      </a-form-item>
+            <a-form-item v-if="config.tg_enabled" class="span-2" label="Bot Token">
+              <a-input-password
+                v-model:value="config.tg_token"
+                placeholder="请输入Telegram Bot Token"
+              />
+            </a-form-item>
 
-      <!-- Emby配置 -->
-      <a-divider>Emby 刷库配置</a-divider>
-      <a-form-item label="启用Emby刷库">
-        <a-switch
-          v-model:checked="config.emby_enabled"
-          :checked-children="'开启'"
-          :un-checked-children="'关闭'"
-        />
-        <a-tooltip>
-          <template #title>
-            是否启用Emby元数据刷新功能，生成STRM文件后会自动刷新对应的媒体库项目
-          </template>
-          <info-circle-outlined style="margin-left: 8px" />
-        </a-tooltip>
-      </a-form-item>
+            <a-form-item v-if="config.tg_enabled" label="Chat ID">
+              <a-input
+                v-model:value="config.tg_chat_id"
+                placeholder="请输入Telegram Chat ID"
+              />
+            </a-form-item>
 
-      <a-form-item label="Emby API地址" v-if="config.emby_enabled">
-        <a-input
-          v-model:value="config.emby_api_url"
-          placeholder="http://localhost:8096/emby"
-        />
-        <a-button 
-          type="link" 
-          :loading="testingEmby"
-          @click="testEmbyConnection"
-          style="margin-left: 8px"
-        >
-          测试连接
-        </a-button>
-        <a-tooltip>
-          <template #title>
-            Emby服务器的API地址，例如: http://localhost:8096/emby
-          </template>
-          <info-circle-outlined style="margin-left: 8px" />
-        </a-tooltip>
-      </a-form-item>
+            <a-form-item v-if="config.tg_enabled" label="代理地址">
+              <a-input
+                v-model:value="config.tg_proxy_url"
+                placeholder="例如: http://127.0.0.1:7890"
+              />
+            </a-form-item>
+          </div>
+        </a-collapse-panel>
 
-      <a-form-item label="API密钥" v-if="config.emby_enabled">
-        <a-input-password
-          v-model:value="config.emby_api_key"
-          placeholder="请输入Emby API密钥"
-        />
-        <a-tooltip>
-          <template #title>
-            从Emby管理面板中获取的API密钥
-          </template>
-          <info-circle-outlined style="margin-left: 8px" />
-        </a-tooltip>
-      </a-form-item>
+        <a-collapse-panel key="emby" header="Emby 映射与刷新">
+          <div class="section-grid">
+            <a-form-item label="启用Emby刷库">
+              <a-switch
+                v-model:checked="config.emby_enabled"
+                :checked-children="'开启'"
+                :un-checked-children="'关闭'"
+              />
+            </a-form-item>
 
-      <a-form-item label="STRM文件根路径" v-if="config.emby_enabled">
-        <a-input
-          v-model:value="config.strm_root_path"
-          placeholder="/path/to/strm/files"
-        />
-        <a-tooltip>
-          <template #title>
-            STRM文件的根路径，系统生成的STRM文件存放位置
-          </template>
-          <info-circle-outlined style="margin-left: 8px" />
-        </a-tooltip>
-      </a-form-item>
+            <a-form-item v-if="config.emby_enabled" class="span-2" label="Emby API地址">
+              <div class="inline-with-action">
+                <a-input
+                  v-model:value="config.emby_api_url"
+                  placeholder="http://localhost:8096/emby"
+                />
+                <a-button
+                  type="link"
+                  :loading="testingEmby"
+                  @click="testEmbyConnection"
+                >
+                  测试连接
+                </a-button>
+              </div>
+            </a-form-item>
 
-      <a-form-item label="Emby媒体库根路径" v-if="config.emby_enabled">
-        <a-input
-          v-model:value="config.emby_root_path"
-          placeholder="/path/to/emby/media"
-        />
-        <a-tooltip>
-          <template #title>
-            Emby媒体库中的对应路径，用于路径映射
-          </template>
-          <info-circle-outlined style="margin-left: 8px" />
-        </a-tooltip>
-      </a-form-item>
+            <a-form-item v-if="config.emby_enabled" class="span-2" label="API密钥">
+              <a-input-password
+                v-model:value="config.emby_api_key"
+                placeholder="请输入Emby API密钥"
+              />
+            </a-form-item>
 
-      <!-- TMDB元数据配置 -->
-      <a-divider>TMDB 元数据配置</a-divider>
-      <a-form-item label="TMDB缓存目录">
-        <a-input
-          v-model:value="config.tmdb_cache_dir"
-          placeholder="cache/tmdb"
-        />
-        <a-tooltip>
-          <template #title>
-            TMDB元数据缓存文件存储目录
-          </template>
-          <info-circle-outlined style="margin-left: 8px" />
-        </a-tooltip>
-      </a-form-item>
+            <a-form-item v-if="config.emby_enabled" label="STRM文件根路径">
+              <a-input
+                v-model:value="config.strm_root_path"
+                placeholder="/path/to/strm/files"
+              />
+            </a-form-item>
 
-      <!-- 按钮组 -->
-      <div class="button-group">
-        <a-button 
-          type="primary" 
-          @click="saveConfig" 
-          :loading="saving"
-          :disabled="!hasChanges"
-        >
-          保存配置
-        </a-button>
-        <a-button 
-          @click="loadConfig" 
-          :loading="loading" 
-          style="margin-left: 8px"
-        >
-          重新加载
-        </a-button>
-        <a-button 
-          type="primary"
-          :loading="scanning"
-          @click="scanning ? stopScan() : startScan()"
-          style="margin-left: 16px"
-          :danger="scanning"
-        >
-          {{ scanning ? '停止扫描' : '开始扫描' }}
-        </a-button>
-        <a-button
-          @click="clearCache"
-          :loading="clearingCache"
-          style="margin-left: 8px"
-        >
-          清除缓存
-        </a-button>
+            <a-form-item v-if="config.emby_enabled" label="Emby媒体库根路径">
+              <a-input
+                v-model:value="config.emby_root_path"
+                placeholder="/path/to/emby/media"
+              />
+            </a-form-item>
+          </div>
+        </a-collapse-panel>
+
+        <a-collapse-panel key="tmdb" header="TMDB 与缓存">
+          <div class="section-grid">
+            <a-form-item label="TMDB缓存目录">
+              <a-input
+                v-model:value="config.tmdb_cache_dir"
+                placeholder="cache/tmdb"
+              />
+            </a-form-item>
+          </div>
+        </a-collapse-panel>
+      </a-collapse>
+
+      <div class="action-bar">
+        <div class="action-summary">
+          <strong>{{ hasChanges ? '存在未保存变更' : '当前配置已同步' }}</strong>
+          <span>{{ scanning ? '扫描任务正在运行中。' : '当前没有运行中的扫描任务。' }}</span>
+        </div>
+        <a-space wrap>
+          <a-button
+            type="primary"
+            @click="saveConfig"
+            :loading="saving"
+            :disabled="!hasChanges"
+          >
+            保存配置
+          </a-button>
+          <a-button
+            @click="loadConfig"
+            :loading="loading"
+          >
+            重新加载
+          </a-button>
+          <a-button
+            type="primary"
+            :loading="scanning"
+            @click="scanning ? stopScan() : startScan()"
+            :danger="scanning"
+          >
+            {{ scanning ? '停止扫描' : '开始扫描' }}
+          </a-button>
+          <a-button
+            @click="clearCache"
+            :loading="clearingCache"
+          >
+            清除缓存
+          </a-button>
+        </a-space>
       </div>
     </a-card>
   </div>
@@ -498,9 +356,9 @@ export default {
   components: {
     InfoCircleOutlined
   },
-  
+
   emits: ['scan-started'],
-  
+
   setup(props, { emit }) {
     const config = ref({})
     const originalConfig = ref({})
@@ -511,8 +369,8 @@ export default {
     const testingConnection = ref(false)
     const testingEmby = ref(false)
     const clearingCache = ref(false)
-    
-    // 加载配置
+    const activeSections = ref(['runtime', 'alist', 'emby'])
+
     const loadConfig = async () => {
       loading.value = true
       error.value = ''
@@ -533,12 +391,10 @@ export default {
         loading.value = false
       }
     }
-    
-    // 保存配置
+
     const saveConfig = async () => {
       saving.value = true
       try {
-        // 遍历配置项，逐个更新
         for (const [key, value] of Object.entries(config.value)) {
           if (JSON.stringify(value) !== JSON.stringify(originalConfig.value[key])) {
             const response = await fetch('/api/config', {
@@ -551,14 +407,13 @@ export default {
                 value: value
               })
             })
-            
+
             if (!response.ok) {
               throw new Error(`保存配置 ${key} 失败`)
             }
           }
         }
-        
-        // 更新原始配置
+
         originalConfig.value = JSON.parse(JSON.stringify(config.value))
         message.success('配置保存成功')
         error.value = ''
@@ -570,13 +425,11 @@ export default {
         saving.value = false
       }
     }
-    
-    // 检查配置是否有变化
+
     const hasChanges = computed(() => {
       return JSON.stringify(config.value) !== JSON.stringify(originalConfig.value)
     })
-    
-    // 测试连接
+
     const testConnection = async () => {
       testingConnection.value = true
       try {
@@ -594,7 +447,7 @@ export default {
             refresh: false
           })
         })
-        
+
         if (response.ok) {
           message.success('连接成功')
         } else {
@@ -606,8 +459,7 @@ export default {
         testingConnection.value = false
       }
     }
-    
-    // 开始扫描
+
     const startScan = async () => {
       try {
         const response = await fetch('/api/strm/start', {
@@ -618,14 +470,12 @@ export default {
         }
         scanning.value = true
         message.success('扫描已开始')
-        // 立即触发日志显示
         emit('scan-started')
       } catch (e) {
         message.error('启动扫描失败: ' + e.message)
       }
     }
-    
-    // 停止扫描
+
     const stopScan = async () => {
       try {
         const response = await fetch('/api/strm/stop', {
@@ -640,8 +490,7 @@ export default {
         message.error('停止扫描失败: ' + e.message)
       }
     }
-    
-    // 检查扫描状态
+
     const checkScanStatus = async () => {
       try {
         const response = await fetch('/api/strm/status')
@@ -654,13 +503,12 @@ export default {
         console.error('检查扫描状态失败:', e)
       }
     }
-    
-    // 获取Cron表达式描述
+
     const getCronDescription = (cron) => {
       if (!cron) return ''
       const parts = cron.split(' ')
       if (parts.length !== 5) return '无效的Cron表达式'
-      
+
       if (parts[1] === '*/6' && parts[2] === '*' && parts[3] === '*' && parts[4] === '*') {
         return '每6小时执行一次'
       }
@@ -672,8 +520,7 @@ export default {
       }
       return '自定义执行计划'
     }
-    
-    // 清除缓存
+
     const clearCache = async () => {
       clearingCache.value = true
       try {
@@ -695,16 +542,14 @@ export default {
         clearingCache.value = false
       }
     }
-    
-    // 测试Emby连接
+
     const testEmbyConnection = async () => {
       testingEmby.value = true
       try {
-        // 验证是否配置了必要参数
         if (!config.value.emby_api_url || !config.value.emby_api_key) {
           throw new Error('请先填写Emby API地址和API密钥')
         }
-        
+
         const response = await fetch('/api/config/test_emby', {
           method: 'POST',
           headers: {
@@ -715,9 +560,9 @@ export default {
             api_key: config.value.emby_api_key
           })
         })
-        
+
         const data = await response.json()
-        
+
         if (data.success) {
           message.success(data.message)
         } else {
@@ -729,19 +574,16 @@ export default {
         testingEmby.value = false
       }
     }
-    
-    // 组件挂载时加载配置
+
     onMounted(() => {
       loadConfig()
       checkScanStatus()
-      // 定期检查扫描状态
       const statusInterval = setInterval(checkScanStatus, 5000)
-      // 组件卸载时清理定时器
       onUnmounted(() => {
         clearInterval(statusInterval)
       })
     })
-    
+
     return {
       config,
       loading,
@@ -751,6 +593,7 @@ export default {
       testingConnection,
       testingEmby,
       clearingCache,
+      activeSections,
       loadConfig,
       saveConfig,
       hasChanges,
@@ -767,28 +610,146 @@ export default {
 
 <style scoped>
 .config-panel {
-  max-width: 800px;
+  max-width: 1120px;
   margin: 0 auto;
-  padding: 20px;
+  padding: 12px;
+}
+
+.config-shell {
+  padding: 8px;
 }
 
 .error-message {
   margin-bottom: 16px;
 }
 
-.button-group {
-  margin-top: 24px;
-  text-align: center;
+.config-hero {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 18px;
+  margin-bottom: 22px;
+}
+
+.hero-kicker {
+  color: #b4542f;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.config-hero h2 {
+  margin: 10px 0 8px;
+  font-size: 30px;
+  color: #241d15;
+}
+
+.config-hero p {
+  margin: 0;
+  color: #665747;
+}
+
+.hero-metrics {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.metric-pill {
+  min-width: 130px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.62);
+  border: 1px solid rgba(36, 29, 21, 0.06);
+}
+
+.metric-pill span {
+  display: block;
+  color: #766756;
+  font-size: 12px;
+}
+
+.metric-pill strong {
+  display: block;
+  margin-top: 8px;
+  color: #241d15;
+  font-size: 18px;
+}
+
+.config-collapse :deep(.ant-collapse-item) {
+  margin-bottom: 14px;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.54);
+  border: 1px solid rgba(36, 29, 21, 0.06);
+  overflow: hidden;
+}
+
+.config-collapse :deep(.ant-collapse-header) {
+  font-size: 16px;
+  font-weight: 700;
+  color: #2b2017;
+}
+
+.config-collapse :deep(.ant-collapse-content-box) {
+  padding-top: 8px;
+}
+
+.section-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 18px;
+}
+
+.span-2 {
+  grid-column: span 2;
+}
+
+.inline-with-action {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.action-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  margin-top: 20px;
+  padding: 16px 18px;
+  border-radius: 22px;
+  background: rgba(255, 252, 246, 0.95);
+  border: 1px solid rgba(36, 29, 21, 0.08);
+  box-shadow: 0 -10px 30px rgba(67, 54, 39, 0.06);
+  backdrop-filter: blur(10px);
+}
+
+.action-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.action-summary strong {
+  color: #241d15;
+}
+
+.action-summary span {
+  color: #766756;
+  font-size: 13px;
+}
+
+.tip-icon {
+  margin-left: 8px;
 }
 
 :deep(.ant-form-item) {
   margin-bottom: 16px;
-}
-
-:deep(.ant-divider) {
-  margin: 24px 0 16px;
-  color: #1890ff;
-  font-weight: 500;
 }
 
 :deep(.ant-form-item-required::before) {
@@ -800,4 +761,25 @@ export default {
   line-height: 1;
   content: '*';
 }
-</style> 
+
+@media (max-width: 960px) {
+  .config-hero,
+  .action-bar,
+  .inline-with-action {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .hero-metrics {
+    justify-content: flex-start;
+  }
+
+  .section-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .span-2 {
+    grid-column: span 1;
+  }
+}
+</style>
