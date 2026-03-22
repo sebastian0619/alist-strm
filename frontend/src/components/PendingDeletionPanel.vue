@@ -113,6 +113,7 @@ const updating = ref(false)
 
 const waitingMoveCount = computed(() => pendingItems.value.filter((item) => !item.move_success).length)
 const confirmedMoveCount = computed(() => pendingItems.value.filter((item) => item.move_success).length)
+const seasonPattern = /season\s*\d+|s\d+|第.+?季/i
 
 onMounted(() => {
   loadPendingItems()
@@ -134,7 +135,7 @@ const loadPendingItems = async () => {
 
         return {
           ...item,
-          name: item.path.split('/').filter(Boolean).pop() || item.path,
+          name: formatItemName(item.path),
           delete_time: formatDate(deleteDate),
           days_left: Math.ceil((deleteTimestamp - now.getTime()) / msPerDay),
           timestamp: deleteTimestamp,
@@ -199,6 +200,23 @@ const formatDate = (date) => {
   const hours = String(date.getHours()).padStart(2, '0')
   const minutes = String(date.getMinutes()).padStart(2, '0')
   return `${year}-${month}-${day} ${hours}:${minutes}`
+}
+
+const formatItemName = (path) => {
+  const parts = String(path || '').split('/').filter(Boolean)
+  if (!parts.length) return path
+
+  const leaf = parts[parts.length - 1]
+  if (!seasonPattern.test(leaf)) {
+    return leaf
+  }
+
+  const parent = parts[parts.length - 2]
+  if (!parent) {
+    return leaf
+  }
+
+  return `${parent} - ${leaf}`
 }
 
 const removeItem = async (item) => {
