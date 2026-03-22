@@ -14,6 +14,8 @@ from services.alist_client import AlistClient
 import re
 from urllib.parse import quote
 
+SEASON_DIR_PATTERN = re.compile(r'(?i)season\s*\d+|s\d+|第.+?季')
+
 class MediaThreshold(NamedTuple):
     """媒体文件的时间阈值配置"""
     creation_days: int
@@ -61,6 +63,76 @@ class ArchiveService:
         
         # 删除检查任务将在initialize方法中启动
         self._deletion_check_task = None
+
+    def _normalize_cloud_path(self, cloud_path: str) -> str:
+        normalized = cloud_path.replace('\\', '/')
+        normalized = normalized.rstrip('/')
+        return normalized
+
+    def _relative_cloud_path(self, cloud_path: str) -> str:
+        normalized = self._normalize_cloud_path(cloud_path)
+        prefix = self.settings.alist_scan_path.rstrip('/')
+        if normalized.startswith(prefix):
+            return normalized[len(prefix):].lstrip('/')
+        return normalized.lstrip('/')
+
+    def _archive_target_paths(self, cloud_path: str) -> dict | None:
+        relative = self._relative_cloud_path(cloud_path)
+        if not relative:
+            return None
+        target_dir = self.settings.alist_scan_path.rstrip('/')
+        archive_base = os.path.join(target_dir, 'archive')
+        archive_path = os.path.join(archive_base, relative)
+        season_dir = bool(SEASON_DIR_PATTERN.search(relative))
+        return {
+            'cloud_path': self._normalize_cloud_path(cloud_path),
+            'relative': relative,
+            'archive_path': archive_path,
+            'season_dir': season_dir
+        }
+
+    def _local_relative_path(self, path: Path) -> Path:
+        """计算路径相对于归档源目录的相对路径。"""
+        source_root = Path(self.settings.archive_source_root)
+        try:
+            return path.relative_to(source_root)
+        except ValueError:
+            rel_str = str(path)
+            source_str = str(source_root)
+            if rel_str.startswith(source_str):
+                return Path(rel_str[len(source_str):].lstrip('/'))
+            raise
+
+    def _build_archive_paths_from_relative(self, relative_path: Path) -> dict:
+        """基于相对路径统一构建本地显示路径和 Alist 源/目标路径。"""
+        rel_path_str = str(relative_path).replace('\\', '/').lstrip('/')
+
+        source_alist = self.settings.archive_source_alist.rstrip('/')
+        target_root = self.settings.archive_target_root.rstrip('/')
+
+        source_alist_path = f"{source_alist}/{rel_path_str}".replace('\\', '/').lstrip("/")
+        dest_alist_path = f"{target_root}/{rel_path_str}".replace('\\', '/').lstrip("/")
+
+        return {
+            "relative_path": relative_path,
+            "relative_str": rel_path_str,
+            "dest_path": Path(self.settings.archive_target_root) / relative_path,
+            "source_alist_path": source_alist_path,
+            "dest_alist_path": dest_alist_path,
+            "season_dir": bool(SEASON_DIR_PATTERN.search(rel_path_str)),
+        }
+
+    def _season_archive_candidate(self, directory: Path, media_root: Path) -> Path:
+        """如果目录位于某一季中，则统一返回季目录作为归档候选。"""
+        current = directory
+        while current != media_root and current != current.parent:
+            if SEASON_DIR_PATTERN.search(current.name):
+                return current
+            current = current.parent
+        if current == media_root and SEASON_DIR_PATTERN.search(current.name):
+            return current
+        return directory
+
 
     def refresh_settings(self):
         """重新加载运行时配置。"""
@@ -240,6 +312,9 @@ class ArchiveService:
                 # 检查每个项目
                 for item in self._pending_deletions:
                     path = item["path"]
+                    if not item.get("move_success", True):
+                        logger.debug(f"等待目标确认，暂不删除: {item.get('archive_path') or path}")
+                        continue
                     
                     # 如果文件已经不存在，直接从列表中移除
                     if not path.exists():
@@ -297,7 +372,7 @@ class ArchiveService:
             finally:
                 await asyncio.sleep(60)  # 每分钟检查一次，确保及时处理
 
-    def _add_to_pending_deletion(self, path: Path):
+    def _add_to_pending_deletion(self, path: Path, cloud_path: str = "", archive_path: str = "", move_success: bool = True):
         """将文件或目录添加到待删除列表
         
         Args:
@@ -316,7 +391,10 @@ class ArchiveService:
             # 添加到待删除列表
             self._pending_deletions.append({
                 "path": path,
-                "delete_time": delete_time
+                "cloud_path": cloud_path or str(path),
+                "archive_path": archive_path or "",
+                "delete_time": delete_time,
+                "move_success": move_success
             })
             
             # 保存到文件
@@ -350,11 +428,34 @@ class ArchiveService:
             if not path.exists():
                 logger.info(f"文件不存在，无需删除: {path}")
                 return True
-                
+
             if path.is_dir():
-                shutil.rmtree(str(path))
+                for root, dirs, files in os.walk(path, topdown=False):
+                    root_path = Path(root)
+
+                    for file_name in files:
+                        file_path = root_path / file_name
+                        try:
+                            file_path.unlink()
+                        except FileNotFoundError:
+                            logger.debug(f"删除目录时文件已不存在，跳过: {file_path}")
+
+                    for dir_name in dirs:
+                        dir_path = root_path / dir_name
+                        try:
+                            dir_path.rmdir()
+                        except FileNotFoundError:
+                            logger.debug(f"删除目录时子目录已不存在，跳过: {dir_path}")
+
+                try:
+                    path.rmdir()
+                except FileNotFoundError:
+                    logger.debug(f"删除目录时根目录已不存在，跳过: {path}")
             else:
-                path.unlink()
+                try:
+                    path.unlink()
+                except FileNotFoundError:
+                    logger.debug(f"删除文件时文件已不存在，跳过: {path}")
                 
             # 让出控制权
             await asyncio.sleep(0)
@@ -405,23 +506,15 @@ class ArchiveService:
             logger.info(f"开始处理目录: {directory}")
             
             # 获取相对于源目录的路径
-            source_dir = Path(self.settings.archive_source_root)
             try:
-                rel_path = directory.relative_to(source_dir)
+                rel_path = self._local_relative_path(directory)
                 logger.debug(f"- 相对路径: {rel_path}")
             except ValueError:
                 # 如果不是source_dir的子目录，记录错误并尝试从绝对路径获取相对路径
+                source_dir = Path(self.settings.archive_source_root)
                 logger.warning(f"目录 {directory} 不是源目录 {source_dir} 的子目录")
-                
-                # 尝试获取最合适的相对路径表示
-                rel_str = str(directory)
-                source_str = str(source_dir)
-                if rel_str.startswith(source_str):
-                    rel_path = Path(rel_str[len(source_str):].lstrip('/'))
-                    logger.info(f"- 计算的相对路径: {rel_path}")
-                else:
-                    rel_path = directory.name
-                    logger.warning(f"- 无法获取相对路径，使用目录名: {rel_path}")
+                rel_path = Path(directory.name)
+                logger.warning(f"- 无法获取相对路径，使用目录名: {rel_path}")
             
             # 获取最后的文件夹名称
             folder_name = directory.name
@@ -430,8 +523,9 @@ class ArchiveService:
             full_folder_name = folder_name
             parent_dir_name = ""
             
-            if re.search(r'(?i)season\s*\d+|s\d+|第.+?季', folder_name):
+            if SEASON_DIR_PATTERN.search(folder_name):
                 parent_dir = directory.parent
+                source_dir = Path(self.settings.archive_source_root)
                 if parent_dir.name and parent_dir != source_dir:
                     parent_dir_name = parent_dir.name
                     # 记录电视剧名称用于日志
@@ -528,33 +622,18 @@ class ArchiveService:
                 return result
             
             # 构建源和目标的相对路径
-            # 首先，确保获取的是相对于source_root的路径
             source_relative_path = rel_path  # 我们在上面已经计算过rel_path了
-            
-            # 构建Alist路径时，使用正斜杠并移除开头的斜杠
-            if self.settings.archive_source_alist.endswith('/'):
-                source_alist = self.settings.archive_source_alist.rstrip('/')
-            else:
-                source_alist = self.settings.archive_source_alist
-                
-            if self.settings.archive_target_root.endswith('/'):
-                target_root = self.settings.archive_target_root.rstrip('/')
-            else:
-                target_root = self.settings.archive_target_root
-                
-            # 确保相对路径不以斜杠开头
-            rel_path_str = str(source_relative_path).lstrip('/')
-            
-            # 正确构建完整的Alist路径
-            source_alist_path = f"{source_alist}/{rel_path_str}".replace('\\', '/').lstrip("/")
-            dest_alist_path = f"{target_root}/{rel_path_str}".replace('\\', '/').lstrip("/")
+            path_info = self._build_archive_paths_from_relative(source_relative_path)
+            rel_path_str = path_info["relative_str"]
+            source_alist_path = path_info["source_alist_path"]
+            dest_alist_path = path_info["dest_alist_path"]
             
             logger.debug(f"- 相对路径用于Alist: {rel_path_str}")
             logger.debug(f"- 完整源Alist路径: {source_alist_path}")
             logger.debug(f"- 完整目标Alist路径: {dest_alist_path}")
             
             # 检查是否是季文件夹，如果是则记录额外信息
-            if parent_dir_name and re.search(r'(?i)season\s*\d+|s\d+|第.+?季', folder_name):
+            if parent_dir_name and SEASON_DIR_PATTERN.search(folder_name):
                 # 记录详细信息，方便调试
                 logger.debug(f"- 处理季目录路径:")
                 logger.debug(f"  - 父目录: {parent_dir_name}")
@@ -607,7 +686,12 @@ class ArchiveService:
                     logger.info(f"目标位置已存在文件: {copy_result['message']}")
                     # 处理同已存在相同
                     if self.settings.archive_delete_source:
-                        self._add_to_pending_deletion(directory)
+                        self._add_to_pending_deletion(
+                            directory,
+                            cloud_path=source_alist_path,
+                            archive_path=dest_alist_path,
+                            move_success=True
+                        )
                         logger.info(f"已将原目录添加到待删除队列: {directory}")
                     
                     result["message"] = (
@@ -627,7 +711,12 @@ class ArchiveService:
                     
                     # 添加到删除队列
                     if self.settings.archive_delete_source:
-                        self._add_to_pending_deletion(directory)
+                        self._add_to_pending_deletion(
+                            directory,
+                            cloud_path=source_alist_path,
+                            archive_path=dest_alist_path,
+                            move_success=True
+                        )
                         logger.info(f"已将原目录添加到待删除队列: {directory}")
                     
                     result["message"] = (
@@ -998,43 +1087,19 @@ class ArchiveService:
                     "size": 0
                 }
             
-            # 构建目标路径，保持相对路径结构
             try:
-                relative_path = source_path.relative_to(self.settings.archive_source_root)
+                relative_path = self._local_relative_path(source_path)
             except ValueError:
-                # 如果不是source_dir的子目录，尝试从绝对路径获取相对路径
-                rel_str = str(source_path)
-                source_str = str(self.settings.archive_source_root)
-                if rel_str.startswith(source_str):
-                    relative_path = Path(rel_str[len(source_str):].lstrip('/'))
-                else:
-                    # 无法获取相对路径时，返回错误
-                    return {
-                        "success": False,
-                        "message": f"❌ {source_path} 不在源目录 {self.settings.archive_source_root} 中",
-                        "size": 0
-                    }
-            
-            # 处理相对路径，确保不以斜杠开头
-            rel_path_str = str(relative_path).lstrip('/')
-            
-            # 构建dest_path用于显示和验证
-            dest_path = Path(self.settings.archive_target_root) / relative_path
-            
-            # 准备Alist路径部分
-            if self.settings.archive_source_alist.endswith('/'):
-                source_alist = self.settings.archive_source_alist.rstrip('/')
-            else:
-                source_alist = self.settings.archive_source_alist
-                
-            if self.settings.archive_target_root.endswith('/'):
-                target_root = self.settings.archive_target_root.rstrip('/')
-            else:
-                target_root = self.settings.archive_target_root
-            
-            # 构建Alist路径（保持与process_directory一致）
-            source_alist_path = f"{source_alist}/{rel_path_str}".replace('\\', '/').lstrip("/")
-            dest_alist_path = f"{target_root}/{rel_path_str}".replace('\\', '/').lstrip("/")
+                return {
+                    "success": False,
+                    "message": f"❌ {source_path} 不在源目录 {self.settings.archive_source_root} 中",
+                    "size": 0
+                }
+
+            path_info = self._build_archive_paths_from_relative(relative_path)
+            dest_path = path_info["dest_path"]
+            source_alist_path = path_info["source_alist_path"]
+            dest_alist_path = path_info["dest_alist_path"]
             
             logger.debug(f"- 源文件路径: {source_path}")
             logger.debug(f"- 目标文件路径: {dest_path}")
@@ -1057,7 +1122,12 @@ class ArchiveService:
                 logger.info(f"目标位置已存在文件: {copy_result['message']}")
                 # 如果配置了删除源文件
                 if self.settings.archive_delete_source:
-                    self._add_to_pending_deletion(source_path)
+                    self._add_to_pending_deletion(
+                        source_path,
+                        cloud_path=source_alist_path,
+                        archive_path=dest_alist_path,
+                        move_success=True
+                    )
                     return {
                         "success": True,
                         "message": f"🗑️ {source_path} 已存在于目标位置，已加入延迟删除队列",
@@ -1085,7 +1155,12 @@ class ArchiveService:
             
             # 如果配置了删除源文件
             if self.settings.archive_delete_source:
-                self._add_to_pending_deletion(source_path)
+                self._add_to_pending_deletion(
+                    source_path,
+                    cloud_path=source_alist_path,
+                    archive_path=dest_alist_path,
+                    move_success=True
+                )
                 return {
                     "success": True,
                     "message": f"✅ {source_path} -> {dest_path} (已加入延迟删除队列)",
@@ -1182,6 +1257,8 @@ class ArchiveService:
                     "results": []
                 }
             
+            processed_candidates = set()
+
             # 直接处理配置的媒体类型目录
             for media_type, config in self.media_types.items():
                 if self._stop_flag:
@@ -1234,15 +1311,28 @@ class ArchiveService:
                     
                     # 如果目录包含文件
                     if files:
+                        candidate_path = self._season_archive_candidate(sub_path, media_path)
+                        candidate_key = str(candidate_path)
+                        if candidate_key in processed_candidates:
+                            logger.debug(f"跳过已处理的归档候选: {candidate_path}")
+                            continue
+
+                        processed_candidates.add(candidate_key)
+
+                        candidate_files = [f for f in candidate_path.iterdir() if f.is_file()] if candidate_path.exists() else []
+
                         # 记录详细信息，方便调试
-                        logger.debug(f"\n处理目录: {sub_path}")
-                        logger.debug(f"- 包含文件数: {len(files)}")
+                        logger.debug(f"\n处理目录: {candidate_path}")
+                        logger.debug(f"- 触发目录: {sub_path}")
+                        logger.debug(f"- 候选目录包含文件数: {len(candidate_files)}")
+                        if candidate_path != sub_path:
+                            logger.debug(f"- 季目录归并: {sub_path} -> {candidate_path}")
                         
                         # 创建一个临时的处理上下文，包含媒体类型信息
                         self._current_media_type = media_type
                         
                         # 处理目录
-                        result = await self.process_directory(sub_path, test_mode)
+                        result = await self.process_directory(candidate_path, test_mode)
 
                         # 清除临时上下文
                         self._current_media_type = None
