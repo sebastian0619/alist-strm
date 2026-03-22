@@ -48,6 +48,30 @@ class ServiceManager:
             self.health_service = StrmHealthService()
             self.emby_service = EmbyService()
             self.strm_assistant_service = StrmAssistantService()
+
+    def reload_runtime_config(self):
+        """重新加载运行时配置并同步到已初始化服务"""
+        self.settings = Settings()
+
+        services = [
+            self.scheduler_service,
+            self.strm_service,
+            self.copy_service,
+            self.telegram_service,
+            self.archive_service,
+            self.health_service,
+            self.emby_service,
+            self.strm_assistant_service,
+        ]
+
+        for service in services:
+            if service and hasattr(service, "refresh_settings"):
+                service.refresh_settings()
+            elif service and hasattr(service, "settings"):
+                try:
+                    service.settings = Settings()
+                except AttributeError:
+                    logger.debug(f"服务 {service.__class__.__name__} 的 settings 为只读，跳过直接赋值")
     
     async def initialize(self):
         """初始化所有服务"""
@@ -178,10 +202,6 @@ class ServiceManager:
     
     async def _run_start_scan(self):
         """在服务启动后执行一次STRM扫描"""
-        if not self.settings.start_scan_enabled:
-            logger.info("启动时STRM扫描未启用")
-            return
-            
         try:
             logger.info("正在执行启动时STRM扫描")
             await self.telegram_service.send_message("🔍 执行启动时STRM扫描")

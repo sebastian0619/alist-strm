@@ -20,21 +20,8 @@ class EmbyService:
     
     def __init__(self):
         """初始化Emby服务"""
-        # 从配置获取设置
         self.settings = Settings()
-        self.emby_url = self.settings.emby_api_url
-        self.api_key = self.settings.emby_api_key
-        self.strm_root_path = self.settings.strm_root_path
-        self.emby_root_path = self.settings.emby_root_path
-        self.emby_enabled = self.settings.emby_enabled
-        
-        # 打印日志，方便调试
-        logger.debug(f"Emby初始化 - emby_enabled: {self.emby_enabled}, emby_url: {self.emby_url}, api_key set: {bool(self.api_key)}")
-        
-        # 验证必要的配置
-        if not self.emby_url or not self.api_key:
-            logger.warning("Emby配置不完整，服务将不可用")
-            self.emby_enabled = False
+        self.refresh_settings()
         
         # 创建缓存目录
         cache_dir = "/app/cache"
@@ -47,6 +34,50 @@ class EmbyService:
         
         # 加载最近刷新记录
         self._load_last_refresh()
+
+    def refresh_settings(self):
+        """重新加载运行时配置。"""
+        self.settings = Settings()
+        self.emby_url = self.settings.emby_api_url
+        self.api_key = self.settings.emby_api_key
+        self.strm_root_path = self.settings.strm_root_path
+        self.emby_root_path = self.settings.emby_root_path
+        self.emby_enabled = self.settings.emby_enabled
+
+        logger.debug(
+            f"Emby初始化 - emby_enabled: {self.emby_enabled}, "
+            f"emby_url: {self.emby_url}, api_key set: {bool(self.api_key)}"
+        )
+
+        if not self.emby_url or not self.api_key:
+            logger.warning("Emby配置不完整，服务将不可用")
+            self.emby_enabled = False
+
+    def convert_to_emby_path(self, strm_path: str) -> str:
+        """将STRM路径映射到Emby媒体库路径。"""
+        if not strm_path:
+            return strm_path
+
+        normalized = strm_path.replace("\\", "/")
+        strm_root = (self.strm_root_path or "").replace("\\", "/").rstrip("/")
+        emby_root = (self.emby_root_path or "").replace("\\", "/").rstrip("/")
+
+        if not strm_root or not emby_root:
+            return normalized
+
+        if normalized == strm_root or normalized.startswith(f"{strm_root}/"):
+            suffix = normalized[len(strm_root):].lstrip("/")
+            target = f"{emby_root}/{suffix}" if suffix else emby_root
+            return os.path.normpath(target).replace("\\", "/")
+
+        stripped = normalized.lstrip("/")
+        stripped_root = strm_root.lstrip("/")
+        if stripped_root and (stripped == stripped_root or stripped.startswith(f"{stripped_root}/")):
+            suffix = stripped[len(stripped_root):].lstrip("/")
+            target = f"{emby_root}/{suffix}" if suffix else emby_root
+            return os.path.normpath(target).replace("\\", "/")
+
+        return normalized
     
     def add_to_refresh_queue(self, strm_path: str, media_info: dict = None):
         """兼容方法 - 不再使用刷新队列，但保留此方法以兼容现有调用

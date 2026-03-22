@@ -8,10 +8,20 @@ import importlib
 class CopyService:
     def __init__(self):
         self.settings = Settings()
-        self.client = httpx.AsyncClient(
+        self.client = self._build_client()
+
+    def _build_client(self):
+        return httpx.AsyncClient(
             base_url=self.settings.alist_url,
             headers={"Authorization": self.settings.alist_token} if self.settings.alist_token else {}
         )
+
+    def refresh_settings(self):
+        self.settings = Settings()
+        self.client = self._build_client()
+
+    def _has_copy_paths(self) -> bool:
+        return bool(self.settings.copy_source_dir and self.settings.copy_target_dir)
     
     def _get_service_manager(self):
         """动态获取service_manager以避免循环依赖"""
@@ -22,14 +32,14 @@ class CopyService:
         """同步文件夹中的所有文件"""
         try:
             logger.info(f"开始同步文件夹: {relative_path}")
-            if not self.settings.src_dir or not self.settings.dst_dir:
+            if not self._has_copy_paths():
                 logger.warning("源目录或目标目录未配置")
                 return
             
             service_manager = self._get_service_manager()
             await service_manager.telegram_service.send_message(f"🔄 开始同步文件夹: {relative_path}")
                 
-            files = await self._list_files(os.path.join(self.settings.src_dir, relative_path))
+            files = await self._list_files(os.path.join(self.settings.copy_source_dir, relative_path))
             processed_files = 0
             total_size = 0
             
@@ -58,14 +68,14 @@ class CopyService:
         """同步单个文件"""
         try:
             logger.info(f"开始同步文件: {relative_path}")
-            if not self.settings.src_dir or not self.settings.dst_dir:
+            if not self._has_copy_paths():
                 logger.warning("源目录或目标目录未配置")
                 return
             
             service_manager = self._get_service_manager()
             await service_manager.telegram_service.send_message(f"🔄 开始同步文件: {relative_path}")
                 
-            file_info = await self._get_file_info(os.path.join(self.settings.src_dir, relative_path))
+            file_info = await self._get_file_info(os.path.join(self.settings.copy_source_dir, relative_path))
             if file_info and self._should_copy_file(file_info):
                 await self._copy_file(file_info, os.path.dirname(relative_path))
                 summary = (
@@ -132,13 +142,13 @@ class CopyService:
     async def _copy_file(self, file: dict, relative_path: str):
         """复制文件"""
         try:
-            src_path = os.path.join(self.settings.src_dir, relative_path, file.get("name", ""))
-            dst_path = os.path.join(self.settings.dst_dir, relative_path, file.get("name", ""))
+            src_path = os.path.join(self.settings.copy_source_dir, relative_path, file.get("name", ""))
+            dst_path = os.path.join(self.settings.copy_target_dir, relative_path, file.get("name", ""))
             
             response = await self.client.post("/api/fs/copy", json={
-                "src_dir": src_path,
-                "dst_dir": dst_path,
-                "create_dir": True
+                "src_dir": os.path.dirname(src_path),
+                "dst_dir": os.path.dirname(dst_path),
+                "names": [os.path.basename(src_path)]
             })
             response.raise_for_status()
             logger.info(f"文件复制成功: {src_path} -> {dst_path}")

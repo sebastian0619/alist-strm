@@ -26,8 +26,8 @@ async def notify_by_dir(request: NotifyByDirRequest):
     copy_service = CopyService()
     try:
         relative_path = ""
-        if request.dir and copy_service.settings.replace_dir:
-            relative_path = request.dir.replace(copy_service.settings.replace_dir, "", 1)
+        if request.dir and copy_service.settings.copy_replace_dir:
+            relative_path = request.dir.replace(copy_service.settings.copy_replace_dir, "", 1)
             # 判断是否为视频文件
             if _is_video_file(relative_path):
                 await copy_service.sync_one_file(relative_path)

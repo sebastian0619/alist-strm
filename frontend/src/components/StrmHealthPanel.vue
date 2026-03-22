@@ -171,6 +171,7 @@
             批量删除无效STRM文件
           </a-button>
         </div>
+      </div>
       
       <!-- 无问题状态 -->
       <div v-else-if="!isScanning && hasScanned" class="no-problems">

@@ -32,14 +32,15 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
-import ConfigPanel from './components/ConfigPanel.vue'
-import ArchivePanel from './components/ArchivePanel.vue'
-import PendingDeletionPanel from './components/PendingDeletionPanel.vue'
-import StrmHealthPanel from './components/StrmHealthPanel.vue'
-import StrmReplacePanel from './components/StrmReplacePanel.vue'
-import EmbyRefreshPanel from './components/EmbyRefreshPanel.vue'
-import TmdbMetadataPanel from './components/TmdbMetadataPanel.vue'
+import { defineAsyncComponent, ref } from 'vue'
+
+const ConfigPanel = defineAsyncComponent(() => import('./components/ConfigPanel.vue'))
+const ArchivePanel = defineAsyncComponent(() => import('./components/ArchivePanel.vue'))
+const PendingDeletionPanel = defineAsyncComponent(() => import('./components/PendingDeletionPanel.vue'))
+const StrmHealthPanel = defineAsyncComponent(() => import('./components/StrmHealthPanel.vue'))
+const StrmReplacePanel = defineAsyncComponent(() => import('./components/StrmReplacePanel.vue'))
+const EmbyRefreshPanel = defineAsyncComponent(() => import('./components/EmbyRefreshPanel.vue'))
+const TmdbMetadataPanel = defineAsyncComponent(() => import('./components/TmdbMetadataPanel.vue'))
 
 const activeKey = ref('config')
 </script>

@@ -56,6 +56,11 @@ class ConfigService:
                 "tg_token": self.settings.tg_token,
                 "tg_chat_id": self.settings.tg_chat_id,
                 "tg_proxy_url": self.settings.tg_proxy_url,
+
+                # 同步复制配置
+                "copy_source_dir": self.settings.copy_source_dir,
+                "copy_target_dir": self.settings.copy_target_dir,
+                "copy_replace_dir": self.settings.copy_replace_dir,
                 
                 # 归档配置
                 "archive_enabled": self.settings.archive_enabled,

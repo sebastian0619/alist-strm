@@ -6,7 +6,16 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     assetsDir: 'assets',
-    emptyOutDir: true
+    emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          vue: ['vue'],
+          antd: ['ant-design-vue', '@ant-design/icons-vue'],
+          utils: ['axios', 'cronstrue', 'vuedraggable']
+        }
+      }
+    }
   },
   server: {
     proxy: {

@@ -78,6 +78,12 @@ class TelegramService:
         self._is_polling = False
         self._polling_error = None
         self._enabled = None  # 添加私有变量用于存储enabled状态
+
+    def refresh_settings(self):
+        self.settings = Settings()
+        if self._enabled is None:
+            return
+        self._enabled = self.settings.tg_enabled and bool(self.settings.tg_token)
         
     @property
     def enabled(self) -> bool:
@@ -135,71 +141,19 @@ class TelegramService:
             # 告诉等待的线程服务已准备好
             self._init_event.set()
             
-            # 在启动前，尝试清除任何旧的更新以避免冲突
-            try:
-                logger.info("尝试清除现有更新以避免冲突...")
-                # 获取当前更新并丢弃，使用较短的超时时间
-                updates = await self.application.bot.get_updates(offset=-1, timeout=1)
-                if updates:
-                    # 使用最后一个更新的ID+1作为新的offset
-                    next_offset = updates[-1].update_id + 1
-                    # 再次请求，跳过所有旧更新
-                    await self.application.bot.get_updates(offset=next_offset, timeout=1)
-                    logger.info(f"已清除 {len(updates)} 个挂起的更新")
-            except Exception as e:
-                # 如果清除失败，记录但继续
-                logger.warning(f"清除现有更新失败: {e}")
-                
-                # 检查是否是多实例冲突错误
-                if "terminated by other getUpdates request" in str(e):
-                    logger.error("检测到另一个Telegram bot实例正在运行")
-                    logger.info("等待30秒让其他实例释放连接...")
-                    # 等待30秒后重试
-                    await asyncio.sleep(30)
-            
-            # 设置轮询状态
-            self._is_polling = True
-            
-            # 启动轮询
-            # 增加删除_webhook参数，避免与其他实例冲突
             await self.application.initialize()
             await self.application.start()
-            
-            # 使用自定义轮询方法，避免冲突
+            if not self.application.updater:
+                raise RuntimeError("Telegram updater 不可用")
+
+            await self.application.updater.start_polling(drop_pending_updates=True)
+            self._is_polling = True
             logger.info("开始接收Telegram更新...")
-            
-            # 使用长轮询但带有错误处理的方式
-            error_count = 0
-            max_errors = 5
-            
+
             while not self._stop_event.is_set():
-                try:
-                    # 使用更保守的参数
-                    await self.application.update_queue.put(
-                        Update.de_json(data={}, bot=self.application.bot)
-                    )
-                    # 轮询成功，重置错误计数
-                    if error_count > 0:
-                        error_count = 0
-                        logger.info("Telegram轮询已恢复正常")
-                    
-                    # 短暂休息，避免过度请求
-                    await asyncio.sleep(1)
-                    
-                except Exception as e:
-                    error_count += 1
-                    logger.error(f"Telegram轮询错误 ({error_count}/{max_errors}): {e}")
-                    
-                    if error_count >= max_errors:
-                        logger.error(f"连续 {max_errors} 次轮询错误，停止轮询")
-                        break
-                        
-                    # 等待时间随错误次数增加
-                    wait_time = min(30, 5 * error_count)
-                    logger.info(f"等待 {wait_time} 秒后重试轮询...")
-                    await asyncio.sleep(wait_time)
-            
-            # 停止应用
+                await asyncio.sleep(1)
+
+            await self.application.updater.stop()
             await self.application.stop()
             await self.application.shutdown()
             logger.info("Telegram轮询任务已结束")
@@ -402,7 +356,7 @@ class TelegramService:
         Args:
             text: 消息文本
         """
-        if not self.settings.tg_enabled or not self._is_polling:
+        if not self.enabled or not self.application:
             # 如果服务未启用或未成功启动，只记录日志不发送
             logger.debug(f"Telegram未启用或未成功启动，消息未发送: {text}")
             return

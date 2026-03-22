@@ -61,6 +61,14 @@ class ArchiveService:
         
         # 删除检查任务将在initialize方法中启动
         self._deletion_check_task = None
+
+    def refresh_settings(self):
+        """重新加载运行时配置。"""
+        self.settings = Settings()
+        self.excluded_extensions = set(
+            ext.strip().lower() for ext in self.settings.archive_excluded_extensions.split(',')
+        )
+        self._deletion_delay = self.settings.archive_delete_delay_days * 24 * 3600
     
     def _load_pending_deletions(self) -> list:
         """从JSON文件加载待删除列表"""

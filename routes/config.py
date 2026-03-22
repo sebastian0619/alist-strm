@@ -5,7 +5,7 @@ import os
 import json
 from config import Settings
 from services.config_service import ConfigService
-from services.service_manager import scheduler_service, archive_service, emby_service
+from services.service_manager import scheduler_service, archive_service, emby_service, service_manager
 
 router = APIRouter()
 settings = Settings()
@@ -44,12 +44,15 @@ async def save_config(config: dict):
     """保存完整配置"""
     try:
         config_service.save_config(config)
+        service_manager.reload_runtime_config()
         
         # 如果更新了定时任务配置，需要重新启动调度器
-        if any(key in config for key in ['schedule_enabled', 'schedule_cron']):
+        if any(key in config for key in ['schedule_enabled', 'schedule_cron', 'archive_schedule_enabled', 'archive_schedule_cron']):
             await scheduler_service.update_schedule(
-                settings.schedule_enabled,
-                settings.schedule_cron
+                service_manager.settings.schedule_enabled,
+                service_manager.settings.schedule_cron,
+                service_manager.settings.archive_schedule_enabled,
+                service_manager.settings.archive_schedule_cron
             )
         
         return {"success": True, "message": "配置保存成功"}
@@ -62,15 +65,15 @@ async def update_config(config_update: ConfigUpdate):
     try:
         # 更新配置
         config_service.update_config(config_update.key, config_update.value)
-        
-        # 重新加载配置
-        settings._load_from_config()
+        service_manager.reload_runtime_config()
         
         # 如果更新了定时任务配置，需要重新启动调度器
-        if config_update.key in ['schedule_enabled', 'schedule_cron']:
+        if config_update.key in ['schedule_enabled', 'schedule_cron', 'archive_schedule_enabled', 'archive_schedule_cron']:
             await scheduler_service.update_schedule(
-                settings.schedule_enabled,
-                settings.schedule_cron
+                service_manager.settings.schedule_enabled,
+                service_manager.settings.schedule_cron,
+                service_manager.settings.archive_schedule_enabled,
+                service_manager.settings.archive_schedule_cron
             )
         
         return {"status": "success"}

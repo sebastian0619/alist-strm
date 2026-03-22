@@ -96,6 +96,11 @@ class Settings(BaseSettings):
     tg_token: str = Field(default="", alias="TG_TOKEN")
     tg_chat_id: str = Field(default="", alias="TG_CHAT_ID")
     tg_proxy_url: str = Field(default="", alias="TG_PROXY_URL")
+
+    # 同步复制配置
+    copy_source_dir: str = Field(default="", alias="COPY_SOURCE_DIR")
+    copy_target_dir: str = Field(default="", alias="COPY_TARGET_DIR")
+    copy_replace_dir: str = Field(default="", alias="COPY_REPLACE_DIR")
     
     # 归档配置
     archive_enabled: bool = Field(default=False, alias="ARCHIVE_ENABLED")  # 是否启用归档
@@ -173,9 +178,9 @@ class Settings(BaseSettings):
         """解析布尔类型的字段"""
         bool_fields = ['run_after_startup', 'slow_mode', 'encode', 
                       'is_down_sub', 'is_down_meta', 'refresh', 'tg_enabled',
-                      'schedule_enabled', 'remove_empty_dirs', 'archive_enabled',
-                      'archive_auto_strm', 'archive_delete_source', 'emby_enabled',
-                      'use_external_url']
+                      'schedule_enabled', 'archive_schedule_enabled', 'remove_empty_dirs',
+                      'archive_enabled', 'archive_auto_strm', 'archive_delete_source',
+                      'emby_enabled', 'use_external_url', 'download_metadata']
         for field in bool_fields:
             if field in values and isinstance(values[field], str):
                 values[field] = str(values[field]).lower() in ('true', '1', 'yes', 'on', 't')

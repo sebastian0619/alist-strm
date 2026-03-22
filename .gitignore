@@ -36,3 +36,6 @@ build/
 /__pycache__/
 */__pycache__/
 /data/
+.venv/
+frontend/node_modules/
+frontend/dist/

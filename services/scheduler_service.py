@@ -11,6 +11,9 @@ class SchedulerService:
         self.scheduler = AsyncIOScheduler()
         self.strm_job = None
         self.archive_job = None
+
+    def refresh_settings(self):
+        self.settings = Settings()
     
     def _get_service_manager(self):
         """动态获取service_manager以避免循环依赖"""

@@ -130,6 +130,12 @@ class StrmService:
         self._is_running = False
         self._cache_file = os.path.join(self.settings.cache_dir, 'processed_dirs.json')
         self._processed_dirs = self._load_cache()
+
+    def refresh_settings(self):
+        """重新加载运行时配置。"""
+        self.settings = Settings()
+        self._cache_file = os.path.join(self.settings.cache_dir, 'processed_dirs.json')
+        self._processed_dirs = self._load_cache()
     
     def _get_service_manager(self):
         """动态获取service_manager以避免循环依赖"""

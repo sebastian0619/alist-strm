@@ -5,10 +5,9 @@ from config import Settings
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from routes import config, strm, health, archive, tmdb
+from routes import config, strm, health, archive, tmdb, notify
 from contextlib import asynccontextmanager
-from services.service_manager import service_manager, scheduler_service, strm_service
-from services.strm_monitor_service import StrmMonitorService
+from services.service_manager import service_manager
 
 settings = Settings()
 
@@ -43,24 +42,11 @@ async def lifespan(app: FastAPI):
     await service_manager.initialize()
     await service_manager.start()
     
-    # 启动定时任务
-    if settings.schedule_enabled:
-        await scheduler_service.start()
-    
-    # 如果配置了启动时运行，则启动扫描
-    if settings.run_after_startup:
-        logger.info("配置为启动时运行，开始扫描...")
-        await strm_service.strm()
-    else:
-        logger.info("等待通过Web界面手动触发STRM生成")
-    
     yield
     
     # 关闭时
     logger.info("应用关闭...")
     await service_manager.close()
-    await strm_service.close()
-    await scheduler_service.stop()
 
 app = FastAPI(lifespan=lifespan)
 
@@ -79,9 +65,15 @@ app.include_router(strm.router)
 app.include_router(health.router)
 app.include_router(archive.router)
 app.include_router(tmdb.router)
+app.include_router(notify.router)
 
 # 挂载静态文件
-app.mount("/", StaticFiles(directory="static", html=True), name="static")
+static_dir = "static"
+if not os.path.isdir(static_dir) and os.path.isdir("frontend/dist"):
+    static_dir = "frontend/dist"
+
+if os.path.isdir(static_dir):
+    app.mount("/", StaticFiles(directory=static_dir, html=True), name="static")
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "8081"))
