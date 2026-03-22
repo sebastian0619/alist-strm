@@ -30,6 +30,9 @@ async def get_pending_deletions():
             
             pending_items.append({
                 "path": path_str,
+                "cloud_path": item.get("cloud_path", ""),
+                "archive_path": item.get("archive_path", ""),
+                "move_success": item.get("move_success", True),
                 "delete_time": item["delete_time"]  # 返回原始时间戳，由前端进行格式化
             })
         

@@ -1185,6 +1185,58 @@ async def get_emby_logs(limit: int = Query(100, description="返回的日志条�
             "logs": []
         }
 
+@router.get("/emby/monitor")
+async def get_emby_monitor(limit: int = Query(30, description="返回的日志条数")):
+    """获取 Emby 监控概览"""
+    try:
+        emby_service = service_manager.emby_service
+        if not emby_service:
+            return {
+                "success": False,
+                "message": "Emby服务不可用"
+            }
+
+        log_result = await get_emby_logs(limit=limit)
+
+        last_scan_items = emby_service.last_scan_items or []
+        last_refresh_items = emby_service.last_refresh_items or []
+
+        return {
+            "success": True,
+            "message": "获取Emby监控信息成功",
+            "data": {
+                "enabled": emby_service.emby_enabled,
+                "api_url": emby_service.emby_url,
+                "strm_root_path": emby_service.strm_root_path,
+                "emby_root_path": emby_service.emby_root_path,
+                "last_refresh": {
+                    "time": emby_service.last_refresh_time,
+                    "count": len(last_refresh_items),
+                    "items": last_refresh_items[:20],
+                },
+                "last_scan": {
+                    "time": emby_service.last_scan_time,
+                    "hours": emby_service.last_scan_hours,
+                    "count": len(last_scan_items),
+                    "items": last_scan_items[:20],
+                    "summary": emby_service.last_scan_summary or {},
+                },
+                "recent_logs": log_result.get("logs", []),
+            }
+        }
+    except Exception as e:
+        logger.error(f"获取Emby监控信息失败: {str(e)}")
+        return {
+            "success": False,
+            "message": f"获取Emby监控信息失败: {str(e)}",
+            "data": {
+                "enabled": False,
+                "last_refresh": {"time": None, "count": 0, "items": []},
+                "last_scan": {"time": None, "hours": None, "count": 0, "items": [], "summary": {}},
+                "recent_logs": [],
+            }
+        }
+
 @router.post("/emby/tags/remove")
 async def remove_emby_tag(request: TagRemoveRequest):
     """从所有Emby项目中删除指定标签"""

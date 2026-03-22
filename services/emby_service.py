@@ -31,9 +31,15 @@ class EmbyService:
         self.last_refresh_time = None
         self.last_refresh_items = []
         self.last_refresh_file = Path(os.path.join(cache_dir, "emby_last_refresh.json"))
+        self.last_scan_time = None
+        self.last_scan_hours = None
+        self.last_scan_items = []
+        self.last_scan_summary = None
+        self.last_scan_file = Path(os.path.join(cache_dir, "emby_last_scan.json"))
         
         # 加载最近刷新记录
         self._load_last_refresh()
+        self._load_last_scan()
 
     def refresh_settings(self):
         """重新加载运行时配置。"""
@@ -202,6 +208,50 @@ class EmbyService:
             logger.debug(f"已保存最近刷新记录，共{len(self.last_refresh_items)}个项目")
         except Exception as e:
             logger.error(f"保存最近刷新记录失败: {e}")
+
+    def _load_last_scan(self):
+        """从文件加载最近一次扫描记录"""
+        try:
+            if self.last_scan_file.exists():
+                with open(self.last_scan_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    self.last_scan_time = data.get('time')
+                    self.last_scan_hours = data.get('hours')
+                    self.last_scan_items = data.get('items', [])
+                    self.last_scan_summary = data.get('summary')
+                logger.info(f"已加载最近扫描记录，共{len(self.last_scan_items)}个项目")
+            else:
+                self.last_scan_time = None
+                self.last_scan_hours = None
+                self.last_scan_items = []
+                self.last_scan_summary = None
+        except Exception as e:
+            logger.error(f"加载最近扫描记录失败: {e}")
+            self.last_scan_time = None
+            self.last_scan_hours = None
+            self.last_scan_items = []
+            self.last_scan_summary = None
+
+    def _save_last_scan(self, hours: int, items: List[Dict], summary: Optional[Dict] = None):
+        """保存最近一次扫描记录到文件"""
+        try:
+            self.last_scan_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            self.last_scan_hours = hours
+            self.last_scan_items = items
+            self.last_scan_summary = summary or {}
+
+            data = {
+                'time': self.last_scan_time,
+                'hours': self.last_scan_hours,
+                'items': self.last_scan_items,
+                'summary': self.last_scan_summary
+            }
+
+            with open(self.last_scan_file, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            logger.debug(f"已保存最近扫描记录，共{len(self.last_scan_items)}个项目")
+        except Exception as e:
+            logger.error(f"保存最近扫描记录失败: {e}")
 
     def _get_service_manager(self):
         """动态获取service_manager以避免循环依赖"""
@@ -555,6 +605,16 @@ class EmbyService:
             
             logger.info(f"找到 {len(new_items)} 个最近 {hours} 小时内的新项目，其中 {strm_count} 个是STRM文件")
             print(f"[Emby扫描] 找到 {len(new_items)} 个最近 {hours} 小时内的新项目，其中 {strm_count} 个是STRM文件")
+
+            self._save_last_scan(
+                hours,
+                new_items_details,
+                {
+                    "total_found": len(new_items),
+                    "strm_count": strm_count,
+                    "hours": hours
+                }
+            )
             
             # 返回扫描结果
             return {
