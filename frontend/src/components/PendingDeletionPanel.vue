@@ -7,7 +7,7 @@
           <h2>待删除队列</h2>
           <p>确认源路径、归档目标和迁移状态，避免误删仍在迁移中的目录。</p>
         </div>
-        <a-button @click="loadPendingItems" :loading="loading">刷新列表</a-button>
+        <a-button @click="loadPendingItems" :loading="listLoading">刷新列表</a-button>
       </div>
 
       <div class="summary-grid">
@@ -37,7 +37,7 @@
           <div class="delay-editor">
             <span>调整延迟天数</span>
             <a-input-number v-model:value="newDelayDays" :min="1" :max="365" />
-            <a-button type="primary" @click="updateDelayDays" :loading="updating">保存</a-button>
+                <a-button type="primary" @click="updateDelayDays" :loading="updating">保存</a-button>
           </div>
         </template>
       </a-alert>
@@ -45,15 +45,15 @@
       <div class="bulk-actions">
         <a-space>
           <a-popconfirm title="确定要立即删除所有待删除项目吗？此操作不可撤销。" @confirm="deleteAllNow">
-            <a-button type="primary" danger>立即删除全部</a-button>
+            <a-button type="primary" danger :loading="deletingAll">立即删除全部</a-button>
           </a-popconfirm>
           <a-popconfirm title="确定要清空整个待删除列表吗？" @confirm="clearAllItems">
-            <a-button>清空待删除列表</a-button>
+            <a-button :loading="clearingAll">清空待删除列表</a-button>
           </a-popconfirm>
         </a-space>
       </div>
 
-      <a-spin :spinning="loading">
+      <a-spin :spinning="listLoading">
         <a-empty v-if="pendingItems.length === 0" description="暂无待删除文件" />
 
         <div v-else class="queue-list">
@@ -88,10 +88,10 @@
 
             <div class="queue-actions">
               <a-popconfirm title="确定要立即删除这个项目吗？" @confirm="deleteNow(item)">
-                <a-button type="primary" danger>立即删除</a-button>
+                <a-button type="primary" danger :loading="deletingPath === item.path">立即删除</a-button>
               </a-popconfirm>
               <a-popconfirm title="确定要取消这个项目的删除计划吗？" @confirm="removeItem(item)">
-                <a-button>取消删除</a-button>
+                <a-button :loading="removingPath === item.path">取消删除</a-button>
               </a-popconfirm>
             </div>
           </a-card>
@@ -106,10 +106,14 @@ import { computed, onMounted, ref } from 'vue'
 import { message } from 'ant-design-vue'
 
 const pendingItems = ref([])
-const loading = ref(true)
+const listLoading = ref(true)
 const delayDays = ref(7)
 const newDelayDays = ref(7)
 const updating = ref(false)
+const deletingAll = ref(false)
+const clearingAll = ref(false)
+const deletingPath = ref('')
+const removingPath = ref('')
 
 const waitingMoveCount = computed(() => pendingItems.value.filter((item) => !item.move_success).length)
 const confirmedMoveCount = computed(() => pendingItems.value.filter((item) => item.move_success).length)
@@ -121,7 +125,7 @@ onMounted(() => {
 })
 
 const loadPendingItems = async () => {
-  loading.value = true
+  listLoading.value = true
   try {
     const response = await fetch('/api/archive/pending-deletions')
     const data = await response.json()
@@ -147,7 +151,7 @@ const loadPendingItems = async () => {
   } catch (error) {
     message.error(`加载待删除列表失败: ${error.message}`)
   } finally {
-    loading.value = false
+    listLoading.value = false
   }
 }
 
@@ -220,7 +224,7 @@ const formatItemName = (path) => {
 }
 
 const removeItem = async (item) => {
-  loading.value = true
+  removingPath.value = item.path
   try {
     const response = await fetch('/api/archive/clear-pending-deletion', {
       method: 'POST',
@@ -240,7 +244,7 @@ const removeItem = async (item) => {
   } catch (error) {
     message.error(`操作失败: ${error.message}`)
   } finally {
-    loading.value = false
+    removingPath.value = ''
   }
 }
 
@@ -251,7 +255,7 @@ const getDaysColor = (days) => {
 }
 
 const deleteNow = async (item) => {
-  loading.value = true
+  deletingPath.value = item.path
   try {
     const response = await fetch('/api/archive/delete-now', {
       method: 'POST',
@@ -271,12 +275,12 @@ const deleteNow = async (item) => {
   } catch (error) {
     message.error(`删除失败: ${error.message}`)
   } finally {
-    loading.value = false
+    deletingPath.value = ''
   }
 }
 
 const deleteAllNow = async () => {
-  loading.value = true
+  deletingAll.value = true
   try {
     const response = await fetch('/api/archive/delete-all-now', { method: 'POST' })
     const data = await response.json()
@@ -293,12 +297,12 @@ const deleteAllNow = async () => {
   } catch (error) {
     message.error(`删除失败: ${error.message}`)
   } finally {
-    loading.value = false
+    deletingAll.value = false
   }
 }
 
 const clearAllItems = async () => {
-  loading.value = true
+  clearingAll.value = true
   try {
     const response = await fetch('/api/archive/clear-all-pending-deletions', { method: 'POST' })
     const data = await response.json()
@@ -311,7 +315,7 @@ const clearAllItems = async () => {
   } catch (error) {
     message.error(`清空失败: ${error.message}`)
   } finally {
-    loading.value = false
+    clearingAll.value = false
   }
 }
 </script>

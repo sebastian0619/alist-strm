@@ -415,15 +415,8 @@ class ArchiveService:
         except Exception as e:
             logger.error(f"添加文件到待删除列表失败: {e}")
 
-    async def _delete_file(self, path: Path) -> bool:
-        """删除文件或目录
-        
-        Args:
-            path: 要删除的文件或目录路径
-            
-        Returns:
-            bool: 是否成功删除
-        """
+    def _delete_file_blocking(self, path: Path) -> bool:
+        """在线程中执行的阻塞删除逻辑。"""
         try:
             if not path.exists():
                 logger.info(f"文件不存在，无需删除: {path}")
@@ -456,15 +449,17 @@ class ArchiveService:
                     path.unlink()
                 except FileNotFoundError:
                     logger.debug(f"删除文件时文件已不存在，跳过: {path}")
-                
-            # 让出控制权
-            await asyncio.sleep(0)
-                
             logger.info(f"成功删除文件: {path}")
             return True
         except Exception as e:
             logger.error(f"删除文件失败 {path}: {e}")
             return False
+
+    async def _delete_file(self, path: Path) -> bool:
+        """删除文件或目录，避免阻塞事件循环。"""
+        result = await asyncio.to_thread(self._delete_file_blocking, path)
+        await asyncio.sleep(0)
+        return result
 
     def _should_skip_directory(self, path: Path) -> bool:
         """检查是否应该跳过某个目录"""
