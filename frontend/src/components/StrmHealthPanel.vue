@@ -139,6 +139,9 @@
                   <a-button type="primary" @click="repairProblem(item)" :loading="repairing[item.id]">
                     {{ getRepairText(item.type) }}
                   </a-button>
+                  <a-button @click="repairProblemScope(item)" :loading="repairingScope[item.id]">
+                    整季补洞
+                  </a-button>
                 </div>
               </div>
             </a-list-item>
@@ -268,6 +271,7 @@ const stats = ref(null)
 const problems = ref([])
 const problemFilter = ref('all')
 const repairing = ref({})
+const repairingScope = ref({})
 const repairingAll = ref(false)
 const loadingProblems = ref(false)
 
@@ -419,6 +423,36 @@ const repairProblem = async (problem) => {
     message.error(`修复失败: ${error.message}`)
   } finally {
     repairing.value[problem.id] = false
+  }
+}
+
+const repairProblemScope = async (problem) => {
+  try {
+    repairingScope.value[problem.id] = true
+
+    const response = await fetch('/api/health/repair/scope', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: problem.type, path: problem.path }),
+    })
+
+    const data = await response.json()
+    if (data.success || data.generated_count || data.recovered_count || data.cleaned_count) {
+      if (data.success) {
+        message.success(data.message || '范围补齐完成')
+      } else {
+        message.warning(data.message || '范围补齐已部分完成')
+      }
+      await getProblems()
+      await getStatus()
+    } else {
+      message.error(data.message || '范围补齐失败')
+    }
+  } catch (error) {
+    console.error('范围补齐失败:', error)
+    message.error(`范围补齐失败: ${error.message || '未知错误'}`)
+  } finally {
+    repairingScope.value[problem.id] = false
   }
 }
 

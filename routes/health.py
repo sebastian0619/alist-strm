@@ -34,6 +34,10 @@ class RepairRequest(BaseModel):
     type: str  # 修复类型
     paths: List[str]  # 需要修复的路径列表
 
+class ScopeRepairRequest(BaseModel):
+    type: Literal["invalid_strm", "missing_strm"]
+    path: str
+
 class ScanRequest(BaseModel):
     type: str = "all"
     mode: str = "full"  # full, incremental, problems_only
@@ -889,6 +893,61 @@ async def _cleanup_invalid_strm_entries(paths: List[str]) -> Dict[str, Any]:
     }
 
 
+SEASON_SCOPE_PATTERN = re.compile(r'^(season\s*\d+|s\d+|specials|第\s*\d+\s*季)$', re.IGNORECASE)
+
+
+def _infer_repair_scope_root(video_path: str) -> str:
+    decoded_path = unquote(video_path).rstrip('/')
+    path_obj = Path(decoded_path)
+    parts = path_obj.parts
+    if not parts:
+        return decoded_path
+
+    search_parts = parts[:-1] if path_obj.suffix else parts
+    for idx in range(len(search_parts) - 1, 0, -1):
+        if SEASON_SCOPE_PATTERN.match(search_parts[idx]):
+            return str(Path(*search_parts[: idx + 1]))
+
+    if path_obj.suffix:
+        return str(path_obj.parent)
+    return decoded_path
+
+
+async def _repair_scope_from_video_path(video_path: str) -> Dict[str, Any]:
+    scope_root = _infer_repair_scope_root(video_path)
+    video_files = await scan_alist_videos(scope_root)
+
+    generated_items = []
+    failed_items = []
+    skipped_existing = 0
+
+    for video_file in video_files:
+        try:
+            strm_path = build_strm_path(video_file)
+            if os.path.exists(strm_path):
+                skipped_existing += 1
+                continue
+
+            rebuilt_path = await _generate_strm_for_video_path(video_file)
+            generated_items.append({
+                "video_path": unquote(video_file),
+                "strm_path": rebuilt_path,
+            })
+        except Exception as e:
+            failed_items.append({"path": video_file, "reason": str(e)})
+            logger.error(f"按范围补齐STRM失败: {video_file}, 错误: {str(e)}")
+
+    service_manager.health_service.save_health_data()
+
+    return {
+        "scope_path": scope_root,
+        "generated_items": generated_items,
+        "failed_items": failed_items,
+        "skipped_existing": skipped_existing,
+        "total_videos": len(video_files),
+    }
+
+
 @router.post("/repair/invalid_strm")
 async def repair_invalid_strm(request: RepairRequest):
     """清理无效的STRM文件，并自动补回仍存在源文件的条目"""
@@ -966,6 +1025,65 @@ async def repair_missing_strm(request: RepairRequest):
     except Exception as e:
         logger.error(f"生成STRM文件失败: {str(e)}")
         raise HTTPException(status_code=500, detail=f"生成失败: {str(e)}")
+
+@router.post("/repair/scope")
+async def repair_problem_scope(request: ScopeRepairRequest):
+    """按单个问题项推断当前季/当前目录，并补齐该范围内缺失的 STRM"""
+    try:
+        cleanup_result = {
+            "cleaned_paths": [],
+            "failed_items": [],
+            "recovered_items": [],
+            "removed_source_items": [],
+        }
+
+        target_video_path = request.path
+        if request.type == "invalid_strm":
+            target_video_path = service_manager.health_service.get_strm_status(request.path).get("targetPath")
+            if not target_video_path:
+                target_video_path = await extract_target_path_from_file(request.path)
+            if not target_video_path:
+                raise HTTPException(status_code=400, detail="无法从无效STRM中推断源路径")
+
+            cleanup_result = await _cleanup_invalid_strm_entries([request.path])
+
+        scope_result = await _repair_scope_from_video_path(target_video_path)
+
+        generated_count = len(scope_result["generated_items"])
+        failed_count = len(cleanup_result["failed_items"]) + len(scope_result["failed_items"])
+        cleaned_count = len(cleanup_result["cleaned_paths"])
+        recovered_count = len(cleanup_result["recovered_items"])
+
+        message = f"已按范围扫描 {scope_result['total_videos']} 个视频"
+        if cleaned_count:
+            message = f"已清理 {cleaned_count} 个无效STRM，并按范围扫描 {scope_result['total_videos']} 个视频"
+        if recovered_count:
+            message += f"，恢复 {recovered_count} 个原失效条目"
+        if generated_count:
+            message += f"，新补齐 {generated_count} 个缺失STRM"
+        if scope_result["skipped_existing"]:
+            message += f"，跳过 {scope_result['skipped_existing']} 个已存在条目"
+        if failed_count:
+            message += f"，失败 {failed_count} 个"
+
+        return {
+            "success": failed_count == 0,
+            "message": message,
+            "scope_path": scope_result["scope_path"],
+            "cleaned_count": cleaned_count,
+            "recovered_count": recovered_count,
+            "generated_count": generated_count,
+            "skipped_existing": scope_result["skipped_existing"],
+            "failed_count": failed_count,
+            "failed_items": cleanup_result["failed_items"] + scope_result["failed_items"],
+            "generated_items": scope_result["generated_items"],
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"按范围补齐STRM失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"按范围补齐失败: {str(e)}")
+
 
 @router.post("/clear_data")
 async def clear_health_data():

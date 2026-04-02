@@ -116,3 +116,15 @@ def test_cleanup_invalid_strm_entries_drops_missing_source_from_video_status(tmp
     assert result["removed_source_items"] == ["/动漫/剧集/第02集.mkv"]
     assert fake_health.removed_video_paths
     assert fake_health.saved is True
+
+
+def test_infer_repair_scope_root_prefers_season_directory():
+    scope = health._infer_repair_scope_root('/动漫/剧集/Season 1/第01集.mkv')
+
+    assert scope == '/动漫/剧集/Season 1'
+
+
+def test_infer_repair_scope_root_falls_back_to_parent_directory():
+    scope = health._infer_repair_scope_root('/电影/示例电影 (2026)/示例电影 (2026).mkv')
+
+    assert scope == '/电影/示例电影 (2026)'
