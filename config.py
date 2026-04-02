@@ -136,6 +136,14 @@ class Settings(BaseSettings):
     emby_api_key: str = Field(default="", alias="EMBY_API_KEY", description="Emby API密钥")
     strm_root_path: str = Field(default="", alias="STRM_ROOT_PATH", description="STRM文件根路径")
     emby_root_path: str = Field(default="", alias="EMBY_ROOT_PATH", description="Emby媒体库根路径")
+
+    # MoviePilot配置
+    moviepilot_enabled: bool = Field(default=False, alias="MOVIEPILOT_ENABLED")
+    moviepilot_url: str = Field(default="", alias="MOVIEPILOT_URL")
+    moviepilot_username: str = Field(default="", alias="MOVIEPILOT_USERNAME")
+    moviepilot_password: str = Field(default="", alias="MOVIEPILOT_PASSWORD")
+    moviepilot_api_key: str = Field(default="", alias="MOVIEPILOT_API_KEY")
+    moviepilot_auto_submit: bool = Field(default=False, alias="MOVIEPILOT_AUTO_SUBMIT")
     
     # 下载元数据文件配置
     download_metadata: bool = Field(default=False, alias="DOWNLOAD_METADATA")
@@ -180,7 +188,8 @@ class Settings(BaseSettings):
                       'is_down_sub', 'is_down_meta', 'refresh', 'tg_enabled',
                       'schedule_enabled', 'archive_schedule_enabled', 'remove_empty_dirs',
                       'archive_enabled', 'archive_auto_strm', 'archive_delete_source',
-                      'emby_enabled', 'use_external_url', 'download_metadata']
+                      'emby_enabled', 'use_external_url', 'download_metadata',
+                      'moviepilot_enabled', 'moviepilot_auto_submit']
         for field in bool_fields:
             if field in values and isinstance(values[field], str):
                 values[field] = str(values[field]).lower() in ('true', '1', 'yes', 'on', 't')

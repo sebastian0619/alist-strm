@@ -837,6 +837,7 @@ async def _cleanup_invalid_strm_entries(paths: List[str]) -> Dict[str, Any]:
     failed_items = []
     recovered_items = []
     removed_source_items = []
+    subscription_items = []
     affected_targets = []
 
     for path in paths:
@@ -871,6 +872,16 @@ async def _cleanup_invalid_strm_entries(paths: List[str]) -> Dict[str, Any]:
             else:
                 _remove_video_status_entries(target_path)
                 removed_source_items.append(unquote(target_path))
+                moviepilot_service = getattr(service_manager, "moviepilot_service", None)
+                if moviepilot_service and moviepilot_service.enabled:
+                    queue_item = moviepilot_service.enqueue_missing_source(
+                        target_path,
+                        "missing_source_after_invalid_cleanup",
+                        trigger_path=path,
+                    )
+                    if moviepilot_service.auto_submit and queue_item.get("status") == "pending":
+                        queue_item = await moviepilot_service.submit_queue_item(queue_item["id"])
+                    subscription_items.append(queue_item)
         except Exception as e:
             failed_items.append({
                 "path": target_path,
@@ -890,6 +901,7 @@ async def _cleanup_invalid_strm_entries(paths: List[str]) -> Dict[str, Any]:
         "failed_items": failed_items,
         "recovered_items": recovered_items,
         "removed_source_items": removed_source_items,
+        "subscription_items": subscription_items,
     }
 
 

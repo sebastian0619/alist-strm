@@ -305,6 +305,64 @@
             </a-form-item>
           </div>
         </a-collapse-panel>
+
+        <a-collapse-panel key="moviepilot" header="MoviePilot 补源订阅">
+          <div class="section-grid">
+            <a-form-item label="启用 MoviePilot">
+              <a-switch
+                v-model:checked="config.moviepilot_enabled"
+                :checked-children="'开启'"
+                :un-checked-children="'关闭'"
+              />
+            </a-form-item>
+
+            <a-form-item label="缺源自动提交">
+              <a-switch
+                v-model:checked="config.moviepilot_auto_submit"
+                :checked-children="'自动提交'"
+                :un-checked-children="'仅入队'"
+                :disabled="!config.moviepilot_enabled"
+              />
+            </a-form-item>
+
+            <a-form-item v-if="config.moviepilot_enabled" class="span-2" label="MoviePilot 地址">
+              <div class="inline-with-action">
+                <a-input
+                  v-model:value="config.moviepilot_url"
+                  placeholder="http://192.168.11.32:3001"
+                />
+                <a-button
+                  type="link"
+                  :loading="testingMoviePilot"
+                  @click="testMoviePilotConnection"
+                >
+                  测试连接
+                </a-button>
+              </div>
+            </a-form-item>
+
+            <a-form-item v-if="config.moviepilot_enabled" label="API Key">
+              <a-input-password
+                v-model:value="config.moviepilot_api_key"
+                placeholder="优先使用 API Key"
+              />
+            </a-form-item>
+
+            <a-form-item v-if="config.moviepilot_enabled && !config.moviepilot_api_key" label="用户名">
+              <a-input
+                v-model:value="config.moviepilot_username"
+                placeholder="MoviePilot 用户名"
+              />
+            </a-form-item>
+
+            <a-form-item v-if="config.moviepilot_enabled && !config.moviepilot_api_key" label="密码">
+              <a-input-password
+                v-model:value="config.moviepilot_password"
+                placeholder="MoviePilot 密码"
+              />
+            </a-form-item>
+          </div>
+        </a-collapse-panel>
       </a-collapse>
 
       <div class="action-bar">
@@ -369,6 +427,7 @@ export default {
     const testingConnection = ref(false)
     const testingEmby = ref(false)
     const clearingCache = ref(false)
+    const testingMoviePilot = ref(false)
     const activeSections = ref(['runtime', 'alist', 'emby'])
 
     const loadConfig = async () => {
@@ -575,6 +634,43 @@ export default {
       }
     }
 
+    const testMoviePilotConnection = async () => {
+      testingMoviePilot.value = true
+      try {
+        if (!config.value.moviepilot_url) {
+          throw new Error('请先填写 MoviePilot 地址')
+        }
+
+        if (!config.value.moviepilot_api_key && (!config.value.moviepilot_username || !config.value.moviepilot_password)) {
+          throw new Error('请填写 API Key，或填写用户名和密码')
+        }
+
+        const response = await fetch('/api/config/test_moviepilot', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            url: config.value.moviepilot_url,
+            username: config.value.moviepilot_username,
+            password: config.value.moviepilot_password,
+            api_key: config.value.moviepilot_api_key
+          })
+        })
+
+        const data = await response.json()
+        if (data.success) {
+          message.success(data.message)
+        } else {
+          throw new Error(data.message)
+        }
+      } catch (e) {
+        message.error('MoviePilot 连接测试失败: ' + e.message)
+      } finally {
+        testingMoviePilot.value = false
+      }
+    }
+
     onMounted(() => {
       loadConfig()
       checkScanStatus()
@@ -592,6 +688,7 @@ export default {
       scanning,
       testingConnection,
       testingEmby,
+      testingMoviePilot,
       clearingCache,
       activeSections,
       loadConfig,
@@ -599,6 +696,7 @@ export default {
       hasChanges,
       testConnection,
       testEmbyConnection,
+      testMoviePilotConnection,
       startScan,
       stopScan,
       getCronDescription,

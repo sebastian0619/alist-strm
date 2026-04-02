@@ -5,7 +5,7 @@ from config import Settings
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from routes import config, strm, health, archive, tmdb, notify
+from routes import config, strm, health, archive, tmdb, notify, moviepilot
 from contextlib import asynccontextmanager
 from services.service_manager import service_manager
 
@@ -66,6 +66,7 @@ app.include_router(health.router)
 app.include_router(archive.router)
 app.include_router(tmdb.router)
 app.include_router(notify.router)
+app.include_router(moviepilot.router)
 
 # 挂载静态文件
 static_dir = "static"

@@ -6,6 +6,7 @@ from services.archive_service import ArchiveService
 from services.strm_monitor_service import StrmMonitorService
 from services.strm_health_service import StrmHealthService
 from services.emby_service import EmbyService
+from services.moviepilot_service import MoviePilotService
 from services.strm_assistant_service import StrmAssistantService
 from loguru import logger
 import asyncio
@@ -31,6 +32,7 @@ class ServiceManager:
             self.monitor_service = None
             self.health_service = None
             self.emby_service = None
+            self.moviepilot_service = None
             self.strm_assistant_service = None
             self.initialized = True
     
@@ -38,7 +40,7 @@ class ServiceManager:
         """初始化所有服务实例"""
         if not any([self.scheduler_service, self.strm_service, self.copy_service, 
                    self.telegram_service, self.archive_service, self.monitor_service,
-                   self.health_service, self.emby_service, self.strm_assistant_service]):
+                   self.health_service, self.emby_service, self.moviepilot_service, self.strm_assistant_service]):
             self.scheduler_service = SchedulerService()
             self.copy_service = CopyService()
             self.strm_service = StrmService()
@@ -47,6 +49,7 @@ class ServiceManager:
             self.monitor_service = StrmMonitorService(self.strm_service)
             self.health_service = StrmHealthService()
             self.emby_service = EmbyService()
+            self.moviepilot_service = MoviePilotService()
             self.strm_assistant_service = StrmAssistantService()
 
     def reload_runtime_config(self):
@@ -61,6 +64,7 @@ class ServiceManager:
             self.archive_service,
             self.health_service,
             self.emby_service,
+            self.moviepilot_service,
             self.strm_assistant_service,
         ]
 
@@ -257,4 +261,5 @@ archive_service = service_manager.archive_service
 monitor_service = service_manager.monitor_service
 health_service = service_manager.health_service
 emby_service = service_manager.emby_service
+moviepilot_service = service_manager.moviepilot_service
 strm_assistant_service = service_manager.strm_assistant_service 

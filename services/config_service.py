@@ -73,6 +73,28 @@ class ConfigService:
                 "archive_schedule_cron": self.settings.archive_schedule_cron,
                 "archive_excluded_extensions": self.settings.archive_excluded_extensions,
                 "archive_media_types": self.settings.archive_media_types,
+                
+                # Emby配置
+                "emby_enabled": self.settings.emby_enabled,
+                "emby_api_url": self.settings.emby_api_url,
+                "emby_api_key": self.settings.emby_api_key,
+                "strm_root_path": self.settings.strm_root_path,
+                "emby_root_path": self.settings.emby_root_path,
+                
+                # MoviePilot配置
+                "moviepilot_enabled": self.settings.moviepilot_enabled,
+                "moviepilot_url": self.settings.moviepilot_url,
+                "moviepilot_username": self.settings.moviepilot_username,
+                "moviepilot_password": self.settings.moviepilot_password,
+                "moviepilot_api_key": self.settings.moviepilot_api_key,
+                "moviepilot_auto_submit": self.settings.moviepilot_auto_submit,
+
+                # 下载元数据配置
+                "download_metadata": self.settings.download_metadata,
+                "metadata_extensions": self.settings.metadata_extensions,
+
+                # TMDB配置
+                "tmdb_cache_dir": self.settings.tmdb_cache_dir,
             }
             self.save_config(config)
             logger.info("已创建初始配置文件")

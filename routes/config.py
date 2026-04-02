@@ -101,6 +101,13 @@ class EmbyTestConfig(BaseModel):
     url: str
     api_key: str
 
+
+class MoviePilotTestConfig(BaseModel):
+    url: str
+    username: str = ""
+    password: str = ""
+    api_key: str = ""
+
 @router.post("/api/config/test_emby")
 async def test_emby_connection(config: EmbyTestConfig):
     """测试Emby连接"""
@@ -166,3 +173,24 @@ async def get_emby_config():
             "success": False,
             "message": f"获取Emby配置失败: {str(e)}"
         } 
+
+
+@router.post("/api/config/test_moviepilot")
+async def test_moviepilot_connection(config: MoviePilotTestConfig):
+    """测试 MoviePilot 连接"""
+    try:
+        from services.moviepilot_service import MoviePilotService
+
+        service = MoviePilotService()
+        service.enabled = True
+        service.base_url = (config.url or "").rstrip("/")
+        service.username = config.username
+        service.password = config.password
+        service.api_key = config.api_key
+
+        success = await service.test_connection()
+        if success:
+            return {"success": True, "message": "MoviePilot 连接成功"}
+        return {"success": False, "message": "MoviePilot 认证失败或接口不可用"}
+    except Exception as e:
+        return {"success": False, "message": f"测试失败: {str(e)}"}

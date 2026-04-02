@@ -34,6 +34,32 @@ class FakeHealthService:
         self.updated_videos.append((path, status))
 
 
+class FakeMoviePilotService:
+    def __init__(self, enabled=True, auto_submit=False):
+        self.enabled = enabled
+        self.auto_submit = auto_submit
+        self.enqueued = []
+        self.submitted = []
+
+    def enqueue_missing_source(self, video_path, source_reason, trigger_path=None):
+        item = {
+            "id": f"item-{len(self.enqueued)}",
+            "video_path": video_path,
+            "reason": source_reason,
+            "trigger_path": trigger_path,
+            "status": "pending",
+        }
+        self.enqueued.append(item)
+        return item
+
+    async def submit_queue_item(self, item_id):
+        self.submitted.append(item_id)
+        return {
+            "id": item_id,
+            "status": "subscribed",
+        }
+
+
 def test_remove_video_file_handles_encoded_and_decoded_paths():
     service = StrmHealthService()
     service._health_data = {
@@ -65,6 +91,7 @@ def test_cleanup_invalid_strm_entries_rebuilds_when_source_still_exists(tmp_path
                 alist_url="http://alist:5244",
             )
         ),
+        moviepilot_service=FakeMoviePilotService(enabled=True, auto_submit=False),
     )
 
     monkeypatch.setattr(health, "service_manager", fake_manager)
@@ -100,6 +127,7 @@ def test_cleanup_invalid_strm_entries_drops_missing_source_from_video_status(tmp
                 alist_url="http://alist:5244",
             )
         ),
+        moviepilot_service=FakeMoviePilotService(enabled=True, auto_submit=False),
     )
 
     monkeypatch.setattr(health, "service_manager", fake_manager)
@@ -114,8 +142,40 @@ def test_cleanup_invalid_strm_entries_drops_missing_source_from_video_status(tmp
     assert result["cleaned_paths"] == [str(invalid_strm)]
     assert result["recovered_items"] == []
     assert result["removed_source_items"] == ["/动漫/剧集/第02集.mkv"]
+    assert result["subscription_items"][0]["video_path"] == "/动漫/剧集/第02集.mkv"
     assert fake_health.removed_video_paths
     assert fake_health.saved is True
+
+
+def test_cleanup_invalid_strm_entries_auto_submits_moviepilot_queue(tmp_path, monkeypatch):
+    invalid_strm = tmp_path / "show" / "ep03@remote(网盘).strm"
+    invalid_strm.parent.mkdir(parents=True)
+    invalid_strm.write_text("http://old")
+
+    fake_health = FakeHealthService("/动漫/剧集/Season 1/第03集.mkv")
+    fake_moviepilot = FakeMoviePilotService(enabled=True, auto_submit=True)
+    fake_manager = SimpleNamespace(
+        health_service=fake_health,
+        strm_service=SimpleNamespace(
+            settings=SimpleNamespace(
+                output_dir=str(tmp_path / "output"),
+                alist_url="http://alist:5244",
+            )
+        ),
+        moviepilot_service=fake_moviepilot,
+    )
+
+    monkeypatch.setattr(health, "service_manager", fake_manager)
+
+    async def fake_exists(path):
+        return False
+
+    monkeypatch.setattr(health, "check_alist_file_exists", fake_exists)
+
+    result = asyncio.run(health._cleanup_invalid_strm_entries([str(invalid_strm)]))
+
+    assert fake_moviepilot.submitted == ["item-0"]
+    assert result["subscription_items"] == [{"id": "item-0", "status": "subscribed"}]
 
 
 def test_infer_repair_scope_root_prefers_season_directory():
