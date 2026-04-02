@@ -779,38 +779,154 @@ async def get_health_problems(type: str = None):
             "stats": service_manager.health_service.get_stats()
         }
 
+def _video_path_variants(video_path: Optional[str]) -> List[str]:
+    if not video_path:
+        return []
+
+    variants = {video_path}
+    try:
+        variants.add(unquote(video_path))
+    except Exception:
+        pass
+    try:
+        variants.add(quote(unquote(video_path)))
+    except Exception:
+        pass
+
+    return [variant for variant in variants if variant]
+
+
+async def _generate_strm_for_video_path(video_path: str) -> str:
+    """按当前配置为指定视频路径重建 STRM 文件"""
+    decoded_path = unquote(video_path)
+    filename = os.path.basename(decoded_path)
+    parent_dir = os.path.dirname(decoded_path)
+    if os.path.basename(parent_dir) == filename:
+        decoded_path = parent_dir
+        filename = os.path.basename(decoded_path)
+
+    name, _ = os.path.splitext(filename)
+    output_dir = service_manager.strm_service.settings.output_dir
+    full_output_dir = os.path.join(output_dir, os.path.dirname(decoded_path).lstrip('/'))
+    os.makedirs(full_output_dir, exist_ok=True)
+
+    strm_path = os.path.join(full_output_dir, f"{name}@remote(网盘).strm")
+    video_url = f"{service_manager.strm_service.settings.alist_url}/d/{quote(decoded_path)}"
+
+    with open(strm_path, 'w', encoding='utf-8') as f:
+        f.write(video_url)
+
+    service_manager.health_service.add_strm_file(strm_path, decoded_path)
+    return strm_path
+
+
+def _remove_video_status_entries(video_path: Optional[str]) -> None:
+    if not video_path:
+        return
+
+    for candidate in _video_path_variants(video_path):
+        service_manager.health_service.remove_video_file(candidate)
+
+
+async def _cleanup_invalid_strm_entries(paths: List[str]) -> Dict[str, Any]:
+    cleaned_paths = []
+    failed_items = []
+    recovered_items = []
+    removed_source_items = []
+    affected_targets = []
+
+    for path in paths:
+        status = service_manager.health_service.get_strm_status(path)
+        target_path = status.get("targetPath")
+        if target_path:
+            affected_targets.append(target_path)
+
+        try:
+            file_path = Path(path)
+            if file_path.exists() and file_path.is_file():
+                file_path.unlink()
+            elif not file_path.exists():
+                logger.info(f"无效STRM文件已不存在，继续清理状态: {path}")
+            else:
+                raise ValueError("路径不是有效的STRM文件")
+
+            service_manager.health_service.remove_strm_file(path)
+            cleaned_paths.append(path)
+        except Exception as e:
+            failed_items.append({"path": path, "reason": str(e)})
+            logger.error(f"清理无效STRM文件失败: {path}, 错误: {str(e)}")
+
+    for target_path in dict.fromkeys(affected_targets):
+        try:
+            if await check_alist_file_exists(target_path):
+                rebuilt_path = await _generate_strm_for_video_path(target_path)
+                recovered_items.append({
+                    "target_path": unquote(target_path),
+                    "strm_path": rebuilt_path,
+                })
+            else:
+                _remove_video_status_entries(target_path)
+                removed_source_items.append(unquote(target_path))
+        except Exception as e:
+            failed_items.append({
+                "path": target_path,
+                "reason": f"补齐STRM失败: {str(e)}",
+            })
+            for candidate in _video_path_variants(target_path):
+                service_manager.health_service.update_video_status(candidate, {
+                    "hasStrm": False,
+                    "strmPath": None,
+                })
+            logger.error(f"为已清理的无效STRM补齐文件失败: {target_path}, 错误: {str(e)}")
+
+    service_manager.health_service.save_health_data()
+
+    return {
+        "cleaned_paths": cleaned_paths,
+        "failed_items": failed_items,
+        "recovered_items": recovered_items,
+        "removed_source_items": removed_source_items,
+    }
+
+
 @router.post("/repair/invalid_strm")
 async def repair_invalid_strm(request: RepairRequest):
-    """清理无效的STRM文件"""
+    """清理无效的STRM文件，并自动补回仍存在源文件的条目"""
     if request.type != "invalid_strm":
         raise HTTPException(status_code=400, detail="无效的修复类型")
-    
+
     if not request.paths:
         raise HTTPException(status_code=400, detail="未提供需要清理的路径")
-    
+
     try:
-        # 删除无效的STRM文件
-        logger.info(f"尝试清理 {len(request.paths)} 个无效的STRM文件")
-        
-        success_count = 0
-        for path in request.paths:
-            try:
-                # 删除STRM文件
-                file_path = Path(path)
-                if file_path.exists() and file_path.is_file():
-                    file_path.unlink()
-                    success_count += 1
-                    
-                    # 从健康状态数据中移除
-                    service_manager.health_service.remove_strm_file(str(file_path))
-            except Exception as e:
-                logger.error(f"删除文件失败: {path}, 错误: {str(e)}")
-        
-        # 保存健康状态数据
-        service_manager.health_service.save_health_data()
-        
-        return {"success": True, "message": f"已成功清理 {success_count} 个无效的STRM文件"}
-    
+        logger.info(f"尝试清理 {len(request.paths)} 个无效的STRM文件，并补齐可恢复项目")
+        result = await _cleanup_invalid_strm_entries(request.paths)
+
+        cleaned_count = len(result["cleaned_paths"])
+        recovered_count = len(result["recovered_items"])
+        removed_source_count = len(result["removed_source_items"])
+        failed_count = len(result["failed_items"])
+
+        message = f"已清理 {cleaned_count} 个无效STRM"
+        if recovered_count:
+            message += f"，自动补回 {recovered_count} 个可恢复条目"
+        if removed_source_count:
+            message += f"，移除了 {removed_source_count} 个已不存在源文件的旧记录"
+        if failed_count:
+            message += f"，失败 {failed_count} 个"
+
+        return {
+            "success": failed_count == 0,
+            "message": message,
+            "cleaned_count": cleaned_count,
+            "recovered_count": recovered_count,
+            "removed_source_count": removed_source_count,
+            "failed_count": failed_count,
+            "failed_items": result["failed_items"],
+            "recovered_items": result["recovered_items"],
+            "removed_source_items": result["removed_source_items"],
+        }
+
     except Exception as e:
         logger.error(f"清理无效的STRM文件失败: {str(e)}")
         raise HTTPException(status_code=500, detail=f"清理失败: {str(e)}")
@@ -820,67 +936,33 @@ async def repair_missing_strm(request: RepairRequest):
     """为缺失的视频生成STRM文件"""
     if request.type != "missing_strm":
         raise HTTPException(status_code=400, detail="无效的修复类型")
-    
+
     if not request.paths:
         raise HTTPException(status_code=400, detail="未提供需要生成STRM的路径")
-    
+
     try:
-        # 这里调用service_manager中的方法重新生成STRM文件
         logger.info(f"尝试为 {len(request.paths)} 个缺失的视频生成STRM文件")
-        
-        # 调用strm_service处理这些文件
+
         success_count = 0
+        failed_items = []
         for video_path in request.paths:
             try:
-                # 构建Alist URL
-                alist_url = service_manager.strm_service.settings.alist_url
-                
-                # 确保video_path不包含重复的文件名
-                # 先解码视频路径，确保处理的是原始路径
-                decoded_path = unquote(video_path)
-                filename = os.path.basename(decoded_path)
-                if os.path.basename(os.path.dirname(decoded_path)) == filename:
-                    # 路径结尾有重复的文件名，移除最后一个
-                    decoded_path = os.path.dirname(decoded_path)
-                
-                # 需要重新编码路径用于URL
-                encoded_path = quote(decoded_path)
-                video_url = f"{alist_url}/d/{encoded_path}"
-                
-                # 获取文件名和扩展名
-                filename = os.path.basename(decoded_path)
-                name, _ = os.path.splitext(filename)
-                
-                # 计算输出路径 - 需要保持目录结构
-                output_dir = service_manager.strm_service.settings.output_dir
-                rel_path = os.path.dirname(decoded_path)
-                
-                # 创建输出目录
-                full_output_dir = os.path.join(output_dir, rel_path.lstrip('/'))
-                os.makedirs(full_output_dir, exist_ok=True)
-                
-                # 生成STRM文件
-                strm_path = os.path.join(full_output_dir, f"{name}@remote(网盘).strm")
-                
-                # 日志记录，便于调试
-                logger.info(f"生成STRM文件: {strm_path} -> {video_url}")
-                
-                with open(strm_path, 'w', encoding='utf-8') as f:
-                    f.write(video_url)
-                    
+                await _generate_strm_for_video_path(video_path)
                 success_count += 1
-                
-                # 更新健康状态数据
-                service_manager.health_service.add_strm_file(strm_path, decoded_path)
-                
             except Exception as e:
+                failed_items.append({"path": video_path, "reason": str(e)})
                 logger.error(f"为视频生成STRM文件失败: {video_path}, 错误: {str(e)}")
-        
-        # 保存健康状态数据
+
         service_manager.health_service.save_health_data()
-        
-        return {"success": True, "message": f"已成功为 {success_count} 个视频生成STRM文件"}
-    
+
+        return {
+            "success": len(failed_items) == 0,
+            "message": f"已成功为 {success_count} 个视频生成STRM文件" + (f"，失败 {len(failed_items)} 个" if failed_items else ""),
+            "generated_count": success_count,
+            "failed_count": len(failed_items),
+            "failed_items": failed_items,
+        }
+
     except Exception as e:
         logger.error(f"生成STRM文件失败: {str(e)}")
         raise HTTPException(status_code=500, detail=f"生成失败: {str(e)}")

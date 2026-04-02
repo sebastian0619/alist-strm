@@ -92,6 +92,31 @@
         </div>
       </div>
 
+      <div v-if="invalidProblemCount || missingProblemCount" class="quick-action-strip">
+        <a-button
+          v-if="invalidProblemCount > 0"
+          type="primary"
+          danger
+          @click="deleteAllInvalidStrmFiles"
+          :loading="deletingAll"
+          :disabled="isScanning"
+        >
+          一键清理无效 STRM ({{ invalidProblemCount }})
+        </a-button>
+        <a-button
+          v-if="missingProblemCount > 0"
+          type="primary"
+          @click="repairAllMissingStrmFiles"
+          :loading="repairingMissingAll"
+          :disabled="isScanning"
+        >
+          一键补齐缺失 STRM ({{ missingProblemCount }})
+        </a-button>
+        <span v-if="invalidProblemCount > 0" class="quick-action-hint">
+          清理时会自动补回仍然能恢复的集数；确实已经不存在的源文件会被直接移出缺集统计。
+        </span>
+      </div>
+
       <div v-if="problems.length > 0" class="problem-list-wrap">
         <a-list :data-source="filteredProblems" :pagination="{ pageSize: 8 }">
           <template #renderItem="{ item }">
@@ -113,14 +138,6 @@
                 <div class="problem-actions">
                   <a-button type="primary" @click="repairProblem(item)" :loading="repairing[item.id]">
                     {{ getRepairText(item.type) }}
-                  </a-button>
-                  <a-button
-                    v-if="item.type === 'invalid_strm'"
-                    danger
-                    @click="deleteStrmFile(item)"
-                    :loading="deletingItem === item.id"
-                  >
-                    删除 STRM
                   </a-button>
                 </div>
               </div>
@@ -255,7 +272,7 @@ const repairingAll = ref(false)
 const loadingProblems = ref(false)
 
 const deletingAll = ref(false)
-const deletingItem = ref(null)
+const repairingMissingAll = ref(false)
 
 const cleanupLoading = ref(false)
 const cleanupResult = ref(null)
@@ -266,6 +283,9 @@ const filteredProblems = computed(() => {
   }
   return problems.value.filter((problem) => problem.type === problemFilter.value)
 })
+
+const invalidProblemCount = computed(() => problems.value.filter((problem) => problem.type === 'invalid_strm').length)
+const missingProblemCount = computed(() => problems.value.filter((problem) => problem.type === 'missing_strm').length)
 
 onMounted(async () => {
   await getStatus()
@@ -382,10 +402,15 @@ const repairProblem = async (problem) => {
 
     const data = await response.json()
 
-    if (data.success) {
-      message.success(data.message)
+    if (data.success || data.cleaned_count || data.generated_count || data.recovered_count) {
+      if (data.success) {
+        message.success(data.message)
+      } else {
+        message.warning(data.message || '已部分完成处理')
+      }
       problems.value = problems.value.filter((p) => p.id !== problem.id)
       await getStatus()
+      await getProblems()
     } else {
       message.error(data.message || '修复失败')
     }
@@ -417,8 +442,13 @@ const repairAllProblems = async () => {
         body: JSON.stringify({ type: 'invalid_strm', paths: invalidStrm }),
       })
       const data = await response.json()
-      if (data.success) {
-        message.success(data.message || '成功修复无效STRM文件')
+      if (data.success || data.cleaned_count || data.recovered_count) {
+        if (data.success) {
+          message.success(data.message || '成功修复无效STRM文件')
+        } else {
+          message.warning(data.message || '无效STRM已部分处理')
+          hasErrors = true
+        }
       } else {
         message.error(data.message || '修复无效STRM文件失败')
         hasErrors = true
@@ -455,46 +485,85 @@ const repairAllProblems = async () => {
 }
 
 const deleteAllInvalidStrmFiles = async () => {
-  if (!window.confirm(`确定要删除所有 ${filteredProblems.value.length} 个无效的STRM文件吗？此操作不可撤销。`)) {
+  if (!window.confirm(`确定要清理全部 ${invalidProblemCount.value} 个无效STRM吗？系统会自动补回仍然存在源文件的集数。`)) {
     return
   }
 
   deletingAll.value = true
 
   try {
-    const paths = filteredProblems.value
+    const paths = problems.value
       .filter((problem) => problem.type === 'invalid_strm')
       .map((problem) => problem.path)
 
     if (paths.length === 0) {
-      message.info('没有无效的STRM文件需要删除')
+      message.info('没有无效的STRM文件需要清理')
       deletingAll.value = false
       return
     }
 
-    const response = await fetch('/api/health/strm/delete', {
+    const response = await fetch('/api/health/repair/invalid_strm', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(paths),
+      body: JSON.stringify({ type: 'invalid_strm', paths }),
     })
 
     const data = await response.json()
 
-    if (data.status === 'success' || data.status === 'partial_success') {
-      message.success(data.message || `成功删除 ${data.deleted.length} 个无效STRM文件`)
-      if (data.failed && data.failed.length > 0) {
-        message.warning(`有 ${data.failed.length} 个文件删除失败`)
+    if (data.success || data.cleaned_count || data.recovered_count) {
+      if (data.success) {
+        message.success(data.message || `成功清理 ${data.cleaned_count || paths.length} 个无效STRM文件`)
+      } else {
+        message.warning(data.message || '无效STRM已部分处理')
       }
       await getProblems()
       await getStatus()
     } else {
-      message.error(data.message || '删除文件失败')
+      message.error(data.message || '清理无效STRM失败')
     }
   } catch (error) {
-    console.error('批量删除文件失败:', error)
-    message.error(`批量删除文件失败: ${error.message || '未知错误'}`)
+    console.error('批量清理无效STRM失败:', error)
+    message.error(`批量清理无效STRM失败: ${error.message || '未知错误'}`)
   } finally {
     deletingAll.value = false
+  }
+}
+
+const repairAllMissingStrmFiles = async () => {
+  if (missingProblemCount.value === 0) {
+    return
+  }
+
+  repairingMissingAll.value = true
+
+  try {
+    const paths = problems.value
+      .filter((problem) => problem.type === 'missing_strm')
+      .map((problem) => problem.path)
+
+    const response = await fetch('/api/health/repair/missing_strm', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'missing_strm', paths }),
+    })
+
+    const data = await response.json()
+    if (data.success || data.generated_count) {
+      if (data.success) {
+        message.success(data.message || '缺失STRM已补齐')
+      } else {
+        message.warning(data.message || '缺失STRM已部分补齐')
+      }
+      await getProblems()
+      await getStatus()
+    } else {
+      message.error(data.message || '补齐缺失STRM失败')
+    }
+  } catch (error) {
+    console.error('补齐缺失STRM失败:', error)
+    message.error(`补齐缺失STRM失败: ${error.message || '未知错误'}`)
+  } finally {
+    repairingMissingAll.value = false
   }
 }
 
@@ -555,39 +624,9 @@ const getProblemTypeName = (type) => (type === 'invalid_strm' ? '无效STRM' : '
 const getTagColor = (type) => (type === 'invalid_strm' ? 'red' : 'orange')
 
 const getRepairText = (type) => {
-  if (type === 'invalid_strm') return '清理无效STRM'
-  if (type === 'missing_strm') return '生成STRM'
+  if (type === 'invalid_strm') return '清理并补齐'
+  if (type === 'missing_strm') return '补齐STRM'
   return '修复所有问题'
-}
-
-const deleteStrmFile = async (item) => {
-  if (!window.confirm(`确定要删除STRM文件 "${item.path}" 吗？此操作不可撤销。`)) {
-    return
-  }
-
-  deletingItem.value = item.id
-
-  try {
-    const response = await fetch('/api/health/strm/delete', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify([item.path]),
-    })
-
-    const data = await response.json()
-    if (data.status === 'success' || data.status === 'partial_success') {
-      message.success(data.message || '成功删除STRM文件')
-      await getProblems()
-      await getStatus()
-    } else {
-      message.error(data.message || '删除文件失败')
-    }
-  } catch (error) {
-    console.error('删除文件失败:', error)
-    message.error(`删除文件失败: ${error.message || '未知错误'}`)
-  } finally {
-    deletingItem.value = null
-  }
 }
 
 const previewCleanup = async () => {
@@ -822,6 +861,23 @@ const executeCleanup = async () => {
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+.quick-action-strip {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(241, 246, 255, 0.95), rgba(233, 241, 255, 0.82));
+  border: 1px solid rgba(86, 113, 152, 0.14);
+}
+
+.quick-action-hint {
+  color: #5d6f88;
+  font-size: 13px;
 }
 
 .problem-row {

@@ -4,6 +4,7 @@ import time
 import logging
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple
+from urllib.parse import quote, unquote
 import importlib
 
 logger = logging.getLogger(__name__)
@@ -184,17 +185,45 @@ class StrmHealthService:
         """从健康状态数据中移除STRM文件"""
         self.load_health_data()
         if "strmFiles" in self._health_data and strm_path in self._health_data["strmFiles"]:
-            # 获取目标视频路径
             target_path = self._health_data["strmFiles"][strm_path].get("targetPath")
-            
-            # 删除STRM文件记录
             del self._health_data["strmFiles"][strm_path]
-            
-            # 如果有对应的视频文件记录，也更新它的状态
+
             if target_path and "videoFiles" in self._health_data and target_path in self._health_data["videoFiles"]:
                 self._health_data["videoFiles"][target_path]["hasStrm"] = False
                 self._health_data["videoFiles"][target_path]["strmPath"] = None
-    
+
+    def remove_video_file(self, video_path: str) -> None:
+        """从健康状态数据中移除视频文件记录，兼容编码和未编码路径"""
+        self.load_health_data()
+        if "videoFiles" not in self._health_data:
+            return
+
+        candidates = {video_path}
+        try:
+            candidates.add(unquote(video_path))
+        except Exception:
+            pass
+        try:
+            candidates.add(quote(video_path, safe=''))
+        except Exception:
+            pass
+        try:
+            candidates.add(quote(unquote(video_path), safe=''))
+        except Exception:
+            pass
+        try:
+            candidates.add(video_path.replace('/', '%2F'))
+        except Exception:
+            pass
+        try:
+            candidates.add(unquote(video_path).replace('/', '%2F'))
+        except Exception:
+            pass
+
+        for candidate in candidates:
+            if candidate in self._health_data["videoFiles"]:
+                del self._health_data["videoFiles"][candidate]
+
     def add_strm_file(self, strm_path: str, video_path: str) -> None:
         """添加STRM文件和对应的视频文件记录"""
         self.load_health_data()
