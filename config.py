@@ -142,6 +142,7 @@ class Settings(BaseSettings):
     moviepilot_url: str = Field(default="", alias="MOVIEPILOT_URL")
     moviepilot_username: str = Field(default="", alias="MOVIEPILOT_USERNAME")
     moviepilot_password: str = Field(default="", alias="MOVIEPILOT_PASSWORD")
+    moviepilot_otp_secret: str = Field(default="", alias="MOVIEPILOT_OTP_SECRET")
     moviepilot_api_key: str = Field(default="", alias="MOVIEPILOT_API_KEY")
     moviepilot_auto_submit: bool = Field(default=False, alias="MOVIEPILOT_AUTO_SUBMIT")
     

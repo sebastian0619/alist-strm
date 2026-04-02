@@ -361,6 +361,13 @@
                 placeholder="MoviePilot 密码"
               />
             </a-form-item>
+
+            <a-form-item v-if="config.moviepilot_enabled && !config.moviepilot_api_key" label="OTP Secret">
+              <a-input-password
+                v-model:value="config.moviepilot_otp_secret"
+                placeholder="开启两步验证时填写 Base32 Secret"
+              />
+            </a-form-item>
           </div>
         </a-collapse-panel>
       </a-collapse>
@@ -654,6 +661,7 @@ export default {
             url: config.value.moviepilot_url,
             username: config.value.moviepilot_username,
             password: config.value.moviepilot_password,
+            otp_secret: config.value.moviepilot_otp_secret,
             api_key: config.value.moviepilot_api_key
           })
         })

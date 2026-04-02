@@ -30,12 +30,28 @@ async def _raise_if_called():
     raise AssertionError("使用 API Key 时不应请求 token")
 
 
-def test_get_headers_prefers_api_key(tmp_path):
+def test_build_login_form_includes_otp_when_secret_is_configured():
+    service = MoviePilotService()
+    service.username = "user"
+    service.password = "pass"
+    service.otp_secret = "JBSWY3DPEHPK3PXP"
+
+    form = service._build_login_form()
+
+    assert form["username"] == "user"
+    assert form["password"] == "pass"
+    assert form["grant_type"] == "password"
+    assert len(form["otp_password"]) == 6
+    assert form["otp_password"].isdigit()
+
+
+def test_get_headers_falls_back_to_api_key_when_credentials_missing(tmp_path):
     service = MoviePilotService()
     service.queue_file = Path(tmp_path) / "moviepilot_missing_sources.json"
     service.api_key = "test-api-key"
     service.username = ""
     service.password = ""
+    service.otp_secret = ""
     service._token = None
     service._get_mp_token = _raise_if_called  # type: ignore[attr-defined]
 

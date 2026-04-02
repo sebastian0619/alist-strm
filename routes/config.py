@@ -106,6 +106,7 @@ class MoviePilotTestConfig(BaseModel):
     url: str
     username: str = ""
     password: str = ""
+    otp_secret: str = ""
     api_key: str = ""
 
 @router.post("/api/config/test_emby")
@@ -186,6 +187,7 @@ async def test_moviepilot_connection(config: MoviePilotTestConfig):
         service.base_url = (config.url or "").rstrip("/")
         service.username = config.username
         service.password = config.password
+        service.otp_secret = config.otp_secret
         service.api_key = config.api_key
 
         success = await service.test_connection()

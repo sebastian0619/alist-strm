@@ -1,8 +1,12 @@
 import json
 import logging
-import os
 import re
 import time
+import base64
+import binascii
+import hashlib
+import hmac
+import struct
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import unquote
@@ -32,6 +36,7 @@ class MoviePilotService:
         self.base_url = (self.settings.moviepilot_url or "").rstrip("/")
         self.username = self.settings.moviepilot_username
         self.password = self.settings.moviepilot_password
+        self.otp_secret = self.settings.moviepilot_otp_secret
         self.api_key = self.settings.moviepilot_api_key
         self.auto_submit = self.settings.moviepilot_auto_submit
         if not self.base_url:
@@ -64,7 +69,7 @@ class MoviePilotService:
         if not self.enabled:
             return status
 
-        status["auth_mode"] = "api_key" if self.api_key else "password"
+        status["auth_mode"] = "password" if self.username and self.password else "api_key"
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 response = await client.get(f"{self.base_url}/api/v1/system/status")
@@ -84,11 +89,41 @@ class MoviePilotService:
         response = await self._request("GET", "/api/v1/subscribe/")
         return isinstance(response, list)
 
-    async def _get_headers(self) -> Dict[str, str]:
-        if self.api_key:
-            return {"X-API-KEY": self.api_key, "User-Agent": "alist-strm/1.0"}
+    @staticmethod
+    def _generate_totp(secret: str, for_time: Optional[int] = None, interval: int = 30, digits: int = 6) -> str:
+        normalized_secret = (secret or "").replace(" ", "").upper()
+        if not normalized_secret:
+            raise ValueError("OTP secret 为空")
 
+        try:
+            key = base64.b32decode(normalized_secret, casefold=True)
+        except binascii.Error as exc:
+            raise ValueError("OTP secret 非法") from exc
+
+        timestamp = int(for_time if for_time is not None else time.time())
+        counter = struct.pack(">Q", timestamp // interval)
+        digest = hmac.new(key, counter, hashlib.sha1).digest()
+        offset = digest[-1] & 0x0F
+        code = struct.unpack(">I", digest[offset:offset + 4])[0] & 0x7FFFFFFF
+        return str(code % (10 ** digits)).zfill(digits)
+
+    def _build_login_form(self) -> Dict[str, str]:
         if not self.username or not self.password:
+            raise RuntimeError("MoviePilot 用户名或密码未配置")
+
+        form_data = {
+            "username": self.username,
+            "password": self.password,
+            "grant_type": "password",
+        }
+        if self.otp_secret:
+            form_data["otp_password"] = self._generate_totp(self.otp_secret)
+        return form_data
+
+    async def _get_headers(self) -> Dict[str, str]:
+        if not self.username or not self.password:
+            if self.api_key:
+                return {"X-API-KEY": self.api_key, "User-Agent": "alist-strm/1.0"}
             raise RuntimeError("MoviePilot 用户名或密码未配置")
 
         if not self._token:
@@ -99,7 +134,7 @@ class MoviePilotService:
                         "Content-Type": "application/x-www-form-urlencoded",
                         "accept": "application/json",
                     },
-                    data={"username": self.username, "password": self.password},
+                    data=self._build_login_form(),
                 )
                 response.raise_for_status()
                 token_data = response.json()
@@ -113,7 +148,7 @@ class MoviePilotService:
         headers = kwargs.pop("headers", None) or await self._get_headers()
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.request(method, f"{self.base_url}{path}", headers=headers, **kwargs)
-            if response.status_code == 401 and retry_on_unauthorized and not self.api_key:
+            if response.status_code == 401 and retry_on_unauthorized and self.username and self.password:
                 self._token = None
                 refreshed_headers = await self._get_headers()
                 response = await client.request(method, f"{self.base_url}{path}", headers=refreshed_headers, **kwargs)

@@ -86,6 +86,7 @@ class ConfigService:
                 "moviepilot_url": self.settings.moviepilot_url,
                 "moviepilot_username": self.settings.moviepilot_username,
                 "moviepilot_password": self.settings.moviepilot_password,
+                "moviepilot_otp_secret": self.settings.moviepilot_otp_secret,
                 "moviepilot_api_key": self.settings.moviepilot_api_key,
                 "moviepilot_auto_submit": self.settings.moviepilot_auto_submit,
 
