@@ -50,6 +50,10 @@
           <template #icon><RadarChartOutlined /></template>
           Emby 监控
         </a-menu-item>
+        <a-menu-item key="moviepilot" @click="activeKey = 'moviepilot'">
+          <template #icon><ApiOutlined /></template>
+          MoviePilot 补源
+        </a-menu-item>
         <a-menu-item key="tmdb-metadata" @click="activeKey = 'tmdb-metadata'">
           <template #icon><DatabaseOutlined /></template>
           TMDB 元数据
@@ -93,6 +97,7 @@
 <script setup>
 import { computed, defineAsyncComponent, ref, watch } from 'vue'
 import {
+  ApiOutlined,
   DashboardOutlined,
   DatabaseOutlined,
   DeleteOutlined,
@@ -126,6 +131,7 @@ const PendingDeletionPanel = createAsyncPanel(() => import('./components/Pending
 const StrmHealthPanel = createAsyncPanel(() => import('./components/StrmHealthPanel.vue'))
 const StrmReplacePanel = createAsyncPanel(() => import('./components/StrmReplacePanel.vue'))
 const EmbyRefreshPanel = createAsyncPanel(() => import('./components/EmbyRefreshPanel.vue'))
+const MoviePilotPanel = createAsyncPanel(() => import('./components/MoviePilotPanel.vue'))
 const TmdbMetadataPanel = createAsyncPanel(() => import('./components/TmdbMetadataPanel.vue'))
 
 const activeKey = ref('dashboard')
@@ -140,6 +146,7 @@ const panelMap = {
   health: StrmHealthPanel,
   'strm-replace': StrmReplacePanel,
   'emby-refresh': EmbyRefreshPanel,
+  moviepilot: MoviePilotPanel,
   'tmdb-metadata': TmdbMetadataPanel,
 }
 
@@ -171,6 +178,10 @@ const pageMetaMap = {
   'emby-refresh': {
     title: 'Emby 监控',
     description: '查看最近扫描、刷新记录和日志，确认媒体库联动是不是顺畅。',
+  },
+  moviepilot: {
+    title: 'MoviePilot 补源',
+    description: '优先按单集资源直下补洞，匹配不理想时再退回整季订阅。',
   },
   'tmdb-metadata': {
     title: 'TMDB 元数据',

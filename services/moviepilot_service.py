@@ -19,6 +19,12 @@ logger = logging.getLogger(__name__)
 
 YEAR_PATTERN = re.compile(r"\((\d{4})\)")
 SEASON_PATTERN = re.compile(r"(?:season\s*(\d+)|s(\d+)|第\s*(\d+)\s*季)", re.IGNORECASE)
+EPISODE_PATTERN = re.compile(r"(?:s\d+e(\d{1,3})|ep?(\d{1,3})|第\s*(\d{1,3})\s*[集话])", re.IGNORECASE)
+RESOLUTION_PATTERN = re.compile(r"\b(2160p|1080p|720p|4k)\b", re.IGNORECASE)
+SOURCE_PATTERN = re.compile(r"\b(web[- .]?dl|webrip|bluray|bdrip|remux|hdtv)\b", re.IGNORECASE)
+VIDEO_CODEC_PATTERN = re.compile(r"\b(x265|h265|hevc|x264|h264|av1|vp9)\b", re.IGNORECASE)
+EFFECT_PATTERN = re.compile(r"\b(dv|dolby[ .-]?vision|hdr10\+|hdr10|hdr|atmos|10bit)\b", re.IGNORECASE)
+TEAM_PATTERN = re.compile(r"(?:-|【|\[)([A-Za-z0-9&._-]{2,20})(?:】|\])?$")
 
 
 class MoviePilotService:
@@ -65,6 +71,7 @@ class MoviePilotService:
             "auth_mode": "disabled",
             "server_ok": False,
             "auth_ok": False,
+            "auto_submit": self.auto_submit,
         }
         if not self.enabled:
             return status
@@ -158,11 +165,29 @@ class MoviePilotService:
             return response.json()
 
     @staticmethod
-    def infer_media_from_path(video_path: str) -> Dict[str, Any]:
+    def _extract_release_profile(name: str) -> Dict[str, Optional[str]]:
+        normalized = (name or "").replace("_", ".")
+        resolution = RESOLUTION_PATTERN.search(normalized)
+        source = SOURCE_PATTERN.search(normalized)
+        video_codec = VIDEO_CODEC_PATTERN.search(normalized)
+        effect = EFFECT_PATTERN.search(normalized)
+        team = TEAM_PATTERN.search(normalized)
+        return {
+            "resolution": resolution.group(1).lower() if resolution else None,
+            "source": source.group(1).lower().replace(" ", "").replace(".", "").replace("-", "") if source else None,
+            "video_codec": video_codec.group(1).lower() if video_codec else None,
+            "effect": effect.group(1).lower().replace(" ", "").replace(".", "").replace("-", "") if effect else None,
+            "team": team.group(1).lower() if team else None,
+        }
+
+    @classmethod
+    def infer_media_from_path(cls, video_path: str) -> Dict[str, Any]:
         decoded = unquote(video_path).rstrip("/")
         parts = [part for part in decoded.split("/") if part]
         title = parts[-2] if len(parts) >= 2 else parts[-1] if parts else decoded
         season = None
+        filename = parts[-1] if parts else decoded
+        episode = None
 
         for idx in range(len(parts) - 1, -1, -1):
             match = SEASON_PATTERN.search(parts[idx])
@@ -172,15 +197,23 @@ class MoviePilotService:
                     title = parts[idx - 1]
                 break
 
+        episode_match = EPISODE_PATTERN.search(filename)
+        if episode_match:
+            episode = int(next(group for group in episode_match.groups() if group))
+
         year_match = YEAR_PATTERN.search(title)
         year = year_match.group(1) if year_match else None
         normalized_title = YEAR_PATTERN.sub("", title).strip().strip("-_")
+        release_profile = cls._extract_release_profile(filename)
 
         return {
             "title": normalized_title or title,
             "year": year,
             "season": season,
+            "episode": episode,
             "media_type": "tv" if season else "movie",
+            "filename": filename,
+            "release_profile": release_profile,
         }
 
     def enqueue_missing_source(self, video_path: str, source_reason: str, trigger_path: Optional[str] = None) -> Dict[str, Any]:
@@ -199,13 +232,18 @@ class MoviePilotService:
             "title": media["title"],
             "year": media["year"],
             "season": media["season"],
+            "episode": media["episode"],
             "media_type": media["media_type"],
+            "filename": media["filename"],
+            "release_profile": media["release_profile"],
             "tmdb_id": None,
             "status": "pending",
             "attempts": 0,
             "created_at": time.time(),
             "updated_at": time.time(),
             "message": None,
+            "match_mode": None,
+            "selected_resource": None,
         }
         self._queue.append(entry)
         self._save_queue()
@@ -239,6 +277,128 @@ class MoviePilotService:
         filtered.sort(key=lambda x: x[0], reverse=True)
         return filtered[0][1] if filtered and filtered[0][0] > 0 else candidates[0]
 
+    async def search_resources(self, item: Dict[str, Any], media_match: Dict[str, Any]) -> List[Dict[str, Any]]:
+        tmdb_id = media_match.get("tmdb_id") or media_match.get("tmdbid") or media_match.get("id")
+        if not tmdb_id:
+            return []
+
+        params = {
+            "title": media_match.get("title") or item["title"],
+            "year": media_match.get("year") or item.get("year"),
+            "season": str(item["season"]) if item.get("season") else None,
+        }
+        params = {key: value for key, value in params.items() if value not in (None, "", 0)}
+
+        response = await self._request(
+            "GET",
+            f"/api/v1/search/media/tmdb:{tmdb_id}",
+            params=params,
+        )
+
+        if isinstance(response, dict):
+            data = response.get("data")
+            if isinstance(data, list):
+                return data
+            if isinstance(data, dict):
+                for key in ("list", "items", "results", "contexts"):
+                    value = data.get(key)
+                    if isinstance(value, list):
+                        return value
+        if isinstance(response, list):
+            return response
+        return []
+
+    @staticmethod
+    def _normalize_profile_value(value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        return str(value).lower().replace(" ", "").replace(".", "").replace("-", "")
+
+    @classmethod
+    def _score_resource_candidate(cls, item: Dict[str, Any], candidate: Dict[str, Any]) -> int:
+        meta_info = candidate.get("meta_info") or {}
+        torrent_info = candidate.get("torrent_info") or candidate
+        score = 0
+
+        target_episode = item.get("episode")
+        target_season = item.get("season")
+        release_profile = item.get("release_profile") or {}
+
+        begin_season = meta_info.get("begin_season")
+        end_season = meta_info.get("end_season")
+        if target_season:
+            if begin_season == target_season:
+                score += 6
+            if end_season in (None, 0, target_season):
+                score += 2
+
+        episode_list = meta_info.get("episode_list") or []
+        begin_episode = meta_info.get("begin_episode")
+        end_episode = meta_info.get("end_episode")
+        total_episode = meta_info.get("total_episode") or len(episode_list) or 0
+        if target_episode:
+            if target_episode in episode_list:
+                score += 20
+                if len(episode_list) == 1:
+                    score += 12
+            elif begin_episode and end_episode and begin_episode <= target_episode <= end_episode:
+                score += 12
+                if begin_episode == end_episode == target_episode:
+                    score += 8
+            elif begin_episode == target_episode or end_episode == target_episode:
+                score += 10
+            else:
+                score -= 18
+
+            if total_episode and total_episode > 3:
+                score -= min(total_episode, 24)
+
+        normalized_resolution = cls._normalize_profile_value(release_profile.get("resolution"))
+        normalized_source = cls._normalize_profile_value(release_profile.get("source"))
+        normalized_codec = cls._normalize_profile_value(release_profile.get("video_codec"))
+        normalized_effect = cls._normalize_profile_value(release_profile.get("effect"))
+        normalized_team = cls._normalize_profile_value(release_profile.get("team"))
+
+        meta_resolution = cls._normalize_profile_value(meta_info.get("resource_pix"))
+        meta_source = cls._normalize_profile_value(meta_info.get("resource_type") or meta_info.get("web_source"))
+        meta_codec = cls._normalize_profile_value(meta_info.get("video_encode"))
+        meta_effect = cls._normalize_profile_value(meta_info.get("resource_effect"))
+        meta_team = cls._normalize_profile_value(meta_info.get("resource_team"))
+
+        if normalized_resolution and meta_resolution and normalized_resolution == meta_resolution:
+            score += 8
+        if normalized_source and meta_source and normalized_source in meta_source:
+            score += 8
+        if normalized_codec and meta_codec and normalized_codec in meta_codec:
+            score += 8
+        if normalized_effect and meta_effect and normalized_effect in meta_effect:
+            score += 4
+        if normalized_team and meta_team and normalized_team == meta_team:
+            score += 10
+
+        seeders = torrent_info.get("seeders") or 0
+        size = torrent_info.get("size") or 0
+        score += min(int(seeders), 20)
+        if size:
+            score += min(int(size / (1024 * 1024 * 1024)), 12)
+
+        return score
+
+    async def _download_resource(self, media_match: Dict[str, Any], candidate: Dict[str, Any]) -> Dict[str, Any]:
+        torrent_info = candidate.get("torrent_info") or candidate
+        media_info = candidate.get("media_info") or {
+            "title": media_match.get("title"),
+            "year": media_match.get("year"),
+            "season": media_match.get("season"),
+            "tmdb_id": media_match.get("tmdb_id") or media_match.get("tmdbid") or media_match.get("id"),
+            "type": media_match.get("type"),
+        }
+        return await self._request(
+            "POST",
+            "/api/v1/download/",
+            json={"media_in": media_info, "torrent_in": torrent_info},
+        )
+
     async def submit_queue_item(self, item_id: str) -> Dict[str, Any]:
         item = next((entry for entry in self._queue if entry["id"] == item_id), None)
         if not item:
@@ -259,9 +419,33 @@ class MoviePilotService:
                 return item
 
             tmdb_id = match.get("tmdb_id") or match.get("tmdbid") or match.get("id")
+            item["tmdb_id"] = int(tmdb_id) if tmdb_id else None
+
+            if item["media_type"] == "tv" and item.get("season") and item.get("episode"):
+                resource_candidates = await self.search_resources(item, match)
+                scored_candidates = sorted(
+                    resource_candidates,
+                    key=lambda candidate: self._score_resource_candidate(item, candidate),
+                    reverse=True,
+                )
+                best_candidate = scored_candidates[0] if scored_candidates else None
+                best_score = self._score_resource_candidate(item, best_candidate) if best_candidate else -999
+                if best_candidate and best_score > 0:
+                    response = await self._download_resource(match, best_candidate)
+                    success = bool(response and response.get("success"))
+                    item["selected_resource"] = (
+                        (best_candidate.get("torrent_info") or best_candidate).get("title")
+                    )
+                    item["match_mode"] = "single_episode_download"
+                    item["status"] = "downloading" if success else "failed"
+                    item["message"] = response.get("message") if isinstance(response, dict) else None
+                    item["updated_at"] = time.time()
+                    self._save_queue()
+                    return item
+
             payload = {
                 "name": match.get("title") or item["title"],
-                "tmdbid": int(tmdb_id) if tmdb_id else None,
+                "tmdbid": item["tmdb_id"],
                 "year": str(match.get("year") or item.get("year") or "") or None,
             }
             if item["media_type"] == "movie":
@@ -271,7 +455,8 @@ class MoviePilotService:
 
             response = await self._request("POST", "/api/v1/subscribe/", json=payload)
             success = bool(response and response.get("success"))
-            item["tmdb_id"] = payload.get("tmdbid")
+            item["match_mode"] = "season_subscription"
+            item["selected_resource"] = None
             item["status"] = "subscribed" if success else "failed"
             item["message"] = response.get("message") if isinstance(response, dict) else None
             item["updated_at"] = time.time()

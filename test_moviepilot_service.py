@@ -6,12 +6,11 @@ from services.moviepilot_service import MoviePilotService
 def test_infer_media_from_path_detects_season_and_year():
     result = MoviePilotService.infer_media_from_path("/动漫/示例剧集 (2025)/Season 1/第03集.mkv")
 
-    assert result == {
-        "title": "示例剧集",
-        "year": "2025",
-        "season": 1,
-        "media_type": "tv",
-    }
+    assert result["title"] == "示例剧集"
+    assert result["year"] == "2025"
+    assert result["season"] == 1
+    assert result["episode"] == 3
+    assert result["media_type"] == "tv"
 
 
 def test_enqueue_missing_source_deduplicates_pending_items(tmp_path):

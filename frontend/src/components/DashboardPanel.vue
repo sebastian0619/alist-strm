@@ -30,6 +30,10 @@
             <span>Emby 服务</span>
             <strong :class="embyEnabled ? 'ok' : 'warn'">{{ embyEnabled ? '已启用' : '未启用' }}</strong>
           </div>
+          <div class="hero-side-item">
+            <span>MoviePilot</span>
+            <strong :class="moviepilotEnabled ? 'ok' : 'warn'">{{ moviepilotEnabled ? '已启用' : '未启用' }}</strong>
+          </div>
         </div>
         <a-button block @click="loadData" :loading="loading">刷新面板</a-button>
       </a-card>
@@ -91,6 +95,30 @@
           打开 Emby 监控
         </a-button>
       </a-card>
+
+      <a-card class="board-card" title="MoviePilot 补源摘要" :bordered="false">
+        <div class="signal-list">
+          <div class="signal-item">
+            <span>认证状态</span>
+            <strong :class="moviepilotStatus.auth_ok ? 'ok' : 'warn'">{{ moviepilotStatus.auth_ok ? '通过' : '失败' }}</strong>
+          </div>
+          <div class="signal-item">
+            <span>补源队列</span>
+            <strong>{{ moviepilotQueue.length }}</strong>
+          </div>
+          <div class="signal-item">
+            <span>单集直下</span>
+            <strong>{{ moviepilotDownloadingCount }}</strong>
+          </div>
+          <div class="signal-item">
+            <span>整季订阅</span>
+            <strong>{{ moviepilotSubscribedCount }}</strong>
+          </div>
+        </div>
+        <a-button type="link" class="inline-link" @click="$emit('navigate', 'moviepilot')">
+          打开 MoviePilot 面板
+        </a-button>
+      </a-card>
     </section>
 
     <section class="queue-grid">
@@ -117,6 +145,21 @@
           </div>
         </div>
       </a-card>
+
+      <a-card class="queue-card" title="MoviePilot 最近任务" :bordered="false">
+        <a-empty v-if="moviepilotQueue.length === 0" description="暂无补源任务" />
+        <div v-else class="queue-list">
+          <div v-for="item in moviepilotQueue.slice(0, 5)" :key="item.id" class="queue-item">
+            <div class="queue-path">{{ formatMoviePilotName(item) }}</div>
+            <div class="queue-meta">
+              <a-tag :color="getMoviePilotStatusColor(item.status)">
+                {{ getMoviePilotStatusText(item.status) }}
+              </a-tag>
+              <span>{{ item.match_mode === 'single_episode_download' ? '单集直下' : '整季订阅' }}</span>
+            </div>
+          </div>
+        </div>
+      </a-card>
     </section>
   </div>
 </template>
@@ -131,6 +174,13 @@ const strmStatus = ref('idle')
 const healthStatus = ref({})
 const healthStats = ref({})
 const pendingItems = ref([])
+const moviepilotStatus = ref({
+  enabled: false,
+  auth_ok: false,
+  server_ok: false,
+  auto_submit: false,
+})
+const moviepilotQueue = ref([])
 const embyMonitor = ref({
   enabled: false,
   last_scan: { summary: {}, items: [] },
@@ -143,17 +193,26 @@ let timer = null
 const loadData = async () => {
   loading.value = true
   try {
-    const [strmRes, healthRes, pendingRes, embyRes] = await Promise.all([
+    const [strmRes, healthRes, pendingRes, embyRes, moviepilotStatusRes, moviepilotQueueRes] = await Promise.all([
       fetch('/api/strm/status').then((r) => r.json()),
       fetch('/api/health/status').then((r) => r.json()),
       fetch('/api/archive/pending-deletions').then((r) => r.json()).catch(() => ({ success: false, data: [] })),
       fetch('/api/health/emby/monitor').then((r) => r.json()).catch(() => ({ success: false, data: {} })),
+      fetch('/api/moviepilot/status').then((r) => r.json()).catch(() => ({ success: false, data: {} })),
+      fetch('/api/moviepilot/queue').then((r) => r.json()).catch(() => ({ success: false, data: [] })),
     ])
 
     strmStatus.value = strmRes.status || 'idle'
     healthStatus.value = healthRes || {}
     healthStats.value = healthRes.stats || {}
     pendingItems.value = pendingRes.success ? (pendingRes.data || []) : []
+    moviepilotStatus.value = moviepilotStatusRes.success ? moviepilotStatusRes.data : {
+      enabled: false,
+      auth_ok: false,
+      server_ok: false,
+      auto_submit: false,
+    }
+    moviepilotQueue.value = moviepilotQueueRes.success ? (moviepilotQueueRes.data || []) : []
     embyMonitor.value = embyRes.success ? embyRes.data : {
       enabled: false,
       last_scan: { summary: {}, items: [] },
@@ -169,6 +228,9 @@ const strmStatusText = computed(() => strmStatus.value === 'scanning' ? '运行�
 const strmStatusClass = computed(() => strmStatus.value === 'scanning' ? 'ok' : 'muted')
 const healthStatusText = computed(() => healthStatus.value.isScanning ? '检测中' : '待命')
 const embyEnabled = computed(() => Boolean(embyMonitor.value.enabled))
+const moviepilotEnabled = computed(() => Boolean(moviepilotStatus.value.enabled))
+const moviepilotDownloadingCount = computed(() => moviepilotQueue.value.filter((item) => item.status === 'downloading').length)
+const moviepilotSubscribedCount = computed(() => moviepilotQueue.value.filter((item) => item.status === 'subscribed').length)
 const recentLogs = computed(() => embyMonitor.value.recent_logs || [])
 const lastHealthScanText = computed(() => healthStatus.value.lastScanTimeStr || '尚未扫描')
 const embyLastScanText = computed(() => embyMonitor.value.last_scan?.time || '暂无记录')
@@ -207,11 +269,41 @@ const metrics = computed(() => [
     stateText: pendingItems.value.some((item) => item.move_success === false) ? '待确认' : '已同步',
     stateClass: pendingItems.value.some((item) => item.move_success === false) ? 'state-warn' : 'state-ok',
   },
+  {
+    key: 'moviepilot',
+    label: '补源任务',
+    value: moviepilotQueue.value.length,
+    description: '源文件彻底消失后，进入 MoviePilot 的补源队列。',
+    stateText: moviepilotDownloadingCount.value > 0 ? '直下中' : moviepilotSubscribedCount.value > 0 ? '已订阅' : '待命',
+    stateClass: moviepilotDownloadingCount.value > 0 ? 'state-live' : moviepilotQueue.value.length > 0 ? 'state-warn' : 'state-ok',
+  },
 ])
 
 const formatDate = (timestamp) => {
   if (!timestamp) return '未知时间'
   return new Date(timestamp * 1000).toLocaleString()
+}
+
+const formatMoviePilotName = (item) => {
+  if (!item) return '未命名任务'
+  if (item.media_type === 'tv' && item.season) {
+    return `${item.title} - Season ${item.season}${item.episode ? ` - E${String(item.episode).padStart(2, '0')}` : ''}`
+  }
+  return item.title || item.video_path || '未命名任务'
+}
+
+const getMoviePilotStatusColor = (status) => {
+  if (status === 'downloading') return 'processing'
+  if (status === 'subscribed') return 'green'
+  if (status === 'failed') return 'red'
+  return 'blue'
+}
+
+const getMoviePilotStatusText = (status) => {
+  if (status === 'downloading') return '下载中'
+  if (status === 'subscribed') return '已订阅'
+  if (status === 'failed') return '失败'
+  return '待处理'
 }
 
 onMounted(() => {
