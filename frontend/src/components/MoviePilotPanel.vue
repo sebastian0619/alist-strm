@@ -128,6 +128,14 @@
               <strong>{{ item.match_mode === 'single_episode_download' ? '单集直下' : item.match_mode === 'season_subscription' ? '整季订阅' : '待匹配' }}</strong>
             </div>
             <div class="info-block">
+              <span>参考版本</span>
+              <strong>{{ formatReferenceProfile(item.reference_profile) }}</strong>
+            </div>
+            <div class="info-block">
+              <span>已选资源</span>
+              <strong>{{ item.selected_resource || '尚未选择' }}</strong>
+            </div>
+            <div class="info-block">
               <span>最后更新</span>
               <strong>{{ formatTime(item.updated_at) }}</strong>
             </div>
@@ -244,6 +252,18 @@ const formatItemName = (item) => {
     return `${item.title} - Season ${item.season}${item.episode ? ` - E${String(item.episode).padStart(2, '0')}` : ''}`
   }
   return item.title || item.video_path || '未命名任务'
+}
+
+const formatReferenceProfile = (profile) => {
+  if (!profile) return '无参考画像'
+  const parts = [
+    profile.team,
+    profile.source,
+    profile.resolution,
+    profile.video_codec,
+    profile.effect,
+  ].filter(Boolean)
+  return parts.length ? parts.join(' / ') : '无参考画像'
 }
 
 const getStatusColor = (statusValue) => {

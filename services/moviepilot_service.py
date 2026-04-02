@@ -6,6 +6,7 @@ import base64
 import binascii
 import hashlib
 import hmac
+import importlib
 import struct
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -20,10 +21,13 @@ logger = logging.getLogger(__name__)
 YEAR_PATTERN = re.compile(r"\((\d{4})\)")
 SEASON_PATTERN = re.compile(r"(?:season\s*(\d+)|s(\d+)|第\s*(\d+)\s*季)", re.IGNORECASE)
 EPISODE_PATTERN = re.compile(r"(?:s\d+e(\d{1,3})|ep?(\d{1,3})|第\s*(\d{1,3})\s*[集话])", re.IGNORECASE)
+BRACKET_EPISODE_PATTERN = re.compile(r"[\[\(](\d{1,3})[\]\)]")
+DASH_EPISODE_PATTERN = re.compile(r"(?:^|[\s._-])(\d{1,3})(?=[\s._-]|$)")
 RESOLUTION_PATTERN = re.compile(r"\b(2160p|1080p|720p|4k)\b", re.IGNORECASE)
 SOURCE_PATTERN = re.compile(r"\b(web[- .]?dl|webrip|bluray|bdrip|remux|hdtv)\b", re.IGNORECASE)
 VIDEO_CODEC_PATTERN = re.compile(r"\b(x265|h265|hevc|x264|h264|av1|vp9)\b", re.IGNORECASE)
 EFFECT_PATTERN = re.compile(r"\b(dv|dolby[ .-]?vision|hdr10\+|hdr10|hdr|atmos|10bit)\b", re.IGNORECASE)
+LEADING_TEAM_PATTERN = re.compile(r"^(?:\[(?P<bracket>[^\]]+)\]|【(?P<cn>[^】]+)】)")
 TEAM_PATTERN = re.compile(r"(?:-|【|\[)([A-Za-z0-9&._-]{2,20})(?:】|\])?$")
 
 
@@ -59,6 +63,10 @@ class MoviePilotService:
     def _save_queue(self):
         self.queue_file.parent.mkdir(parents=True, exist_ok=True)
         self.queue_file.write_text(json.dumps(self._queue, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def _get_service_manager(self):
+        module = importlib.import_module("services.service_manager")
+        return module.service_manager
 
     def get_queue(self) -> List[Dict[str, Any]]:
         return sorted(self._queue, key=lambda item: item.get("updated_at", 0), reverse=True)
@@ -127,6 +135,78 @@ class MoviePilotService:
             form_data["otp_password"] = self._generate_totp(self.otp_secret)
         return form_data
 
+    @staticmethod
+    def _merge_reference_profiles(profiles: List[Dict[str, Any]]) -> Dict[str, Optional[str]]:
+        merged: Dict[str, Optional[str]] = {}
+        if not profiles:
+            return merged
+
+        for key in ("resolution", "source", "video_codec", "effect", "team"):
+            weighted_scores: Dict[str, float] = {}
+            for profile in profiles:
+                value = profile.get(key)
+                if not value:
+                    continue
+                distance = max(1, int(profile.get("distance") or 1))
+                weighted_scores[value] = weighted_scores.get(value, 0.0) + (1 / distance)
+            if weighted_scores:
+                merged[key] = max(weighted_scores.items(), key=lambda item: item[1])[0]
+        return merged
+
+    def _collect_neighbor_profiles(self, video_path: str, season: Optional[int], episode: Optional[int]) -> List[Dict[str, Any]]:
+        if not season or not episode:
+            return []
+
+        try:
+            service_manager = self._get_service_manager()
+            health_service = getattr(service_manager, "health_service", None)
+            if not health_service:
+                return []
+            health_service.load_health_data()
+            video_files = getattr(health_service, "_health_data", {}).get("videoFiles", {})
+        except Exception:
+            return []
+
+        decoded_target = unquote(video_path).rstrip("/")
+        target_parent = str(Path(decoded_target).parent)
+        seen_paths = set()
+        neighbors = []
+
+        for candidate_path, candidate_status in video_files.items():
+            if not candidate_status.get("hasStrm"):
+                continue
+            decoded_candidate = unquote(candidate_path).rstrip("/")
+            if decoded_candidate == decoded_target or decoded_candidate in seen_paths:
+                continue
+            seen_paths.add(decoded_candidate)
+            if str(Path(decoded_candidate).parent) != target_parent:
+                continue
+
+            inferred = self.infer_media_from_path(decoded_candidate)
+            candidate_episode = inferred.get("episode")
+            candidate_season = inferred.get("season")
+            if candidate_season != season or not candidate_episode:
+                continue
+
+            distance = abs(candidate_episode - episode)
+            if distance == 0 or distance > 3:
+                continue
+
+            profile = inferred.get("release_profile") or {}
+            if not any(profile.values()):
+                continue
+
+            neighbors.append({
+                "path": decoded_candidate,
+                "episode": candidate_episode,
+                "distance": distance,
+                "profile": profile,
+                **profile,
+            })
+
+        neighbors.sort(key=lambda item: (item["distance"], item["episode"]))
+        return neighbors[:4]
+
     async def _get_headers(self) -> Dict[str, str]:
         if not self.username or not self.password:
             if self.api_key:
@@ -171,13 +251,17 @@ class MoviePilotService:
         source = SOURCE_PATTERN.search(normalized)
         video_codec = VIDEO_CODEC_PATTERN.search(normalized)
         effect = EFFECT_PATTERN.search(normalized)
-        team = TEAM_PATTERN.search(normalized)
+        leading_team = LEADING_TEAM_PATTERN.search(name or "")
+        team = leading_team or TEAM_PATTERN.search(normalized)
         return {
             "resolution": resolution.group(1).lower() if resolution else None,
             "source": source.group(1).lower().replace(" ", "").replace(".", "").replace("-", "") if source else None,
             "video_codec": video_codec.group(1).lower() if video_codec else None,
             "effect": effect.group(1).lower().replace(" ", "").replace(".", "").replace("-", "") if effect else None,
-            "team": team.group(1).lower() if team else None,
+            "team": (
+                (leading_team.group("bracket") or leading_team.group("cn")).lower()
+                if leading_team else team.group(1).lower() if team else None
+            ),
         }
 
     @classmethod
@@ -197,9 +281,19 @@ class MoviePilotService:
                     title = parts[idx - 1]
                 break
 
-        episode_match = EPISODE_PATTERN.search(filename)
+        filename_stem = Path(filename).stem
+        episode_match = EPISODE_PATTERN.search(filename_stem)
         if episode_match:
             episode = int(next(group for group in episode_match.groups() if group))
+        else:
+            bracket_match = BRACKET_EPISODE_PATTERN.search(filename_stem)
+            if bracket_match:
+                episode = int(bracket_match.group(1))
+            else:
+                candidates = [int(match.group(1)) for match in DASH_EPISODE_PATTERN.finditer(filename_stem)]
+                candidates = [value for value in candidates if 0 < value < 200]
+                if candidates:
+                    episode = candidates[-1]
 
         year_match = YEAR_PATTERN.search(title)
         year = year_match.group(1) if year_match else None
@@ -219,6 +313,8 @@ class MoviePilotService:
     def enqueue_missing_source(self, video_path: str, source_reason: str, trigger_path: Optional[str] = None) -> Dict[str, Any]:
         media = self.infer_media_from_path(video_path)
         normalized_path = unquote(video_path)
+        neighbor_profiles = self._collect_neighbor_profiles(normalized_path, media["season"], media["episode"])
+        reference_profile = self._merge_reference_profiles(neighbor_profiles)
 
         for item in self._queue:
             if item.get("video_path") == normalized_path and item.get("status") in {"pending", "subscribed"}:
@@ -236,6 +332,8 @@ class MoviePilotService:
             "media_type": media["media_type"],
             "filename": media["filename"],
             "release_profile": media["release_profile"],
+            "neighbor_profiles": neighbor_profiles,
+            "reference_profile": reference_profile,
             "tmdb_id": None,
             "status": "pending",
             "attempts": 0,
@@ -323,6 +421,7 @@ class MoviePilotService:
         target_episode = item.get("episode")
         target_season = item.get("season")
         release_profile = item.get("release_profile") or {}
+        reference_profile = item.get("reference_profile") or {}
 
         begin_season = meta_info.get("begin_season")
         end_season = meta_info.get("end_season")
@@ -376,6 +475,23 @@ class MoviePilotService:
         if normalized_team and meta_team and normalized_team == meta_team:
             score += 10
 
+        reference_resolution = cls._normalize_profile_value(reference_profile.get("resolution"))
+        reference_source = cls._normalize_profile_value(reference_profile.get("source"))
+        reference_codec = cls._normalize_profile_value(reference_profile.get("video_codec"))
+        reference_effect = cls._normalize_profile_value(reference_profile.get("effect"))
+        reference_team = cls._normalize_profile_value(reference_profile.get("team"))
+
+        if reference_resolution and meta_resolution and reference_resolution == meta_resolution:
+            score += 10
+        if reference_source and meta_source and reference_source in meta_source:
+            score += 10
+        if reference_codec and meta_codec and reference_codec in meta_codec:
+            score += 10
+        if reference_effect and meta_effect and reference_effect in meta_effect:
+            score += 6
+        if reference_team and meta_team and reference_team == meta_team:
+            score += 14
+
         seeders = torrent_info.get("seeders") or 0
         size = torrent_info.get("size") or 0
         score += min(int(seeders), 20)
@@ -410,6 +526,10 @@ class MoviePilotService:
         item["updated_at"] = time.time()
 
         try:
+            if "reference_profile" not in item or "neighbor_profiles" not in item:
+                neighbor_profiles = self._collect_neighbor_profiles(item["video_path"], item.get("season"), item.get("episode"))
+                item["neighbor_profiles"] = neighbor_profiles
+                item["reference_profile"] = self._merge_reference_profiles(neighbor_profiles)
             matches = await self.search_media(item["title"])
             match = self._pick_best_match(matches or [], item["title"], item.get("year"), item["media_type"])
             if not match:
