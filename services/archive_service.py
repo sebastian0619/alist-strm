@@ -4,7 +4,7 @@ import time
 import hashlib
 from datetime import datetime
 import os
-from typing import NamedTuple, Optional, List, Dict, Tuple
+from typing import NamedTuple, Optional, List, Dict, Tuple, Any
 from loguru import logger
 from config import Settings
 import asyncio
@@ -145,6 +145,18 @@ class ArchiveService:
     def _load_pending_deletions(self) -> list:
         """从JSON文件加载待删除列表"""
         try:
+            service_manager = self._get_service_manager()
+            state_db = getattr(service_manager, "state_db", None)
+            if state_db:
+                state_db.initialize()
+                db_items = state_db.get_pending_deletions()
+                if db_items:
+                    for item in db_items:
+                        if 'path' in item and isinstance(item['path'], str):
+                            item['path'] = Path(item['path'])
+                    logger.info(f"从 SQLite 加载了 {len(db_items)} 个待删除项目")
+                    return db_items
+
             # 确保cache目录存在
             os.makedirs("/app/cache", exist_ok=True)
             if os.path.exists(self._pending_deletions_file):
@@ -154,6 +166,19 @@ class ArchiveService:
                     for item in data:
                         if 'path' in item and isinstance(item['path'], str):
                             item['path'] = Path(item['path'])
+                    if state_db and data:
+                        state_db.replace_pending_deletions([
+                            {
+                                "path": str(item["path"]),
+                                "cloud_path": item.get("cloud_path", ""),
+                                "archive_path": item.get("archive_path", ""),
+                                "delete_time": item["delete_time"],
+                                "move_success": item.get("move_success", True),
+                                "status": "pending",
+                            }
+                            for item in data
+                        ])
+                        logger.info("已将 JSON 待删除列表迁移到 SQLite")
                     logger.info(f"从 {self._pending_deletions_file} 加载了 {len(data)} 个待删除项目")
                     return data
             else:
@@ -175,6 +200,14 @@ class ArchiveService:
                 if 'path' in data_item and isinstance(data_item['path'], Path):
                     data_item['path'] = str(data_item['path'])
                 data_to_save.append(data_item)
+
+            try:
+                service_manager = self._get_service_manager()
+                state_db = getattr(service_manager, "state_db", None)
+                if state_db:
+                    state_db.replace_pending_deletions(data_to_save)
+            except Exception as e:
+                logger.error(f"同步待删除列表到 SQLite 失败: {e}")
                 
             with open(self._pending_deletions_file, 'w', encoding='utf-8') as f:
                 json.dump(data_to_save, f, ensure_ascii=False, indent=2)
@@ -313,7 +346,15 @@ class ArchiveService:
                 for item in self._pending_deletions:
                     path = item["path"]
                     if not item.get("move_success", True):
-                        logger.debug(f"等待目标确认，暂不删除: {item.get('archive_path') or path}")
+                        archive_path = item.get("archive_path")
+                        if archive_path and await self.alist_client.path_exists(f"/{archive_path.lstrip('/')}"):
+                            item["move_success"] = True
+                            logger.info(f"远端归档目标已确认可见，待删除项目转为可删除: {archive_path}")
+                        else:
+                            logger.debug(f"等待目标确认，暂不删除: {archive_path or path}")
+                            continue
+
+                    if not item.get("move_success", True):
                         continue
                     
                     # 如果文件已经不存在，直接从列表中移除
@@ -396,6 +437,22 @@ class ArchiveService:
                 "delete_time": delete_time,
                 "move_success": move_success
             })
+
+            try:
+                service_manager = self._get_service_manager()
+                lifecycle = getattr(service_manager, "lifecycle_service", None)
+                state_db = getattr(service_manager, "state_db", None)
+                if lifecycle and state_db:
+                    lifecycle.sync_series_state(
+                        state_db,
+                        local_path=str(path),
+                        remote_path=archive_path or cloud_path,
+                        pending_deletion=True,
+                        local_exists=path.exists(),
+                        reason="pending_deletion_added",
+                    )
+            except Exception as e:
+                logger.error(f"同步待删除生命周期状态失败: {e}")
             
             # 保存到文件
             self._save_pending_deletions()
@@ -414,6 +471,166 @@ class ArchiveService:
             
         except Exception as e:
             logger.error(f"添加文件到待删除列表失败: {e}")
+
+    def _remove_pending_deletion(self, path: Path) -> None:
+        """从待删除列表中移除指定路径。"""
+        removed = False
+        path_str = str(path)
+        for item in self._pending_deletions[:]:
+            if str(item.get("path")) == path_str:
+                self._pending_deletions.remove(item)
+                removed = True
+        if removed:
+            self._save_pending_deletions()
+
+    def _build_strm_output_dir(self, source_directory: Path) -> Optional[str]:
+        """根据本地源目录构建 STRM 输出目录。"""
+        try:
+            relative_path = source_directory.relative_to(self.settings.archive_source_root)
+        except Exception:
+            return None
+        service_manager = self._get_service_manager()
+        strm_service = getattr(service_manager, "strm_service", None)
+        if not strm_service:
+            return None
+        return os.path.join(strm_service.settings.output_dir, str(relative_path))
+
+    async def _revive_series_directory(
+        self,
+        directory: Path,
+        source_alist_path: str,
+        dest_alist_path: str,
+        files_info: list,
+    ) -> Dict[str, Any]:
+        """将已确认复连载的番剧从完结目录迁移到连载目录。"""
+        service_manager = self._get_service_manager()
+        lifecycle = getattr(service_manager, "lifecycle_service", None)
+        state_db = getattr(service_manager, "state_db", None)
+        strm_service = getattr(service_manager, "strm_service", None)
+
+        if not lifecycle or not state_db or not strm_service:
+            return {
+                "success": False,
+                "message": "缺少生命周期、状态库或 STRM 服务",
+            }
+
+        identity = lifecycle._extract_series_identity(str(directory))
+        series_state = state_db.find_series_state_by_identity(
+            normalized_title=identity["normalized_title"],
+            year=identity["year"],
+            media_type="tv",
+        )
+        if not series_state:
+            return {
+                "success": False,
+                "message": "未找到对应系列状态，无法执行复连载迁移",
+            }
+
+        if series_state.get("last_tmdb_status") != "Returning Series":
+            return {
+                "success": False,
+                "message": "当前系列状态不是 Returning Series",
+            }
+
+        current_role = lifecycle.infer_library_role(str(directory))
+        if current_role != "ended":
+            return {
+                "success": False,
+                "message": "当前目录不在完结动漫区域，跳过复连载迁移",
+            }
+
+        target_local_path = Path(lifecycle.build_revival_path(str(directory)))
+        target_remote_path = lifecycle.build_revival_path(source_alist_path)
+        target_strm_dir = self._build_strm_output_dir(target_local_path)
+        if not target_strm_dir:
+            return {
+                "success": False,
+                "message": "无法计算目标 STRM 目录",
+            }
+
+        current_strm_dir = self._build_strm_output_dir(directory)
+        if current_strm_dir is None:
+            current_strm_dir = ""
+
+        # 先把状态切到 revived，保留迁移前的轨迹。
+        lifecycle.sync_series_state(
+            state_db,
+            local_path=str(directory),
+            remote_path=source_alist_path,
+            strm_path=current_strm_dir or None,
+            tmdb_status="Returning Series",
+            pending_deletion=False,
+            local_exists=True,
+            reason="revival_detected",
+        )
+
+        if target_local_path != directory:
+            target_local_path.parent.mkdir(parents=True, exist_ok=True)
+            if target_local_path.exists():
+                logger.warning(f"复连载目标本地目录已存在，跳过本地移动: {target_local_path}")
+            else:
+                await asyncio.to_thread(shutil.move, str(directory), str(target_local_path))
+                logger.info(f"已将本地目录从完结迁移到连载: {directory} -> {target_local_path}")
+
+        remote_target_exists = await self.alist_client.path_exists(f"/{target_remote_path.lstrip('/')}")
+        if not remote_target_exists and source_alist_path != target_remote_path:
+            remote_moved = await self.alist_client.move_directory(source_alist_path, target_remote_path)
+            if not remote_moved:
+                return {
+                    "success": False,
+                    "message": f"Alist 目录迁移失败: {source_alist_path} -> {target_remote_path}",
+                }
+            logger.info(f"已将远端目录从完结迁移到连载: {source_alist_path} -> {target_remote_path}")
+
+        target_files_info = []
+        for root, _, files in os.walk(target_local_path):
+            root_path = Path(root)
+            for file in files:
+                file_path = root_path / file
+                if any(file.lower().endswith(ext.strip().lower()) for ext in self.excluded_extensions):
+                    continue
+                target_files_info.append({
+                    "path": file_path,
+                    "size": file_path.stat().st_size,
+                    "relative_path": file_path.relative_to(target_local_path),
+                })
+
+        if not target_files_info:
+            target_files_info = files_info
+
+        strm_generated = await self.generate_strm_for_target(target_remote_path, target_local_path, target_files_info)
+        if not strm_generated:
+            return {
+                "success": False,
+                "message": "复连载后 STRM 生成失败",
+            }
+
+        self._remove_pending_deletion(directory)
+        try:
+            state_db.remove_pending_deletion(str(directory))
+        except Exception as e:
+            logger.debug(f"移除 SQLite 待删除记录失败（忽略）: {e}")
+
+        lifecycle.sync_series_state(
+            state_db,
+            local_path=str(target_local_path),
+            remote_path=target_remote_path,
+            strm_path=target_strm_dir,
+            tmdb_status="Returning Series",
+            pending_deletion=False,
+            local_exists=True,
+            reason="revival_completed",
+        )
+
+        return {
+            "success": True,
+            "message": f"复连载迁移完成: {directory} -> {target_local_path}",
+            "target_local_path": str(target_local_path),
+            "target_remote_path": target_remote_path,
+            "target_strm_path": target_strm_dir,
+            "moved_files": len(target_files_info),
+            "total_size": sum(item.get("size", 0) for item in target_files_info),
+        }
 
     def _delete_file_blocking(self, path: Path) -> bool:
         """在线程中执行的阻塞删除逻辑。"""
@@ -653,6 +870,40 @@ class ArchiveService:
             logger.debug(f"- 文件数量: {len(files_info)}")
             logger.debug(f"- 总大小: {total_size / 1024 / 1024 / 1024:.2f} GB")
 
+            service_manager = self._get_service_manager()
+            lifecycle = getattr(service_manager, "lifecycle_service", None)
+            state_db = getattr(service_manager, "state_db", None)
+            if lifecycle and state_db:
+                identity = lifecycle._extract_series_identity(str(directory))
+                series_state = state_db.find_series_state_by_identity(
+                    normalized_title=identity["normalized_title"],
+                    year=identity["year"],
+                    media_type="tv",
+                )
+                if series_state and series_state.get("last_tmdb_status") == "Returning Series" and lifecycle.infer_library_role(str(directory)) == "ended":
+                    if test_mode:
+                        result["success"] = True
+                        result["moved_files"] = len(files_info)
+                        result["total_size"] = total_size
+                        result["message"] = (
+                            f"[测试] {full_folder_name}\n"
+                            f"状态: 识别到复连载迁移\n"
+                            f"目标本地目录: {lifecycle.build_revival_path(str(directory))}\n"
+                            f"目标云盘目录: {lifecycle.build_revival_path(source_alist_path)}"
+                        )
+                        return result
+
+                    revive_result = await self._revive_series_directory(
+                        directory,
+                        source_alist_path,
+                        dest_alist_path,
+                        files_info,
+                    )
+                    if revive_result["success"]:
+                        return revive_result
+                    result["message"] = f"[错误] {full_folder_name}\n复连载迁移失败\n详情: {revive_result['message']}"
+                    return result
+
             if test_mode:
                 result["message"] = (
                     f"[测试] {full_folder_name}\n"
@@ -680,12 +931,16 @@ class ArchiveService:
                 if copy_result["file_exists"]:
                     logger.info(f"目标位置已存在文件: {copy_result['message']}")
                     # 处理同已存在相同
+                    target_confirmed = copy_result["file_exists"]
+                    if not target_confirmed and dest_alist_path:
+                        target_confirmed = await self.alist_client.path_exists(f"/{dest_alist_path.lstrip('/')}")
+
                     if self.settings.archive_delete_source:
                         self._add_to_pending_deletion(
                             directory,
                             cloud_path=source_alist_path,
                             archive_path=dest_alist_path,
-                            move_success=True
+                            move_success=target_confirmed
                         )
                         logger.info(f"已将原目录添加到待删除队列: {directory}")
                     
@@ -705,12 +960,16 @@ class ArchiveService:
                     result["moved_files"] = len(files_info)
                     
                     # 添加到删除队列
+                    target_confirmed = False
+                    if dest_alist_path:
+                        target_confirmed = await self.alist_client.path_exists(f"/{dest_alist_path.lstrip('/')}")
+
                     if self.settings.archive_delete_source:
                         self._add_to_pending_deletion(
                             directory,
                             cloud_path=source_alist_path,
                             archive_path=dest_alist_path,
-                            move_success=True
+                            move_success=target_confirmed
                         )
                         logger.info(f"已将原目录添加到待删除队列: {directory}")
                     
