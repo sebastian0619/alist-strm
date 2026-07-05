@@ -1,4 +1,6 @@
-from typing import Any, Dict, Optional
+from collections import defaultdict
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import unquote
 
 from loguru import logger
@@ -8,6 +10,9 @@ from config import Settings
 
 class LifecycleService:
     """媒体生命周期状态服务，集中管理完结/连载/待删等业务状态。"""
+
+    ACTIVE_TMBD_STATUSES = {"Returning Series", "In Production"}
+    ENDED_TMBD_STATUSES = {"Ended", "Canceled", "Cancelled"}
 
     def __init__(self):
         self.settings = Settings()
@@ -182,3 +187,134 @@ class LifecycleService:
             success=success,
             error_message=error_message,
         )
+
+    def discover_library_roots(self, scan_root: Optional[str] = None) -> Dict[str, List[Path]]:
+        """发现完结/连载库根目录。"""
+        root = Path(scan_root or self.settings.archive_source_root or ".")
+        roots: Dict[str, List[Path]] = {"ended": [], "airing": []}
+
+        if not root.exists():
+            return roots
+
+        candidates = []
+        for name, role in (("完结动漫", "ended"), ("连载动漫", "airing")):
+            try:
+                candidates.extend((role, path) for path in root.rglob(name) if path.is_dir() and path.name == name)
+            except Exception:
+                continue
+
+        seen = set()
+        for role, path in candidates:
+            key = str(path)
+            if key in seen:
+                continue
+            seen.add(key)
+            roots[role].append(path)
+
+        return roots
+
+    def analyze_library_alignment(
+        self,
+        state_db,
+        *,
+        scan_root: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """对完结/连载库做只读对账，找出重复与状态冲突。"""
+        library_roots = self.discover_library_roots(scan_root)
+        grouped: Dict[Tuple[str, Optional[str]], List[Dict[str, Any]]] = defaultdict(list)
+
+        for role, roots in library_roots.items():
+            for library_root in roots:
+                if not library_root.exists():
+                    continue
+                for child in sorted(library_root.iterdir()):
+                    if not child.is_dir():
+                        continue
+                    identity = self._extract_series_identity(str(child))
+                    if not identity["normalized_title"]:
+                        continue
+
+                    series_state = None
+                    if state_db:
+                        try:
+                            series_state = state_db.find_series_state_by_identity(
+                                normalized_title=identity["normalized_title"],
+                                year=identity["year"],
+                                media_type="tv",
+                            )
+                        except Exception as e:
+                            logger.debug(f"读取系列状态失败 {child}: {e}")
+
+                    grouped[(identity["normalized_title"], identity["year"])].append({
+                        "role": role,
+                        "path": str(child),
+                        "title": identity["title"],
+                        "year": identity["year"],
+                        "normalized_title": identity["normalized_title"],
+                        "state": series_state.get("state") if series_state else None,
+                        "tmdb_status": series_state.get("last_tmdb_status") if series_state else None,
+                        "current_local_path": series_state.get("current_local_path") if series_state else None,
+                        "current_remote_path": series_state.get("current_remote_path") if series_state else None,
+                        "series_state_id": series_state.get("id") if series_state else None,
+                    })
+
+        conflicts: List[Dict[str, Any]] = []
+        for (normalized_title, year), items in grouped.items():
+            roles = {item["role"] for item in items}
+            tmdb_statuses = {item["tmdb_status"] for item in items if item.get("tmdb_status")}
+            states = {item["state"] for item in items if item.get("state")}
+
+            recommended_role = None
+            reason = None
+            if any(status in self.ACTIVE_TMBD_STATUSES for status in tmdb_statuses):
+                recommended_role = "airing"
+                reason = "TMDB 状态显示仍在连载"
+            elif any(status in self.ENDED_TMBD_STATUSES for status in tmdb_statuses):
+                recommended_role = "ended"
+                reason = "TMDB 状态显示已完结"
+
+            if "airing_local" in states:
+                recommended_role = "airing"
+                reason = reason or "状态库显示为连载态"
+            elif any(state in {"archived_pending_delete", "archived_remote_only"} for state in states):
+                recommended_role = "ended"
+                reason = reason or "状态库显示为完结归档态"
+
+            issue_type = None
+            if len(roles) > 1:
+                issue_type = "duplicate_across_libraries"
+            elif recommended_role and recommended_role not in roles:
+                issue_type = "role_mismatch"
+            elif any(state in {"airing_local"} for state in states) and "ended" in roles:
+                issue_type = "ended_library_holds_airing_series"
+            elif any(state in {"archived_pending_delete", "archived_remote_only"} for state in states) and "airing" in roles:
+                issue_type = "airing_library_holds_archived_series"
+
+            if not issue_type:
+                continue
+
+            conflicts.append({
+                "title": items[0]["title"],
+                "year": year,
+                "normalized_title": normalized_title,
+                "issue_type": issue_type,
+                "recommended_role": recommended_role,
+                "reason": reason,
+                "items": items,
+            })
+
+        summary = {
+            "scan_root": str(Path(scan_root or self.settings.archive_source_root or ".")),
+            "library_roots": {
+                role: [str(path) for path in paths]
+                for role, paths in library_roots.items()
+            },
+            "total_groups": len(grouped),
+            "conflict_count": len(conflicts),
+            "conflicts": conflicts,
+        }
+        logger.info(
+            f"媒体库对账完成: root={summary['scan_root']}, "
+            f"groups={summary['total_groups']}, conflicts={summary['conflict_count']}"
+        )
+        return summary

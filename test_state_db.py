@@ -115,3 +115,35 @@ def test_state_db_can_find_series_by_identity(tmp_path):
 
     assert row is not None
     assert row["current_local_path"].endswith("/连载动漫/示例剧 (2025)")
+
+
+def test_lifecycle_service_analyzes_duplicate_library_conflicts(tmp_path):
+    source_root = tmp_path / "video"
+    ended_root = source_root / "动漫" / "完结动漫"
+    airing_root = source_root / "动漫" / "连载动漫"
+    (ended_root / "示例剧 (2025)").mkdir(parents=True)
+    (airing_root / "示例剧 (2025)").mkdir(parents=True)
+
+    service = StateDatabaseService()
+    service.db_path = str(tmp_path / "app.db")
+    service.upsert_series_state(
+        normalized_title="示例剧",
+        title="示例剧",
+        year="2025",
+        media_type="tv",
+        state="airing_local",
+        last_tmdb_status="Returning Series",
+        current_local_path=str(airing_root / "示例剧 (2025)"),
+    )
+
+    lifecycle = LifecycleService()
+    report = lifecycle.analyze_library_alignment(
+        service,
+        scan_root=str(source_root),
+    )
+
+    assert report["conflict_count"] == 1
+    conflict = report["conflicts"][0]
+    assert conflict["issue_type"] == "duplicate_across_libraries"
+    assert conflict["recommended_role"] == "airing"
+    assert len(conflict["items"]) == 2

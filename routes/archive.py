@@ -5,6 +5,7 @@ import json
 import logging
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 router = APIRouter(prefix="/api/archive")
 logger = logging.getLogger(__name__)
@@ -15,6 +16,9 @@ class DeleteItemInfo(BaseModel):
 
 class DelayDaysSettings(BaseModel):
     days: int
+
+class LibraryReconcileRequest(BaseModel):
+    scan_root: Optional[str] = None
 
 @router.get("/pending-deletions")
 async def get_pending_deletions():
@@ -349,3 +353,27 @@ async def delete_all_files_now():
             "success": False,
             "message": str(e)
         } 
+
+@router.post("/reconcile")
+async def reconcile_library_alignment(request: LibraryReconcileRequest = None):
+    """只读对账完结/连载库，识别重复和状态冲突。"""
+    try:
+        if request is None:
+            request = LibraryReconcileRequest()
+        if not service_manager.archive_service.settings.archive_enabled:
+            raise HTTPException(status_code=400, detail="归档功能未启用")
+
+        report = service_manager.lifecycle_service.analyze_library_alignment(
+            service_manager.state_db,
+            scan_root=request.scan_root,
+        )
+        return {
+            "success": True,
+            "message": "对账完成",
+            "data": report,
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "message": str(e)
+        }
